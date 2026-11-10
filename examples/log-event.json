@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-11-10T13:45:25.382Z",
+  "level": "ERROR",
+  "module": "document.save",
+  "event": "DOCUMENT_SAVE_FAILED",
+  "runId": "run-example-001",
+  "traceId": "trace-example-001",
+  "operationId": "op-example-001",
+  "resourceId": "res-example-001",
+  "actorId": "user-example",
+  "errorCode": "ERR_DOCUMENT_VERSION_CONFLICT",
+  "result": "REJECTED",
+  "durationMs": 84
+}

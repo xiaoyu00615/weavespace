@@ -1,0 +1,18 @@
+digraph G {
+ graph [fontname="Noto Sans CJK SC",rankdir=TB,bgcolor="#ffffff",pad="0.35",nodesep="0.30",ranksep="0.35",splines=ortho,label="统一编辑与保存流程 · 成功 / 冲突 / 未知结果",labelloc=t,fontsize=21,fontcolor="#14213a"];
+ node [shape=box,style="rounded,filled",fontname="Noto Sans CJK SC",fontsize=12,margin="0.16,0.11",fillcolor="#eef2ff",color="#c7d2fe"];
+ edge [color="#64748b",arrowsize=0.65];
+ a [label="UI / 外部 AI 发出命令\n附目标、基准版本、幂等键",fillcolor="#dbeafe"];
+ b [label="Gateway 认证 + 服务端权限核验",fillcolor="#fff7ed"];
+ c [label="Command Bus 参数验证、去重并生成收据",fillcolor="#fff7ed"];
+ d [label="Document Session 应用可检查的 Edit",fillcolor="#f5f3ff"];
+ e [label="Serializer 产生目标格式数据",fillcolor="#f5f3ff"];
+ f [label="Storage.writeConditional(expectedVersion)",fillcolor="#f5f3ff"];
+ ok [label="APPLIED\n保存确认 + 新版本 + 时间戳",fillcolor="#dcfce7",color="#86efac"];
+ conflict [label="REJECTED / CONFLICT\n保留 dirty、展示 Diff",fillcolor="#fee2e2",color="#fca5a5"];
+ unknown [label="UNKNOWN / PARTIAL\n查收据 / 对账，禁止盲目重试",fillcolor="#fef3c7",color="#fcd34d"];
+ audit [label="Audit + JSONL + Trace + Versioned Event\n事件发生时间与最终结果独立记录",fillcolor="#e2e8f0",color="#94a3b8"];
+ a->b->c->d->e->f; f->ok;f->conflict;f->unknown;
+ ok->audit; conflict->audit;unknown->audit;
+ {rank=same;ok;conflict;unknown;}
+}

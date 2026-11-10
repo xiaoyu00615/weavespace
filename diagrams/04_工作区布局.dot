@@ -1,0 +1,15 @@
+digraph G {
+ graph [fontname="Noto Sans CJK SC",rankdir=TB,bgcolor="#ffffff",pad="0.25",nodesep="0.4",ranksep="0.45",label="工作区布局 / 文件与视图解耦",labelloc=t,fontsize=21,fontcolor="#14213a"];
+ node [shape=box,style="rounded,filled",fontname="Noto Sans CJK SC",fontsize=12,margin="0.2,0.14",color="#cbd5e1"];
+ shell [label="Shell：项目导航 / 文件树 / 工具栏 / 可折叠辅助面板",fillcolor="#dbeafe"];
+ tree [label="LayoutTree\n分屏 / 标签页 / 位置",fillcolor="#f1f5f9"];
+ edit [label="编辑器视图 A\nindex.html 源码",fillcolor="#ecfeff"];
+ preview [label="预览视图 B\n实时渲染",fillcolor="#ecfeff"];
+ other [label="视图 C\n不同文件 / 关系画布",fillcolor="#ecfeff"];
+ sess [label="Document Session\n同一文件统一 Revision、dirty、Undo",fillcolor="#fff7ed",color="#fdba74"];
+ storage [label="原始 Source / Storage\n只在确认保存后修改",fillcolor="#dcfce7"];
+ shell -> tree;tree -> edit;tree -> preview;tree -> other;
+ edit -> sess [label="写入编辑",fontname="Noto Sans CJK SC",fontsize=9];preview -> sess [label="订阅变更",fontname="Noto Sans CJK SC",fontsize=9];
+ sess -> storage [label="带版本保存",fontname="Noto Sans CJK SC",fontsize=9];
+ {rank=same;edit;preview;other;}
+}

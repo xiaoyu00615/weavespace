@@ -1,0 +1,40 @@
+# Dependencies/build
+node_modules/
+dist/
+build/
+coverage/
+.cache/
+.turbo/
+*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+.venv/
+
+# Runtime state & secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+logs/
+*.log
+runtime/
+local-data/
+.weavespace/local/
+.weavespace/cache/
+.weavespace/runtime/
+
+# Editors/OS
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.idea/
+
+# Preserve portable project descriptors (do NOT blanket-ignore .wcanvas or .wproject)

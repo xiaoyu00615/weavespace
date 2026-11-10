@@ -1,0 +1,21 @@
+digraph G {
+ graph [fontname="Noto Sans CJK SC",rankdir=LR,bgcolor="#ffffff",pad="0.32",nodesep="0.28",ranksep="0.64",splines=polyline,label="模块依赖与数据权威（箭头 = 允许调用方向）",labelloc=t,fontsize=22,fontcolor="#14213a"];
+ node [shape=box,style="rounded,filled",fontname="Noto Sans CJK SC",fontsize=11,margin="0.14,0.10",fillcolor="#f8fafc",color="#cbd5e1"];
+ edge [color="#718096",arrowsize=0.65];
+ web [label="Web UI\n视图层",fillcolor="#dbeafe"];
+ gate [label="Gateway\n身份验证",fillcolor="#bfdbfe"];
+ command [label="Command / Permission\n唯一变更入口",fillcolor="#ffedd5"];
+ resource [label="Resource / Storage\n资源路径与数据读写",fillcolor="#f0edff"];
+ document [label="Document\n会话与保存",fillcolor="#f0edff"];
+ plugin [label="Plugin Runtime\n能力目录",fillcolor="#f0edff"];
+ workspace [label="Workspace\n布局状态",fillcolor="#dbeafe"];
+ feature [label="Format Plugins\nMarkdown / Image / Canvas",fillcolor="#dcfce7"];
+ jobs [label="Jobs / Events\n状态通知",fillcolor="#f0edff"];
+ contracts [label="Contracts\n类型 / 错误码 / Schema",fillcolor="#f1f5f9"];
+ observ [label="Observability\n日志 / Trace / 诊断",fillcolor="#f1f5f9"];
+ web -> gate; web -> workspace;gate -> command;
+ command -> resource;command -> document;command -> plugin;command -> jobs;
+ plugin -> feature;document -> resource;
+ feature -> contracts [style=dashed,color="#94a3b8"];command -> contracts [style=dashed,color="#94a3b8"];
+ jobs -> observ [style=dotted]; command -> observ [style=dotted];
+}

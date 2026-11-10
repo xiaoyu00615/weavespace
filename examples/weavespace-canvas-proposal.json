@@ -1,0 +1,25 @@
+{
+  "format": "wcanvas",
+  "schemaVersion": 1,
+  "documentId": "doc-example-001",
+  "nodes": [
+    {
+      "id": "char-linmo",
+      "type": "character",
+      "layout": {
+        "x": 300,
+        "y": 200
+      },
+      "data": {
+        "name": "林默",
+        "age": 15,
+        "portraitResourceId": "res-portrait-placeholder"
+      }
+    }
+  ],
+  "edges": [],
+  "metadata": {
+    "description": "仅为格式提案示例，不保证最终字段",
+    "updatedAt": "2026-11-10T13:45:25.382Z"
+  }
+}

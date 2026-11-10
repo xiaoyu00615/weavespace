@@ -1,0 +1,13 @@
+digraph G {
+ graph [fontname="Noto Sans CJK SC",rankdir=TB,bgcolor="#ffffff",pad="0.3",nodesep="0.35",ranksep="0.48",splines=ortho,label="故障定位：发生 → 记录 → 隔离 → 恢复",labelloc=t,fontsize=22,fontcolor="#14213a"];
+ node [shape=box,style="rounded,filled",fontname="Noto Sans CJK SC",fontsize=12,margin="0.17,0.12",color="#cbd5e1"];
+ err [label="运行事件 / 异常\n带 occurredAt + runId + traceId",fillcolor="#fee2e2"];
+ triage [label="统一 ErrorCode + 状态分类\n失败 / 冲突 / 结果未知",fillcolor="#ffedd5"];
+ logs [label="Operational JSONL\n短期可查询 / 轮转",fillcolor="#e0e7ff"];
+ aud [label="Audit / 命令收据\n谁改了什么 / 真正结果",fillcolor="#e0e7ff"];
+ metrics [label="Metrics / Traces\n耗时 / 健康 / 调用链",fillcolor="#e0e7ff"];
+ incident [label="脱敏 Incident 记录\n版本 / 插件 / 事件链 / 资源",fillcolor="#f1f5f9"];
+ recover [label="诊断 + 安全处理\n阻止扩大 / 人工确认 / 可控恢复",fillcolor="#dcfce7"];
+ err->triage;triage->logs;triage->aud;triage->metrics;logs->incident;aud->incident;metrics->incident;incident->recover;
+ {rank=same;logs;aud;metrics;}
+}

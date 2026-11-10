@@ -1,0 +1,17 @@
+{
+  "format": "wproject",
+  "schemaVersion": 1,
+  "projectId": "example-project-001",
+  "name": "示例项目",
+  "resources": {
+    "rootAlias": "project-root",
+    "preferredSource": "local"
+  },
+  "enabledPluginIds": [
+    "weavespace.markdown",
+    "weavespace.image-viewer",
+    "weavespace.canvas"
+  ],
+  "defaultLayout": "workspace/default",
+  "notes": "本示例不包含本机绝对路径、授权令牌或运行数据库"
+}

@@ -1,0 +1,33 @@
+digraph G {
+ graph [fontname="Noto Sans CJK SC",rankdir=TB, bgcolor="#ffffff",pad="0.32",nodesep="0.4",ranksep="0.58",splines=ortho,label="WeaveSpace · 系统总体架构（F0 提案）",labelloc=t,fontsize=23,fontcolor="#14213a"];
+ node [shape=box,style="rounded,filled",fontname="Noto Sans CJK SC",fontsize=12,margin="0.16,0.10",color="#cbd5e1",penwidth=1.0];
+ edge [color="#718096",arrowsize=0.7,penwidth=1.3];
+ subgraph cluster_client {label="客户端 / 外部入口";fontname="Noto Sans CJK SC";fontsize=14;color="#d1d5db";style="rounded";
+  shell [label="Web Shell\n文件树 / 标签 / 分屏 / UI Slots",fillcolor="#e6f0ff"];
+  remote [label="LAN 浏览器（未来）\n认证后访问",fillcolor="#e6f0ff"];
+  agent [label="外部 AI / DSH（未来）\nMCP / 工具调用",fillcolor="#e6f0ff"];
+  {rank=same;shell;remote;agent;}
+ }
+ gateway [label="Gateway / 适配层\nlocalhost HTTP / IPC · LAN / MCP（后期）",fillcolor="#dbeafe",color="#93c5fd"];
+ core [label="Headless Core / 命令协调\n身份 + 权限 · Command Bus · 事件版本 · 资源路由",fillcolor="#fff0d7",color="#f5bc5a",penwidth=1.5];
+ subgraph cluster_services {label="统一基础服务（同一事实权威）";fontname="Noto Sans CJK SC";fontsize=14;color="#d1d5db";style="rounded";
+  resource [label="Resource / Storage\n稳定 ID + 条件写入",fillcolor="#f5f3ff"];
+  doc [label="Document / Persistence\n会话 + 版本 + 保存/恢复",fillcolor="#f5f3ff"];
+  plugin [label="Plugin Runtime\n注册 + 依赖 + 生命周期",fillcolor="#f5f3ff"];
+  jobs [label="Job / Events\n任务状态 + 快照订阅",fillcolor="#f5f3ff"];
+  {rank=same;resource;doc;plugin;jobs;}
+ }
+ subgraph cluster_features {label="可扩展实现（模块所有权明确）";fontname="Noto Sans CJK SC";fontsize=14;color="#d1d5db";style="rounded";
+  md [label="Markdown / 文本\nParser / Editor / Serializer",fillcolor="#edfdf4"];
+  img [label="图片查看器\nViewer / Metadata",fillcolor="#edfdf4"];
+  canvas [label="WeaveSpace Canvas\n节点 + 连线 + 布局",fillcolor="#edfdf4"];
+  index [label="Knowledge / AI（后期）\n索引 + 候选关系",fillcolor="#edfdf4"];
+  {rank=same;md;img;canvas;index;}
+ }
+ diag [label="横切能力：UTC 时间戳 · JSONL 日志 · Trace · 审计 · 健康诊断 · 安全策略 · 契约测试",fillcolor="#e2e8f0",color="#94a3b8"];
+ shell -> gateway; remote -> gateway; agent -> gateway; gateway -> core;
+ core -> resource;core -> doc;core -> plugin;core -> jobs;
+ resource -> md;doc -> canvas;plugin -> img;jobs -> index;
+ {rank=same;diag;}
+ md -> diag [style=invis];img -> diag [style=invis];canvas -> diag [style=invis];index -> diag [style=invis];
+}

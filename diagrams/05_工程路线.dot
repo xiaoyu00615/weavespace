@@ -1,0 +1,11 @@
+digraph G {
+ graph [fontname="Noto Sans CJK SC",rankdir=LR,bgcolor="#ffffff",pad="0.34",nodesep="0.24",ranksep="0.35",splines=polyline,label="WeaveSpace 工程阶段时间线 · 门槛制（非日历工期承诺）",labelloc=t,fontsize=22,fontcolor="#14213a"];
+ node [shape=box,style="rounded,filled",fontname="Noto Sans CJK SC",fontsize=11,margin="0.17,0.12",fillcolor="#eef2ff",color="#a5b4fc"];
+ edge [color="#94a3b8",arrowsize=0.6,penwidth=1.5];
+ f0 [label="F0\n架构审查",fillcolor="#dbeafe"];p0 [label="P0\n最小技术探针",fillcolor="#dbeafe"];
+ e1 [label="E01\n资源/存储"];e2 [label="E02\n编辑/插件"];e3 [label="E03\n工作区 UI"];
+ e4 [label="E04\n自定义画布",fillcolor="#dcfce7"];e5 [label="E05\n索引/知识",fillcolor="#dcfce7"];
+ e6 [label="E06\nAI 单文件",fillcolor="#fef3c7"];e7 [label="E07\n外部 AI",fillcolor="#fef3c7"];
+ e8 [label="E08\n远程/LAN",fillcolor="#fee2e2"];e9 [label="E09\n发布与可靠性",fillcolor="#fee2e2"];
+ f0->p0->e1->e2->e3->e4->e5->e6->e7->e8->e9;
+}

@@ -1,0 +1,18 @@
+{
+  "commandId": "cmd-example-001",
+  "idempotencyKey": "idem-unique-example-01",
+  "type": "document.replaceText",
+  "expectedVersion": "sha256:example-input-v1",
+  "target": {
+    "resourceId": "res-example-001",
+    "providerId": "local"
+  },
+  "payload": {
+    "baseRevision": 2,
+    "range": {
+      "start": 12,
+      "end": 24
+    },
+    "replacement": "调整后的文本"
+  }
+}
