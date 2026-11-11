@@ -6,6 +6,11 @@
   "description": "WeaveSpace P0 technical probe workspace (no functional release)",
   "scripts": {
     "test:p0": "node tests/run-all.ts",
+    "typecheck": "tsc -p tsconfig.json",
     "check:package": "python tools/check_package.py"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
   }
 }

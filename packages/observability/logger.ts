@@ -6,6 +6,7 @@
  */
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { ErrorCode } from '../contracts/errors.ts';
 import type { LogLevel, LogRecord } from '../contracts/types.ts';
 import { currentTrace, utcNow } from './trace.ts';
 
@@ -64,7 +65,8 @@ export interface LogFields {
   resourceId?: string;
   actorId?: string;
   result?: string;
-  errorCode?: string;
+  /** 必须是错误码注册表中的稳定码（contracts/errors.ts），不接受任意字符串。 */
+  errorCode?: ErrorCode;
   durationMs?: number;
   [extra: string]: unknown;
 }

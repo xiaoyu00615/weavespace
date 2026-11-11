@@ -32,6 +32,8 @@ test('STORAGE-04 写入与读取往返一致，内容版本随内容变化', asy
   try {
     const first = await h.provider.writeConditional('notes/a.md', '# A\n', null);
     assert.equal(first.status, 'COMMITTED');
+    // COMMITTED 必须携带内容版本，否则后续条件写入无从取值（类型与运行时都要能发现缺失）
+    assert.ok(first.contentVersion, 'COMMITTED 必须返回 contentVersion');
     assert.match(String(first.contentVersion), /^sha256:[0-9a-f]{64}$/);
 
     const read = await h.provider.read('notes/a.md');

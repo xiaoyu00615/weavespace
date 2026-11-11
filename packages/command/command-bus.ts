@@ -78,7 +78,8 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
     commandType: string;
     resourceId?: string;
     result: string;
-    errorCode?: string;
+    /** 与命令结果错误码同源，保证审计日志只能写入注册表中的稳定码。 */
+    errorCode?: CommandResult['errorCode'];
     durationMs?: number;
     commandId: string;
   }): void {

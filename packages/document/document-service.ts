@@ -74,7 +74,8 @@ export interface DocumentEvent {
   resourceId: string;
   occurredAt: string;
   traceId: string;
-  errorCode?: string;
+  /** 与 SaveResult 的错误码保持同源，避免与 LogRecord/错误码注册表脱节。 */
+  errorCode?: SaveResult['errorCode'];
   detail?: Record<string, unknown>;
 }
 
