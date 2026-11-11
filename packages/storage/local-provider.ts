@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SaveResult } from '../contracts/types.ts';
-import { fileExists, resolveInsideRoot } from './path-safety.ts';
+import { fileExists, isUntrustedResolution, resolveInsideRoot } from './path-safety.ts';
 
 export interface StorageFaultHooks {
   /** 在落盘前抛出即可模拟磁盘/IO 失败（CT-06）。 */
@@ -71,7 +71,8 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
     async stat(path: string): Promise<FileStat> {
       const check = resolveInsideRoot(rootDir, path);
       if (!check.ok) {
-        return { exists: false, size: 0, mtimeMs: 0, contentVersion: null };
+        // 安全拒绝不得伪装成「文件不存在」：必须以可识别错误码抛出（S4-D）
+        throw Object.assign(new Error(check.detail), { errorCode: check.errorCode });
       }
       try {
         const s = await stat(check.absolutePath);
@@ -133,6 +134,11 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       try {
         faults.beforeCommit?.();
         await mkdir(dirname(absolutePath), { recursive: true });
+        // mkdir 之后重新校验：目录创建可能引入新的重解析点，届时前面的检查已失效（S4-C）
+        const afterMkdir = resolveInsideRoot(rootDir, path);
+        if (!afterMkdir.ok) {
+          return { status: 'FAILED', errorCode: afterMkdir.errorCode };
+        }
         await writeFile(tempPath, content, 'utf8');
         await rename(tempPath, absolutePath);
       } catch (err) {
@@ -168,9 +174,18 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       }
       const out: string[] = [];
       async function walk(absDir: string, prefix: string): Promise<void> {
-        const entries = await readdir(absDir, { withFileTypes: true });
+        // 每一级目录都必须仍是可信解析结果，否则不再深入（S4-C：list 不得穿越链接）
+        if (isUntrustedResolution(absDir)) return;
+        let entries;
+        try {
+          entries = await readdir(absDir, { withFileTypes: true });
+        } catch {
+          return; // 目录不可读：跳过而不是让整个列表失败
+        }
         for (const entry of entries) {
           const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+          // 显式跳过 junction / 符号链接：dirent 是唯一能可靠识别 junction 的通道
+          if (entry.isSymbolicLink()) continue;
           if (entry.isDirectory()) {
             await walk(join(absDir, entry.name), relPath);
           } else if (entry.isFile()) {
