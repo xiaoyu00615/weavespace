@@ -233,8 +233,16 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
     async save(sessionId: string, serializer: Serializer): Promise<SaveResult> {
       const session = require(sessionId);
       const elapsed = startMonotonic();
+      // 保存代次：本次保存写入的是「哪一个 revision」的缓冲。
+      // 保存期间允许继续编辑（真实打字节奏），但由此产生的新编辑绝不能被当成已保存（DATA-002）。
+      const savedRevision = session.revision;
       session.state = 'SAVING';
-      emit({ type: 'SAVE_STARTED', sessionId, resourceId: session.resourceId });
+      emit({
+        type: 'SAVE_STARTED',
+        sessionId,
+        resourceId: session.resourceId,
+        detail: { revision: savedRevision },
+      });
 
       const payload = serializer(session.buffer);
       const result = await session.provider.writeConditional(
@@ -246,14 +254,29 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
 
       switch (result.status) {
         case 'COMMITTED': {
+          // baseVersion 始终指向「已经写入磁盘的版本」；当它与当前缓冲的代次不一致时，
+          // 说明保存期间又产生了新编辑 → 必须保持 dirty，只允许把状态退回 EDITING_DIRTY。
           session.baseVersion = result.contentVersion ?? null;
-          session.dirty = false;
-          session.state = 'CLEAN';
+          const editedDuringSave = session.revision !== savedRevision;
+          if (editedDuringSave) {
+            session.dirty = true;
+            session.state = 'EDITING_DIRTY';
+          } else {
+            session.dirty = false;
+            session.state = 'CLEAN';
+          }
           emit({
             type: 'SAVE_COMMITTED',
             sessionId,
             resourceId: session.resourceId,
-            detail: { contentVersion: session.baseVersion, durationMs, revision: session.revision },
+            detail: {
+              contentVersion: session.baseVersion,
+              durationMs,
+              revision: savedRevision,
+              savedRevision,
+              currentRevision: session.revision,
+              editedDuringSave,
+            },
           });
           return { ...result, durationMs };
         }

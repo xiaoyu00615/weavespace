@@ -11,7 +11,15 @@
 import type { CommandEnvelope, CommandResult, CommandStatus } from '../contracts/types.ts';
 import type { DocumentService, Serializer } from '../document/document-service.ts';
 import type { Logger } from '../observability/logger.ts';
-import { currentTrace, newOperationId, newTraceId, runWithTrace, startMonotonic, utcNow } from '../observability/trace.ts';
+import {
+  currentTrace,
+  newOperationId,
+  newTraceId,
+  runWithOperation,
+  runWithTrace,
+  startMonotonic,
+  utcNow,
+} from '../observability/trace.ts';
 import type { PermissionService } from '../permission/permission-service.ts';
 import type { StorageProvider } from '../storage/local-provider.ts';
 import { validateEnvelope, type EnvelopeViolation } from './validate.ts';
