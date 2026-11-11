@@ -1,0 +1,13 @@
+{
+  "id": "weavespace.markdown",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "fileExtensions": [".md", ".markdown"],
+  "provides": ["file.parser", "file.editor", "file.viewer", "file.serializer"],
+  "requires": ["weavespace.document", "weavespace.storage"],
+  "requestedPermissions": ["workspace.read", "workspace.write", "workspace.ui"],
+  "activationEvents": ["onFileExtension:.md", "onFileExtension:.markdown"],
+  "entrypoints": {
+    "host": "./index.ts"
+  }
+}

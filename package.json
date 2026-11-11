@@ -1,0 +1,11 @@
+{
+  "name": "weavespace",
+  "private": true,
+  "version": "0.0.0-p0",
+  "type": "module",
+  "description": "WeaveSpace P0 technical probe workspace (no functional release)",
+  "scripts": {
+    "test:p0": "node tests/run-all.ts",
+    "check:package": "python tools/check_package.py"
+  }
+}

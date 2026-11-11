@@ -1,0 +1,13 @@
+{
+  "id": "weavespace.image-viewer",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "fileExtensions": [".png", ".jpg", ".jpeg", ".webp"],
+  "provides": ["file.viewer"],
+  "requires": ["weavespace.document"],
+  "requestedPermissions": ["workspace.read", "workspace.ui"],
+  "activationEvents": ["onFileExtension:.png", "onFileExtension:.jpg"],
+  "entrypoints": {
+    "host": "./index.ts"
+  }
+}
