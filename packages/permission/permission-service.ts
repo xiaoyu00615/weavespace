@@ -3,6 +3,8 @@
  * 默认拒绝；范围语法为「项目根 / 目录前缀 / 单文件」三档探测方案（ADR 待定）。
  * scope 与 resourcePath 都会先规范化为「相对项目根、`/` 分隔」的唯一形式再比较；
  * 越界（`..` 越过根）、绝对路径、盘符一律拒绝（P0-1A / S3）。
+ * 显式全项目授权**只**承认空字符串；`docs/..` 等"规范化后变空"的写法按配置错误拒绝，
+ * 以免被误解为全项目权限（P0-1A / S3 补充）。
  * 不拥有身份凭据：actorId 必须由 Gateway 绑定后传入（docs/04）。
  */
 import type { ErrorCode } from '../contracts/errors.ts';
@@ -63,13 +65,28 @@ function canonicalizeScopePath(path: string): string | null {
   return segments.join('/');
 }
 
-/** 授权表里的 scope 必须是规范形式，否则立刻失败（fail-closed）。 */
+/**
+ * 解析 scope。
+ *
+ * 关键区分：「显式全项目」与「规范化后意外变空」不是一回事。
+ * - 只有**空字符串**这一种写法代表显式全项目授权；
+ * - `docs/..`、`docs/sub/../..`、`.`、`./` 等写法规范化后同样是空串，
+ *   但它们表达的是具体路径，不得因此被放大成全项目权限 → 一律按配置错误拒绝。
+ *
+ * 授权表里的 scope 必须是规范形式，否则立刻失败（fail-closed）。
+ */
 function requireCanonicalScope(scope: string): string {
+  if (scope === '') return ''; // 显式全项目
   const canonical = canonicalizeScopePath(scope);
-  if (canonical === null) {
-    throw Object.assign(new TypeError(`非法 scope（越界或绝对路径）: ${scope}`), {
-      errorCode: 'ERR_PERMISSION_DENIED' as const,
-    });
+  if (canonical === null || canonical === '') {
+    throw Object.assign(
+      new TypeError(
+        canonical === ''
+          ? `非法 scope（规范化后为空，不得扩大为全项目）: ${scope}`
+          : `非法 scope（越界或绝对路径）: ${scope}`,
+      ),
+      { errorCode: 'ERR_PERMISSION_DENIED' as const },
+    );
   }
   return canonical;
 }
@@ -135,9 +152,10 @@ export function createPermissionService(
     },
 
     revoke(entry: GrantEntry) {
-      // 等价写法（`./docs/` 与 `docs`）必须撤销同一条授权
-      const scope = canonicalizeScopePath(entry.scope);
-      if (scope === null) return; // 非法 scope 不可能存在于授权表
+      // 与 grant 使用同一判据：只有显式 '' 才指向全项目授权；
+      // `docs/..` 这类"规范化后变空"的写法不得撤销全项目授权（否则等于一次误伤式降权）。
+      const scope = entry.scope === '' ? '' : canonicalizeScopePath(entry.scope);
+      if (scope === null || (scope === '' && entry.scope !== '')) return;
       const idx = entries.findIndex(
         (e) => e.actorId === entry.actorId && e.action === entry.action && e.scope === scope,
       );

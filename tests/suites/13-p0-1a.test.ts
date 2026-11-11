@@ -13,6 +13,32 @@ import { createHarness, writeProjectFile } from '../helpers.ts';
 import { contentVersionOf, resolveInsideRoot } from '../../packages/storage/index.ts';
 import { createPermissionService } from '../../packages/permission/index.ts';
 
+/**
+ * 捕获并断言「非法 scope」异常的三条不变量：
+ * ① 必须抛异常（不是静默接受）；② 错误信息必须能区分是哪一类非法；
+ * ③ 必须保留稳定错误码 ERR_PERMISSION_DENIED（供审计/日志/调用方分流，不依赖 message 文案）。
+ */
+function assertInvalidScope(
+  fn: () => unknown,
+  label: string,
+  messagePattern: RegExp = /非法 scope/,
+): void {
+  let caught: unknown;
+  try {
+    fn();
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught instanceof Error, `${label}：必须抛出异常，而不是静默接受`);
+  const error = caught as Error & { errorCode?: string };
+  assert.match(error.message, messagePattern, `${label}：错误信息必须可识别`);
+  assert.equal(
+    error.errorCode,
+    'ERR_PERMISSION_DENIED',
+    `${label}：必须保留稳定错误码 ERR_PERMISSION_DENIED`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // S1：Command Bus 缺 runWithOperation 导入 → 带 operationId 的命令直接抛错
 // ---------------------------------------------------------------------------
@@ -261,17 +287,17 @@ test('P0-1A/S3b 授权路径与 storage 实际解析路径使用同一规范形�
 });
 
 test('P0-1A/S3c 非法 scope 不得被接受（授权表本身也要 fail-closed）', () => {
-  assert.throws(
+  assertInvalidScope(
     () => createPermissionService([{ actorId: 'w', action: 'write', scope: 'docs/../../etc' }]),
-    /非法 scope/,
-    '构造时出现越界 scope 必须立刻失败，而不是静默存进授权表',
+    '构造时出现越界 scope',
+    /越界或绝对路径/,
   );
 
   const permission = createPermissionService([{ actorId: 'w', action: 'write', scope: 'docs' }]);
-  assert.throws(
+  assertInvalidScope(
     () => permission.grant({ actorId: 'w', action: 'write', scope: '../root' }),
-    /非法 scope/,
-    '授予越界 scope 必须被拒绝',
+    '授予越界 scope',
+    /越界或绝对路径/,
   );
   assert.deepEqual(
     permission.grantsOf('w').map((g) => g.scope),
@@ -282,4 +308,81 @@ test('P0-1A/S3c 非法 scope 不得被接受（授权表本身也要 fail-closed
   // 等价写法必须被视为同一 scope：撤销用 ./docs/ 也能撤销 docs
   permission.revoke({ actorId: 'w', action: 'write', scope: './docs/' });
   assert.deepEqual(permission.grantsOf('w'), [], '等价规范形式的 scope 必须能被撤销');
+});
+
+test('P0-1A/S3d 隐式全项目 scope 必须被拒绝：不得因「规范化后变空」扩大为全项目', () => {
+  // 这些写法规范化后都是 ''，而 '' 在 scope 语义里等于「整个项目」→ 必须按配置错误拒绝
+  const implicitWholeProject = ['docs/..', 'docs/sub/../..', 'a/..', '.', './', '././'];
+
+  for (const scope of implicitWholeProject) {
+    // ① 初始授权配置不得借它扩权
+    assertInvalidScope(
+      () => createPermissionService([{ actorId: 'w', action: 'write', scope }]),
+      `初始授权不得接受隐式全项目 scope: ${scope}`,
+      /规范化后为空/,
+    );
+
+    // ② 运行时 grant 同样不得借它扩权，且授权表不得被污染
+    const permission = createPermissionService([{ actorId: 'w', action: 'write', scope: 'docs' }]);
+    assertInvalidScope(
+      () => permission.grant({ actorId: 'w', action: 'write', scope }),
+      `grant 不得接受隐式全项目 scope: ${scope}`,
+      /规范化后为空/,
+    );
+    assert.deepEqual(
+      permission.grantsOf('w').map((g) => g.scope),
+      ['docs'],
+      `隐式全项目 scope 不得改变授权表: ${scope}`,
+    );
+  }
+
+  // ③ 副作用断言：被拒绝之后，actor 仍然拿不到 docs 之外的写权限
+  const permission = createPermissionService([{ actorId: 'w', action: 'write', scope: 'docs' }]);
+  assertInvalidScope(
+    () => permission.grant({ actorId: 'w', action: 'write', scope: 'docs/..' }),
+    'grant 不得接受 docs/..',
+    /规范化后为空/,
+  );
+  assert.equal(
+    permission.authorize({ actorId: 'w', action: 'write', resourcePath: 'docs/a.md' }).allowed,
+    true,
+    'docs 内的写权限必须保留',
+  );
+  for (const outside of ['secret.md', 'other/x.md', 'docsx/y.md']) {
+    assert.equal(
+      permission.authorize({ actorId: 'w', action: 'write', resourcePath: outside }).allowed,
+      false,
+      `隐式全项目写法不得让 docs 授权覆盖 ${outside}`,
+    );
+  }
+});
+
+test('P0-1A/S3e 显式全项目 scope（空字符串）仍然正常工作', () => {
+  const permission = createPermissionService([{ actorId: 'admin', action: 'write', scope: '' }]);
+
+  // 资源访问路径的正常规范化行为必须保留
+  for (const resourcePath of ['', 'a.md', 'a/b/c.md', 'a/b/../c.md', 'docs\\x.md', './y.md']) {
+    assert.equal(
+      permission.authorize({ actorId: 'admin', action: 'write', resourcePath }).allowed,
+      true,
+      `显式全项目授权必须覆盖: ${resourcePath || '(根)'}`,
+    );
+  }
+
+  // 运行时 grant 显式 '' 也仍然是全项目
+  const runtime = createPermissionService([{ actorId: 'reader', action: 'read', scope: 'docs/sub' }]);
+  runtime.grant({ actorId: 'reader', action: 'read', scope: '' });
+  assert.equal(runtime.authorize({ actorId: 'reader', action: 'read', resourcePath: 'any/where.md' }).allowed, true);
+
+  // 撤销：只有显式 '' 能撤销全项目；隐式写法不得误伤
+  const revocable = createPermissionService([{ actorId: 'admin', action: 'write', scope: '' }]);
+  revocable.revoke({ actorId: 'admin', action: 'write', scope: 'docs/..' });
+  assert.deepEqual(
+    revocable.grantsOf('admin').map((g) => g.scope),
+    [''],
+    '隐式全项目写法不得撤销显式全项目授权',
+  );
+  revocable.revoke({ actorId: 'admin', action: 'write', scope: '' });
+  assert.deepEqual(revocable.grantsOf('admin'), [], '显式全项目授权必须可被显式撤销');
+  assert.equal(revocable.authorize({ actorId: 'admin', action: 'write', resourcePath: 'x.md' }).allowed, false);
 });
