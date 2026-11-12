@@ -5,12 +5,25 @@
 
 ## 公开接口（`index.ts`）
 - `createDocumentService({ logger?, clock? })` → `DocumentService`
-- `openSession({ resourceId, path, provider })` → `ViewHandle`（同一 resourceId 复用同一 Session）
+- `openSession({ resourceId, path, provider })` → `ViewHandle`（同一 resourceId 复用同一 Session，但必须先通过身份校验）
 - `closeView(viewId)` → `{ closed, protectedDirty }`
 - `applyEdit(sessionId, buffer)` / `getBuffer(sessionId)` / `getSession*`
 - `save(sessionId, serializer)` → `SaveResult`
 - `reconcile(sessionId, serializer)` → `APPLIED | NOT_APPLIED | UNKNOWN`
 - `detectExternalChange(sessionId)` / `drainEvents()`
+
+## 资源身份绑定（S8-01）
+`Session` 在创建时固定 `providerScope`（providerId + 规范根目录）与 `resourceKey`（规范相对路径）。
+`openSession` 命中已有 `resourceId` 时必须两者都一致，否则抛
+`ERR_RESOURCE_IDENTITY_CONFLICT`——**不隐式复用、不隐式重绑定**；相同资源的多视图共享不变。
+
+只读身份查询（供 CommandBus 在授权前判断，不暴露 Provider 对象或缓冲）：
+- `identityFor({ resourceId, path, provider })` → `{status:'none'|'match'|'conflict', ...}`
+- `inspectSession(sessionId)` → `SessionIdentity`
+- `matchesSessionPath(sessionId, candidatePath)` → `boolean`
+
+**可信边界**：`getBuffer/applyEdit/save/reconcile` 是可信内部 API；未授权调用方必须经
+CommandBus（每次操作按实际资源重新授权）。`sessionId` / `viewId` 都不是访问凭证（S8-04）。
 
 ## 数据所有权
 Session 是不可重建状态：未保存缓冲绝不能被静默丢弃（DATA-002）。磁盘字节仍归 storage；编码格式归插件。
@@ -27,7 +40,8 @@ Session 是不可重建状态：未保存缓冲绝不能被静默丢弃（DATA-0
 1. 会话仅存于内存；进程退出后缓冲不保留（恢复区未实现，docs/06「恢复策略」）。
 2. `reconcile` 以**字节级 contentVersion**（序列化结果的 UTF-8 字节 SHA-256）与磁盘比较判定
    APPLIED，不再比较解码后的文本；无法读取或无法确认时保持 `UNKNOWN`。
-3. 无 `watch`；外部变更需主动 `detectExternalChange`。
+3. 无 `watch`；外部变更需主动 `detectExternalChange`。已建立基线（`baseVersion` 非空）的文件
+   消失时 `changed` 为 `true`；从未存在的新建会话仍为 `false`（S8-06）。
 4. 编码安全在 storage 侧强制（S5）：非 UTF-8 / 二进制内容不会进入会话；
    `openSession` 只在「真正不存在」时创建空会话，**路径安全拒绝与编码/权限/IO 失败一律抛出**，
    不产生空会话（F01）。

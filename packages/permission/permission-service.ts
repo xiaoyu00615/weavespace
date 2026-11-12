@@ -16,6 +16,11 @@ export interface AuthRequest {
   action: PermissionAction;
   /** 相对项目根的路径；'' 表示整个项目。 */
   resourcePath: string;
+  /**
+   * 资源所属 Provider（S8-03）。缺省视为本地 Provider。
+   * 同一相对路径在不同 Provider 下**不是**同一授权目标。
+   */
+  providerId?: string;
 }
 
 export interface AuthDecision {
@@ -29,6 +34,11 @@ export interface GrantEntry {
   actorId: string;
   action: PermissionAction;
   scope: string;
+  /**
+   * 授权绑定的 Provider（S8-03）。缺省 = 本地 Provider。
+   * 保守策略：非本地 Provider 只接受**显式匹配**的授权，不会被本地授权继承。
+   */
+  providerId?: string;
 }
 
 export interface PermissionService {
@@ -101,6 +111,11 @@ function scopeMatches(canonicalScope: string, canonicalPath: string): boolean {
   return canonicalPath.startsWith(`${canonicalScope}/`);
 }
 
+/** Provider 缺省视为本地；不同 Provider 的授权互不继承（S8-03）。 */
+function providerKey(providerId: string | undefined): string {
+  return providerId ?? 'local';
+}
+
 export function createPermissionService(
   initial: readonly GrantEntry[] = [],
 ): PermissionService {
@@ -127,17 +142,19 @@ export function createPermissionService(
           reason: `资源路径非法（越界或绝对路径），默认拒绝: ${String(request.resourcePath)}`,
         };
       }
+      const requestProvider = providerKey(request.providerId);
       const hit = entries.find(
         (e) =>
           e.actorId === request.actorId &&
           e.action === request.action &&
+          providerKey(e.providerId) === requestProvider &&
           scopeMatches(e.scope, resourcePath),
       );
       if (!hit) {
         return {
           allowed: false,
           errorCode: 'ERR_PERMISSION_DENIED',
-          reason: `actor ${request.actorId} 无 ${request.action} 权限（范围: ${resourcePath || '整个项目'}）`,
+          reason: `actor ${request.actorId} 无 ${request.action} 权限（范围: ${resourcePath || '整个项目'}，Provider: ${requestProvider}）`,
         };
       }
       return { allowed: true, reason: 'scope 命中', matchedScope: hit.scope };
@@ -145,8 +162,13 @@ export function createPermissionService(
 
     grant(entry: GrantEntry) {
       const scope = requireCanonicalScope(entry.scope);
+      const provider = providerKey(entry.providerId);
       const exists = entries.some(
-        (e) => e.actorId === entry.actorId && e.action === entry.action && e.scope === scope,
+        (e) =>
+          e.actorId === entry.actorId &&
+          e.action === entry.action &&
+          e.scope === scope &&
+          providerKey(e.providerId) === provider,
       );
       if (!exists) entries.push({ ...entry, scope });
     },
@@ -156,8 +178,13 @@ export function createPermissionService(
       // `docs/..` 这类"规范化后变空"的写法不得撤销全项目授权（否则等于一次误伤式降权）。
       const scope = entry.scope === '' ? '' : canonicalizeScopePath(entry.scope);
       if (scope === null || (scope === '' && entry.scope !== '')) return;
+      const provider = providerKey(entry.providerId);
       const idx = entries.findIndex(
-        (e) => e.actorId === entry.actorId && e.action === entry.action && e.scope === scope,
+        (e) =>
+          e.actorId === entry.actorId &&
+          e.action === entry.action &&
+          e.scope === scope &&
+          providerKey(e.providerId) === provider,
       );
       if (idx >= 0) entries.splice(idx, 1);
     },

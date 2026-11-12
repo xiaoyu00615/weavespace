@@ -12,9 +12,57 @@ import type { DocumentState, DocumentStateView, SaveResult } from '../contracts/
 import type { Logger } from '../observability/logger.ts';
 import { currentTrace, startMonotonic } from '../observability/trace.ts';
 import { contentVersionOf, type ReadResult, type StorageProvider } from '../storage/local-provider.ts';
+import { canonicalRoot, resolveInsideRoot } from '../storage/path-safety.ts';
 import { encodeUtf8Text } from '../storage/text-safety.ts';
 
 export type Serializer = (buffer: string) => string;
+
+const WIN = process.platform === 'win32';
+
+/**
+ * Provider 身份（S8-01）：`providerId` 字符串相同**不代表**存储根相同，
+ * 因此身份由「providerId + 规范根目录」共同决定。
+ */
+function providerScopeOf(provider: StorageProvider): string {
+  let root = provider.rootDir ?? '';
+  try {
+    root = canonicalRoot(provider.rootDir);
+  } catch {
+    // 根无法确认时保留字面值：此时任何真实读写都会被 storage 的 fail-closed 拒绝
+  }
+  return `${provider.providerId}::${WIN ? root.toLowerCase() : root}`;
+}
+
+/**
+ * 资源键（S8-01）：与 S4 固定根目录边界规则保持一致——不可信/越界/经过重解析点的路径
+ * 在这里就抛错，而不是等到 read 时才发现。
+ */
+function resourceKeyOf(provider: StorageProvider, path: string): string {
+  const check = resolveInsideRoot(provider.rootDir, path);
+  if (!check.ok) {
+    throw Object.assign(new Error(check.detail), { errorCode: check.errorCode });
+  }
+  const rel = check.relativePath.replace(/\\/g, '/');
+  return WIN ? rel.toLowerCase() : rel;
+}
+
+/**
+ * 会话的身份描述（只读、可安全交给 CommandBus 使用）。
+ * 不包含 Provider 对象、缓冲或任何可变引用。
+ */
+export interface SessionIdentity {
+  readonly sessionId: string;
+  readonly resourceId: string;
+  readonly path: string;
+  readonly providerId: string;
+  readonly providerScope: string;
+}
+
+/** 身份探测结果：供 CommandBus 在**授权之前**判断是否会发生会话复用冲突（S8-02）。 */
+export type ResourceIdentityProbe =
+  | { status: 'none' }
+  | { status: 'match'; identity: SessionIdentity }
+  | { status: 'conflict'; claimedPath: string; identity: SessionIdentity };
 
 /**
  * 打开文本会话时的读取（S5-04 / F01）。
@@ -64,6 +112,9 @@ interface Session {
   resourceId: string;
   path: string;
   provider: StorageProvider;
+  /** 创建时固定的 Provider 身份与规范资源键，用于拒绝隐式复用（S8-01）。 */
+  providerScope: string;
+  resourceKey: string;
   buffer: string;
   baseVersion: string | null;
   revision: number;
@@ -74,6 +125,12 @@ interface Session {
 }
 
 export interface DocumentService {
+  /**
+   * 打开（或复用）权威会话。
+   *
+   * 注意：本对象是**可信内部 API**。未授权调用方必须经 CommandBus（它会在每次操作前
+   * 按实际资源重新授权）；sessionId 只是定位标识，不是访问凭证（S8-04）。
+   */
   openSession(input: OpenSessionInput): Promise<ViewHandle>;
   closeView(viewId: string): Promise<CloseViewResult>;
   getSession(sessionId: string): DocumentStateView | undefined;
@@ -84,6 +141,12 @@ export interface DocumentService {
   reconcile(sessionId: string, serializer: Serializer): Promise<ReconcileResult>;
   detectExternalChange(sessionId: string): Promise<{ changed: boolean; diskVersion: string | null }>;
   drainEvents(): DocumentEvent[];
+  /** 只读身份查询：按 resourceId 探测已有会话的身份（S8-02，不返回 Provider/缓冲）。 */
+  identityFor(input: OpenSessionInput): ResourceIdentityProbe;
+  /** 只读身份查询：按 sessionId 取会话的实际资源身份（S8-02）。 */
+  inspectSession(sessionId: string): SessionIdentity | undefined;
+  /** 判断候选路径是否与会话绑定的规范路径一致（S8-02，path 的存在性校验）。 */
+  matchesSessionPath(sessionId: string, candidatePath: string): boolean;
 }
 
 export interface DocumentEvent {
@@ -153,8 +216,44 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
     return s;
   }
 
+  function toIdentity(session: Session): SessionIdentity {
+    return Object.freeze({
+      sessionId: session.sessionId,
+      resourceId: session.resourceId,
+      path: session.path,
+      providerId: session.provider.providerId,
+      providerScope: session.providerScope,
+    });
+  }
+
+  /** resourceId 命中时校验「Provider 身份 + 规范路径」是否仍一致（S8-01）。 */
+  function probeIdentity(input: OpenSessionInput): ResourceIdentityProbe {
+    const existingId = sessionsByResource.get(input.resourceId);
+    const session = existingId ? sessions.get(existingId) : undefined;
+    if (!session) return { status: 'none' };
+
+    const incomingScope = providerScopeOf(input.provider);
+    const incomingKey = resourceKeyOf(input.provider, input.path);
+    if (session.providerScope === incomingScope && session.resourceKey === incomingKey) {
+      return { status: 'match', identity: toIdentity(session) };
+    }
+    return { status: 'conflict', claimedPath: input.path, identity: toIdentity(session) };
+  }
+
   return {
     async openSession(input: OpenSessionInput): Promise<ViewHandle> {
+      // 先做身份探测：不一致必须在任何读取/副作用之前拒绝，不允许隐式重绑定（S8-01）
+      const probe = probeIdentity(input);
+      if (probe.status === 'conflict') {
+        throw Object.assign(
+          new Error(
+            `资源身份冲突：resourceId ${input.resourceId} 已绑定 ${probe.identity.providerId}:${probe.identity.path}，` +
+              `本次请求为 ${input.provider.providerId}:${input.path}`,
+          ),
+          { errorCode: 'ERR_RESOURCE_IDENTITY_CONFLICT' as const },
+        );
+      }
+
       let sessionId = sessionsByResource.get(input.resourceId);
       let session = sessionId ? sessions.get(sessionId) : undefined;
 
@@ -166,6 +265,8 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
           resourceId: input.resourceId,
           path: input.path,
           provider: input.provider,
+          providerScope: providerScopeOf(input.provider),
+          resourceKey: resourceKeyOf(input.provider, input.path),
           buffer: read?.content ?? '',
           baseVersion: read?.contentVersion ?? null,
           revision: 0,
@@ -457,8 +558,31 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
     async detectExternalChange(sessionId: string) {
       const session = require(sessionId);
       const stat = await session.provider.stat(session.path);
-      const changed = stat.exists && stat.contentVersion !== session.baseVersion;
+      // S8-06：原本存在（已建立基线）的文件消失必须报告变化；
+      // 只有「从未存在的新建会话」才允许 changed:false。I/O/路径错误仍照常抛出。
+      const changed = stat.exists
+        ? stat.contentVersion !== session.baseVersion
+        : session.baseVersion !== null;
       return { changed, diskVersion: stat.contentVersion };
+    },
+
+    identityFor(input: OpenSessionInput): ResourceIdentityProbe {
+      return probeIdentity(input);
+    },
+
+    inspectSession(sessionId: string): SessionIdentity | undefined {
+      const session = sessions.get(sessionId);
+      return session ? toIdentity(session) : undefined;
+    },
+
+    matchesSessionPath(sessionId: string, candidatePath: string): boolean {
+      const session = sessions.get(sessionId);
+      if (!session) return false;
+      try {
+        return resourceKeyOf(session.provider, candidatePath) === session.resourceKey;
+      } catch {
+        return false;
+      }
     },
 
     drainEvents() {

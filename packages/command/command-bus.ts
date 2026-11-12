@@ -7,9 +7,15 @@
  * - idempotencyKey 命中则返回原收据，不重复产生副作用（CT-07）。
  * - UNKNOWN 不入收据、不自动重放：必须经 document.reconcile 核对。
  * - 每次判定与结果都写审计记录（actorId/时间/资源/结果）。
+ *
+ * 资源身份（S8）：
+ * - 授权的对象必须是**实际资源**（会话绑定的 Provider + 规范路径），不是调用方声称的 path；
+ * - target 与 payload 的资源声明必须一致，二者与会话实际身份也必须一致；
+ * - 审计记录实际资源；拒绝时区分「声称」与「已验证」；
+ * - sessionId 只是定位标识，不是访问凭证：每次访问都重新授权（S8-04）。
  */
 import type { CommandEnvelope, CommandResult, CommandStatus } from '../contracts/types.ts';
-import type { DocumentService, Serializer } from '../document/document-service.ts';
+import type { DocumentService, Serializer, SessionIdentity } from '../document/document-service.ts';
 import type { Logger } from '../observability/logger.ts';
 import {
   currentTrace,
@@ -54,9 +60,26 @@ interface HandlerOutcome {
   cacheable?: boolean;
 }
 
+/** 已经过解析与身份校验的实际操作目标（S8-02）。 */
+interface ResolvedTarget {
+  resourceId: string;
+  /** 用于授权的路径：命中已有会话时取会话绑定的实际路径。 */
+  path: string;
+  providerId: string;
+  provider: StorageProvider;
+  sessionId?: string;
+}
+
+interface ReceiptEntry {
+  outcome: CommandDispatchOutcome;
+  /** 命令语义 + 实际目标；同一幂等键不得跨语义/跨目标复用（S8-07）。 */
+  fingerprint: string;
+}
+
 export interface CommandBus {
   dispatch(envelope: CommandEnvelope, ctx: CommandContext): Promise<CommandDispatchOutcome>;
-  getResult(idempotencyKey: string): CommandDispatchOutcome | undefined;
+  /** 只返回该 actor 自己的收据；缺少 actorId 时一律不返回（S8-07）。 */
+  getResult(idempotencyKey: string, actorId?: string): CommandDispatchOutcome | undefined;
   receiptCount(): number;
 }
 
@@ -69,7 +92,7 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
   const { document, permission, resolveProvider } = options;
   const logger = options.logger;
   const clock = options.clock ?? (() => new Date());
-  const receipts = new Map<string, CommandDispatchOutcome>();
+  const receipts = new Map<string, ReceiptEntry>();
   const seenCommandIds = new Set<string>();
 
   function audit(entry: {
@@ -78,13 +101,14 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
     commandType: string;
     resourceId?: string;
     result: string;
-    /** 与命令结果错误码同源，保证审计日志只能写入注册表中的稳定码。 */
     errorCode?: CommandResult['errorCode'];
     durationMs?: number;
     commandId: string;
+    extra?: Record<string, unknown>;
   }): void {
     logger?.log({
       ...entry,
+      ...(entry.extra ?? {}),
       level: 'INFO',
       kind: 'AUDIT',
       event: entry.event,
@@ -92,35 +116,27 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
     });
   }
 
-  async function run(
-    envelope: CommandEnvelope,
-    ctx: CommandContext,
-    resourcePath: string | undefined,
-  ): Promise<HandlerOutcome> {
+  async function run(envelope: CommandEnvelope, target: ResolvedTarget): Promise<HandlerOutcome> {
     const payload = (envelope.payload ?? {}) as Record<string, unknown>;
 
     switch (envelope.type) {
       case 'document.open': {
-        const providerId = typeof payload.providerId === 'string' ? payload.providerId : 'local';
-        const provider = resolveProvider(providerId);
-        if (!provider) {
-          return { status: 'REJECTED', errorCode: 'ERR_RESOURCE_NOT_FOUND' };
-        }
-        const resourceId = String(payload.resourceId ?? envelope.target?.resourceId ?? '');
-        const path = String(payload.path ?? '');
-        const handle = await document.openSession({ resourceId, path, provider });
+        const handle = await document.openSession({
+          resourceId: target.resourceId,
+          path: target.path,
+          provider: target.provider,
+        });
         return { status: 'APPLIED', result: handle };
       }
 
       case 'document.applyEdit': {
-        const sessionId = String(payload.sessionId ?? '');
         const buffer = String(payload.buffer ?? '');
-        const view = document.applyEdit(sessionId, buffer);
+        const view = document.applyEdit(target.sessionId!, buffer);
         return { status: 'APPLIED', result: view };
       }
 
       case 'document.save': {
-        const sessionId = String(payload.sessionId ?? '');
+        const sessionId = target.sessionId!;
         const session = document.getSession(sessionId);
         if (!session) {
           return { status: 'REJECTED', errorCode: 'ERR_DOCUMENT_NOT_FOUND' };
@@ -182,11 +198,10 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
       return dispatchImpl(envelope, ctx);
     },
 
-    getResult(idempotencyKey: string) {
-      for (const [key, value] of receipts) {
-        if (key.endsWith(`::${idempotencyKey}`)) return value;
-      }
-      return undefined;
+    getResult(idempotencyKey: string, actorId?: string) {
+      // S8-07：收据是「该 actor 的操作结果」，不得跨主体查询；无 actor 上下文一律不返回。
+      if (!actorId) return undefined;
+      return receipts.get(`${actorId}::${idempotencyKey}`)?.outcome;
     },
 
     receiptCount() {
@@ -210,6 +225,7 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
       const reject = (
         errorCode: CommandResult['errorCode'],
         violations?: EnvelopeViolation[],
+        extra?: Record<string, unknown>,
       ): CommandDispatchOutcome => {
         const out: CommandDispatchOutcome = {
           commandId: envelope?.commandId ?? 'unknown',
@@ -221,11 +237,36 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
           actorId: ctx.actorId,
           event: 'COMMAND_REJECTED',
           commandType: envelope?.type ?? 'unknown',
-          resourceId: envelope?.target?.resourceId,
+          resourceId: typeof extra?.resourceId === 'string' ? extra.resourceId : undefined,
           result: 'REJECTED',
           errorCode,
           durationMs: elapsed(),
           commandId: out.commandId,
+          extra,
+        });
+        return out;
+      };
+
+      /**
+       * 无法定位目标（会话不存在）沿用既有契约：按 FAILED 结束而不是 REJECTED，
+       * 以保持 docs/04「执行期失败」语义与 CONTRACT-07 的断言不变。
+       * 此路径不触碰任何资源，因此不需要（也无法）做资源授权。
+       */
+      const fail = (errorCode: CommandResult['errorCode']): CommandDispatchOutcome => {
+        const out: CommandDispatchOutcome = {
+          commandId: envelope.commandId,
+          status: 'FAILED',
+          errorCode,
+        };
+        audit({
+          actorId: ctx.actorId,
+          event: 'COMMAND_COMPLETED',
+          commandType: envelope.type,
+          result: 'FAILED',
+          errorCode,
+          durationMs: elapsed(),
+          commandId: out.commandId,
+          extra: { reason: '目标不可定位' },
         });
         return out;
       };
@@ -241,23 +282,6 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
       }
       seenCommandIds.add(envelope.commandId);
 
-      // 幂等：先查收据，避免重复副作用
-      if (envelope.idempotencyKey) {
-        const cached = receipts.get(`${ctx.actorId}::${envelope.idempotencyKey}`);
-        if (cached) {
-          audit({
-            actorId: ctx.actorId,
-            event: 'COMMAND_DEDUPLICATED',
-            commandType: envelope.type,
-            resourceId: envelope.target?.resourceId,
-            result: cached.status,
-            durationMs: elapsed(),
-            commandId: envelope.commandId,
-          });
-          return { ...cached, commandId: envelope.commandId, deduplicated: true };
-        }
-      }
-
       const isWrite = WRITE_COMMANDS.has(envelope.type);
       const known = isWrite || READ_COMMANDS.has(envelope.type);
       if (!known) {
@@ -270,30 +294,175 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
         ]);
       }
 
-      const resourcePath =
-        (envelope.payload as Record<string, unknown> | undefined)?.path as string | undefined;
-      const authz = permission.authorize({
-        actorId: ctx.actorId,
-        action: isWrite ? 'write' : 'read',
-        resourcePath: resourcePath ?? '',
-      });
-      audit({
-        actorId: ctx.actorId,
-        event: 'PERMISSION_DECIDED',
-        commandType: envelope.type,
-        resourceId: envelope.target?.resourceId,
-        result: authz.allowed ? 'ALLOWED' : 'DENIED',
-        errorCode: authz.allowed ? undefined : authz.errorCode,
-        durationMs: elapsed(),
-        commandId: envelope.commandId,
-      });
-      if (!authz.allowed) {
-        return reject(authz.errorCode ?? 'ERR_PERMISSION_DENIED');
+      const payload = (envelope.payload ?? {}) as Record<string, unknown>;
+      const payloadResourceId = typeof payload.resourceId === 'string' ? payload.resourceId : undefined;
+      const payloadProviderId = typeof payload.providerId === 'string' ? payload.providerId : undefined;
+      const payloadPath = typeof payload.path === 'string' && payload.path !== '' ? payload.path : undefined;
+
+      // S8-02：target 与 payload 的资源声明不能互相矛盾
+      if (envelope.target?.resourceId && payloadResourceId && envelope.target.resourceId !== payloadResourceId) {
+        return reject('ERR_COMMAND_INVALID', [
+          { field: 'resourceId', reason: 'envelope.target.resourceId 与 payload.resourceId 不一致' },
+        ]);
+      }
+      if (envelope.target?.providerId && payloadProviderId && envelope.target.providerId !== payloadProviderId) {
+        return reject('ERR_COMMAND_INVALID', [
+          { field: 'providerId', reason: 'envelope.target.providerId 与 payload.providerId 不一致' },
+        ]);
+      }
+
+      const claimedResourceId = envelope.target?.resourceId ?? payloadResourceId;
+      const claimedProviderId = envelope.target?.providerId ?? payloadProviderId;
+
+      // ---- 解析实际目标：授权之前必须先确定“到底操作谁”（S8-02） ----
+      let target: ResolvedTarget;
+      try {
+        if (envelope.type === 'document.open') {
+          if (!payloadPath) {
+            return reject('ERR_COMMAND_INVALID', [
+              { field: 'path', reason: '打开资源必须声明 path（禁止回退到根范围授权）' },
+            ]);
+          }
+          const providerId = claimedProviderId ?? 'local';
+          // resourceId 缺省时按「Provider + 声明路径」派生一个稳定标识，
+          // 避免用空串做键（空串会让不同资源共用同一会话槽位）。
+          const resourceId = claimedResourceId ?? `derived:${providerId}:${payloadPath}`;
+          const provider = resolveProvider(providerId);
+          if (!provider) {
+            return reject('ERR_RESOURCE_NOT_FOUND', undefined, { providerId });
+          }
+          const probe = document.identityFor({ resourceId, path: payloadPath, provider });
+          if (probe.status === 'conflict') {
+            return reject('ERR_RESOURCE_IDENTITY_CONFLICT', undefined, {
+              resourceId: probe.identity.resourceId,
+              claimedResourceId,
+              claimedPath: payloadPath,
+              verifiedPath: probe.identity.path,
+              verifiedProviderId: probe.identity.providerId,
+              reason: 'resourceId 已绑定其他 Provider/路径，不得隐式复用',
+            });
+          }
+          target =
+            probe.status === 'match'
+              ? {
+                  resourceId: probe.identity.resourceId,
+                  path: probe.identity.path,
+                  providerId: probe.identity.providerId,
+                  provider,
+                  sessionId: probe.identity.sessionId,
+                }
+              : { resourceId, path: payloadPath, providerId, provider };
+        } else {
+          const sessionId = String(payload.sessionId ?? '');
+          if (!sessionId) {
+            return reject('ERR_COMMAND_INVALID', [{ field: 'sessionId', reason: '必须声明 sessionId' }]);
+          }
+          const identity: SessionIdentity | undefined = document.inspectSession(sessionId);
+          if (!identity) {
+            // 既有契约（CONTRACT-06/07）对「目标会话不存在」的状态码并不一致：
+            // save 视为请求拒绝（REJECTED），applyEdit 视为执行失败（FAILED）。
+            // 两者都已被端到端契约测试固定，本轮不改语义，只在 README 记录该不一致。
+            return envelope.type === 'document.save'
+              ? reject('ERR_DOCUMENT_NOT_FOUND')
+              : fail('ERR_DOCUMENT_NOT_FOUND');
+          }
+          if (claimedResourceId && claimedResourceId !== identity.resourceId) {
+            return reject('ERR_COMMAND_INVALID', [
+              { field: 'resourceId', reason: '声明的 resourceId 与实际会话不一致' },
+            ]);
+          }
+          if (payloadPath && !document.matchesSessionPath(sessionId, payloadPath)) {
+            return reject('ERR_COMMAND_INVALID', [{ field: 'path', reason: '声明的 path 与实际会话不一致' }]);
+          }
+          const provider = resolveProvider(identity.providerId);
+          if (!provider) {
+            return reject('ERR_RESOURCE_NOT_FOUND', undefined, { providerId: identity.providerId });
+          }
+          target = {
+            resourceId: identity.resourceId,
+            path: identity.path,
+            providerId: identity.providerId,
+            provider,
+            sessionId,
+          };
+        }
+      } catch (err) {
+        const code = ((err as { errorCode?: CommandResult['errorCode'] }).errorCode ??
+          'ERR_COMMAND_INTERNAL') as CommandResult['errorCode'];
+        return reject(code, undefined, { claimedPath: payloadPath, claimedResourceId });
+      }
+
+      const fingerprint = [
+        envelope.type,
+        isWrite ? 'W' : 'R',
+        target.providerId,
+        target.resourceId,
+        target.path,
+        target.sessionId ?? '-',
+      ].join('|');
+
+      const authorize = (): { allowed: boolean; errorCode?: CommandResult['errorCode'] } => {
+        const decision = permission.authorize({
+          actorId: ctx.actorId,
+          action: isWrite ? 'write' : 'read',
+          resourcePath: target.path,
+          providerId: target.providerId,
+        });
+        audit({
+          actorId: ctx.actorId,
+          event: 'PERMISSION_DECIDED',
+          commandType: envelope.type,
+          resourceId: target.resourceId,
+          result: decision.allowed ? 'ALLOWED' : 'DENIED',
+          errorCode: decision.allowed ? undefined : decision.errorCode,
+          durationMs: elapsed(),
+          commandId: envelope.commandId,
+          extra: { resourcePath: target.path, providerId: target.providerId },
+        });
+        return { allowed: decision.allowed, errorCode: decision.errorCode as CommandResult['errorCode'] };
+      };
+
+      // ---- 幂等：命中收据也必须重新授权，且不得跨目标/跨语义复用（S8-07） ----
+      if (envelope.idempotencyKey) {
+        const cached = receipts.get(`${ctx.actorId}::${envelope.idempotencyKey}`);
+        if (cached) {
+          if (cached.fingerprint !== fingerprint) {
+            return reject('ERR_COMMAND_INVALID', [
+              { field: 'idempotencyKey', reason: '同一幂等键不得用于不同命令目标或语义' },
+            ]);
+          }
+          const decision = authorize();
+          if (!decision.allowed) {
+            return reject(decision.errorCode ?? 'ERR_PERMISSION_DENIED', undefined, {
+              resourceId: target.resourceId,
+              reason: '授权已失效，不得返回旧收据',
+            });
+          }
+          audit({
+            actorId: ctx.actorId,
+            event: 'COMMAND_DEDUPLICATED',
+            commandType: envelope.type,
+            resourceId: target.resourceId,
+            result: cached.outcome.status,
+            durationMs: elapsed(),
+            commandId: envelope.commandId,
+          });
+          return { ...cached.outcome, commandId: envelope.commandId, deduplicated: true };
+        }
+      }
+
+      const decision = authorize();
+      if (!decision.allowed) {
+        return reject(decision.errorCode ?? 'ERR_PERMISSION_DENIED', undefined, {
+          resourceId: target.resourceId,
+          resourcePath: target.path,
+          providerId: target.providerId,
+        });
       }
 
       let outcome: HandlerOutcome;
       try {
-        outcome = await run(envelope, ctx, resourcePath);
+        outcome = await run(envelope, target);
       } catch (err) {
         const errorCode = ((err as { errorCode?: CommandResult['errorCode'] }).errorCode ??
           'ERR_COMMAND_INTERNAL') as CommandResult['errorCode'];
@@ -309,18 +478,22 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
       };
 
       if (envelope.idempotencyKey && outcome.cacheable !== false) {
-        receipts.set(`${ctx.actorId}::${envelope.idempotencyKey}`, finalResult);
+        receipts.set(`${ctx.actorId}::${envelope.idempotencyKey}`, {
+          outcome: finalResult,
+          fingerprint,
+        });
       }
 
       audit({
         actorId: ctx.actorId,
         event: 'COMMAND_COMPLETED',
         commandType: envelope.type,
-        resourceId: envelope.target?.resourceId,
+        resourceId: target.resourceId,
         result: outcome.status,
         errorCode: outcome.errorCode,
         durationMs: elapsed(),
         commandId: envelope.commandId,
+        extra: { resourcePath: target.path, providerId: target.providerId },
       });
       return finalResult;
     }
