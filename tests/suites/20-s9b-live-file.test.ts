@@ -1040,3 +1040,170 @@ test('S9B-33 干净会话即使还有视图（页面刷新残留）也会在重�
     assert.equal(third.body.reloaded, false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// S9B-D：openSession 刷新时的错误分类与竞态（F01/F02，DocumentService 单元级）
+// ---------------------------------------------------------------------------
+import { createDocumentService } from '../../packages/document/index.ts';
+import { createLocalProvider } from '../../packages/storage/index.ts';
+import type { ReadResult, StorageProvider } from '../../packages/storage/index.ts';
+
+async function makeDocFixture(fileName = 'A.md', content: string | null = '# 磁盘内容\n') {
+  const root = await mkdtemp(join(tmpdir(), 'ws-s9b-doc-'));
+  if (content !== null) await writeFile(join(root, fileName), content, 'utf8');
+  const real = createLocalProvider({ rootDir: root });
+  let readImpl: (path: string) => Promise<ReadResult> = (path) => real.read(path);
+  const provider: StorageProvider = {
+    ...real,
+    read: (path: string) => readImpl(path),
+  };
+  const document = createDocumentService();
+  const setRead = (impl: (path: string) => Promise<ReadResult>) => {
+    readImpl = impl;
+  };
+  return {
+    root,
+    provider,
+    document,
+    setRead,
+    cleanup: () => rm(root, { recursive: true, force: true }).catch(() => {}),
+  };
+}
+
+const codeOf = (err: unknown): string | undefined =>
+  (err as { errorCode?: string } | undefined)?.errorCode;
+
+test('S9B-34 干净会话重开时文件已被删除：必须报 ERR_RESOURCE_NOT_FOUND，不得返回旧 CLEAN 会话', async () => {
+  const fx = await makeDocFixture();
+  try {
+    const first = await fx.document.openSession({ resourceId: 'r-del', path: 'A.md', provider: fx.provider });
+    await fx.document.closeView(first.viewId);
+    const revisionBefore = fx.document.getSession(first.sessionId)?.revision ?? 0;
+    await rm(join(fx.root, 'A.md'), { force: true });
+
+    await assert.rejects(
+      () => fx.document.openSession({ resourceId: 'r-del', path: 'A.md', provider: fx.provider }),
+      (err: unknown) => codeOf(err) === 'ERR_RESOURCE_NOT_FOUND',
+      '删除后的重开不得静默返回旧内容',
+    );
+
+    // 失败不得留下视图或改动会话
+    const view = fx.document.getSessionByResource('r-del');
+    assert.equal(view?.views, 0, '失败不得增加视图');
+    assert.equal(view?.revision, revisionBefore, '失败不得改 revision');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('S9B-35 重开时 Provider 抛权限/路径错误：必须原样上报', async () => {
+  const fx = await makeDocFixture();
+  try {
+    const first = await fx.document.openSession({ resourceId: 'r-err', path: 'A.md', provider: fx.provider });
+    await fx.document.closeView(first.viewId);
+
+    for (const code of ['ERR_PERMISSION_DENIED', 'ERR_PATH_OUTSIDE_ROOT', 'ERR_STORAGE_IO'] as const) {
+      fx.setRead(async () => {
+        throw Object.assign(new Error(`注入 ${code}`), { errorCode: code });
+      });
+      await assert.rejects(
+        () => fx.document.openSession({ resourceId: 'r-err', path: 'A.md', provider: fx.provider }),
+        (err: unknown) => codeOf(err) === code,
+        `${code} 必须上报，不得被吞掉`,
+      );
+    }
+
+    assert.equal(fx.document.getSessionByResource('r-err')?.views, 0);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('S9B-36 从未存在的新文件：重开仍保持合法的空会话语义', async () => {
+  const fx = await makeDocFixture('A.md', null);
+  try {
+    const first = await fx.document.openSession({ resourceId: 'r-new', path: 'A.md', provider: fx.provider });
+    assert.equal(fx.document.getBuffer(first.sessionId), '');
+    assert.equal(fx.document.getSession(first.sessionId)?.baseVersion, null);
+    await fx.document.closeView(first.viewId);
+
+    const second = await fx.document.openSession({ resourceId: 'r-new', path: 'A.md', provider: fx.provider });
+    assert.equal(fx.document.getBuffer(second.sessionId), '', '新文件重开仍是空会话');
+    assert.equal(fx.document.getSession(second.sessionId)?.baseVersion, null);
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('S9B-37 读取期间被编辑：旧磁盘结果不得回填，不得产生 CLEAN+dirty 矛盾状态', async () => {
+  const fx = await makeDocFixture('A.md', '# 旧磁盘内容\n');
+  try {
+    const first = await fx.document.openSession({ resourceId: 'r-race', path: 'A.md', provider: fx.provider });
+    await fx.document.closeView(first.viewId);
+
+    // 可控 Promise：暂停 openSession 内的 provider.read
+    let release: ((value: ReadResult) => void) | null = null;
+    fx.setRead(
+      () =>
+        new Promise<ReadResult>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const pending = fx.document.openSession({ resourceId: 'r-race', path: 'A.md', provider: fx.provider });
+    // 等待读取已开始
+    for (let i = 0; i < 50 && release === null; i += 1) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(release, 'provider.read 应已被调用');
+
+    // 读取在途时用户输入新草稿
+    const baseBefore = fx.document.getSession(first.sessionId)?.baseVersion ?? null;
+    fx.document.applyEdit(first.sessionId, '# 用户新草稿\n');
+    const editedRevision = fx.document.getSession(first.sessionId)?.revision ?? 0;
+    assert.equal(fx.document.getSession(first.sessionId)?.dirty, true);
+
+    // 释放旧磁盘内容
+    (release as (v: ReadResult) => void)({ content: '# 旧磁盘内容\n', contentVersion: 'sha256:stale', encoding: 'utf8' });
+    const handle = await pending;
+
+    assert.notEqual(handle.sessionId, undefined);
+    assert.equal(fx.document.getBuffer(first.sessionId), '# 用户新草稿\n', '草稿不得被旧磁盘结果覆盖');
+    const view = fx.document.getSession(first.sessionId);
+    assert.equal(view?.dirty, true);
+    assert.notEqual(view?.state, 'CLEAN', '不得出现 CLEAN + dirty 的矛盾状态');
+    assert.equal(view?.revision, editedRevision, '不得回填 revision');
+    assert.equal(view?.baseVersion, baseBefore, '基线不得被旧磁盘结果改写');
+  } finally {
+    await fx.cleanup();
+  }
+});
+
+test('S9B-38 草稿备份全部失败时不得发起重载', async () => {
+  const { backupDraftBeforeReload } = await import('../../apps/shell/src/client/draft-backup.ts');
+  let reloadCalled = false;
+  const both = await backupDraftBeforeReload('# 草稿\n', {
+    saveLocal: () => false,
+    copy: async () => false,
+    reload: async () => {
+      reloadCalled = true;
+      return true;
+    },
+  });
+  assert.equal(both.ok, false);
+  assert.equal(both.reloaded, false);
+  assert.equal(reloadCalled, false, '两种备份都失败时不得调用重载');
+
+  const localOnly = await backupDraftBeforeReload('# 草稿\n', {
+    saveLocal: () => true,
+    copy: async () => false,
+    reload: async () => true,
+  });
+  assert.equal(localOnly.ok, true);
+  assert.equal(localOnly.reloaded, true);
+
+  const clipboardOnly = await backupDraftBeforeReload('# 草稿\n', {
+    saveLocal: () => false,
+    copy: async () => true,
+    reload: async () => true,
+  });
+  assert.equal(clipboardOnly.ok, true);
+});

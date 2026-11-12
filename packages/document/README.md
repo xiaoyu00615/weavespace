@@ -20,6 +20,11 @@
   这里刻意不看「有没有视图」：页面刷新/崩溃会留下无人认领的旧视图，若因此跳过刷新，
   缺陷会以另一种形式复现。
 - **dirty 时绝不刷新（B）**：不能用磁盘内容覆盖正在编辑的草稿。
+- **读取错误必须分类（F01）**：只有「从未存在的新文件」（`baseVersion === null` 且
+  `ERR_RESOURCE_NOT_FOUND`）可以按空会话继续；文件被删除、权限/路径/IO/编码错误
+  一律原样抛出，且不增加视图、不改 `buffer`/`baseVersion`/`revision`。
+- **读盘前后核对代次（F02）**：`await` 前记录 `revision`/`baseVersion`/`dirty`，
+  回来若发现被编辑、基线变化或转 dirty，就放弃这次回填，避免旧磁盘内容覆盖新草稿。
 - **显式重载（C）**：`reload(sessionId, { discardDirty: true })` 用磁盘内容覆盖会话，
   返回 `previousContent` 供调用方备份；未传 `discardDirty` 且会话 dirty 时抛
   `ERR_DOCUMENT_DIRTY`。Core 不会自行丢弃草稿，也不会用空内容伪装成功。

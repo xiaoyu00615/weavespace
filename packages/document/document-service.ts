@@ -286,30 +286,50 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
        * 若因此跳过刷新，用户重开后仍会拿着旧版本保存，缺陷会以另一种形式复现。
        */
       if (session && !session.dirty) {
+        // F02：读盘是异步的，期间会话可能被编辑/保存/重载；先记录代次，回来再核对。
+        const snapshot = {
+          revision: session.revision,
+          baseVersion: session.baseVersion,
+          dirty: session.dirty,
+        };
+
+        let disk: ReadResult | null = null;
         try {
-          const disk = await session.provider.read(session.path);
-          if (disk.contentVersion !== session.baseVersion) {
-            const previousBaseVersion = session.baseVersion;
-            session.buffer = disk.content;
-            session.baseVersion = disk.contentVersion;
-            session.state = 'CLEAN';
-            session.revision += 1;
-            reloaded = true;
-            emit({
-              type: 'DOCUMENT_RELOADED',
-              sessionId: session.sessionId,
-              resourceId: session.resourceId,
-              detail: {
-                reason: 'reopen-after-external-change',
-                views: session.views.size,
-                previousBaseVersion,
-                baseVersion: disk.contentVersion,
-              },
-            });
-          }
-        } catch {
-          // 磁盘不可读/已删除：保留会话现状（不伪装成已刷新），后续保存会 CONFLICT，
-          // 由用户通过冲突恢复入口处理。
+          disk = await session.provider.read(session.path);
+        } catch (err) {
+          // F01：读取失败必须分类，不能静默吞掉后继续返回旧的 CLEAN 会话。
+          // 唯一可接受的是「从未存在的新文件」：baseVersion 为空且磁盘上确实没有该文件。
+          const code = (err as { errorCode?: string }).errorCode;
+          const neverExisted = session.baseVersion === null && code === 'ERR_RESOURCE_NOT_FOUND';
+          if (!neverExisted) throw err;
+          disk = null;
+        }
+
+        // await 之后重新核对：出现新编辑、基线变化或转 dirty，都放弃这次回填
+        const unchanged =
+          session.revision === snapshot.revision &&
+          session.baseVersion === snapshot.baseVersion &&
+          session.dirty === snapshot.dirty &&
+          !session.dirty;
+
+        if (disk && unchanged && disk.contentVersion !== session.baseVersion) {
+          const previousBaseVersion = session.baseVersion;
+          session.buffer = disk.content;
+          session.baseVersion = disk.contentVersion;
+          session.state = 'CLEAN';
+          session.revision += 1;
+          reloaded = true;
+          emit({
+            type: 'DOCUMENT_RELOADED',
+            sessionId: session.sessionId,
+            resourceId: session.resourceId,
+            detail: {
+              reason: 'reopen-after-external-change',
+              views: session.views.size,
+              previousBaseVersion,
+              baseVersion: disk.contentVersion,
+            },
+          });
         }
       }
 

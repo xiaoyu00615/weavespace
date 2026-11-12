@@ -17,6 +17,7 @@ import {
   type WeaveSpaceClient,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
+import { backupDraftBeforeReload } from '../client/draft-backup';
 import { runSaveFlow } from '../client/save-flow';
 import { DEMO_CONTENTS, DEMO_NODES } from '../data/demo-project';
 import { useWorkspace } from './WorkspaceContext';
@@ -457,39 +458,55 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           // 先让在途编辑落定，避免重载后又被旧缓冲覆盖
           await queues.current.get(docId)?.flush();
           const draft = stateRef.current.tabs.find((item) => item.docId === docId)?.buffer ?? tab.buffer;
-          const backedUp = backupDraftLocally(tab.path, draft);
-          const copied = await copyText(draft);
+          const sessionId = tab.sessionId;
+          const viewId = tab.viewId;
 
-          const outcome = await clientFor('live').reloadDocument(tab.sessionId, tab.viewId);
-          if (outcome.status !== 'APPLIED' || !outcome.document) {
+          // F03：先备份，再重载；两种备份都失败时不发起重载（草稿原样保留）
+          const backup = await backupDraftBeforeReload(draft, {
+            saveLocal: (content) => backupDraftLocally(tab.path, content),
+            copy: (content) => copyText(content),
+            reload: async () => {
+              const outcome = await clientFor('live').reloadDocument(sessionId, viewId);
+              if (outcome.status !== 'APPLIED' || !outcome.document) {
+                dispatch({
+                  type: 'NOTICE',
+                  message: `重新加载失败：${outcome.errorCode ?? '未知错误'}（草稿仍保留）`,
+                });
+                return false;
+              }
+              const doc = outcome.document;
+              queues.current.delete(docId);
+              dispatch({
+                type: 'TAB_PATCH',
+                docId,
+                patch: {
+                  buffer: doc.content,
+                  baseVersion: doc.baseVersion,
+                  revision: doc.revision,
+                  dirty: false,
+                  documentState: doc.documentState,
+                  errorCode: null,
+                  lastStatus: null,
+                },
+              });
+              return true;
+            },
+          });
+
+          if (!backup.ok) {
             dispatch({
               type: 'NOTICE',
-              message: `重新加载失败：${outcome.errorCode ?? '未知错误'}（草稿仍保留）`,
+              message: '草稿备份失败（剪贴板与本标签页都不可用）：请先手动复制草稿，再重新加载',
             });
             return false;
           }
-          const doc = outcome.document;
-          queues.current.delete(docId);
-          dispatch({
-            type: 'TAB_PATCH',
-            docId,
-            patch: {
-              buffer: doc.content,
-              baseVersion: doc.baseVersion,
-              revision: doc.revision,
-              dirty: false,
-              documentState: doc.documentState,
-              errorCode: null,
-              lastStatus: null,
-            },
-          });
+          if (!backup.reloaded) return false;
+
           dispatch({
             type: 'NOTICE',
-            message: copied
+            message: backup.clipboard
               ? '已从磁盘重新加载（旧草稿已复制到剪贴板）'
-              : backedUp
-                ? '已从磁盘重新加载（旧草稿已备份到本标签页）'
-                : '已从磁盘重新加载（旧草稿未能备份）',
+              : '已从磁盘重新加载（旧草稿已备份到本标签页）',
           });
           return true;
         } catch {
