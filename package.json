@@ -7,7 +7,9 @@
   "scripts": {
     "test:p0": "node tests/run-all.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "check:package": "python tools/check_package.py"
+    "check:package": "python tools/check_package.py",
+    "dev:shell": "npm --prefix apps/shell run dev",
+    "build:shell": "npm --prefix apps/shell run build"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

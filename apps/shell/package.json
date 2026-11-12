@@ -1,0 +1,24 @@
+{
+  "name": "weavespace-shell",
+  "private": true,
+  "version": "0.0.0-s9a",
+  "type": "module",
+  "description": "WeaveSpace 工作台 Shell（S9-A 演示版，不接触真实文件）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.8"
+  }
+}
