@@ -7,6 +7,8 @@
 - `createCommandBus({ document, permission, resolveProvider, resolveSerializer?, logger? })` → `CommandBus`
 - `dispatch(envelope, ctx{actorId, traceId?, operationId?})` → `CommandDispatchOutcome`
 - `getResult(idempotencyKey, actorId?)` / `receiptCount()`（无 actorId 一律不返回，S8-07）
+  - **限制**：`actorId` 只能来自可信调用上下文。当前没有 Gateway，本方法**无法**自行验证
+    调用者身份；若把不可信输入直接当作 `actorId` 传入，隔离即失效。
 - `validateEnvelope(envelope)` → `EnvelopeViolation[]`
 
 ## 已支持命令（探针范围）
@@ -24,8 +26,11 @@
 5. **解析实际目标**（S8-02）：target 与 payload 声明必须一致；`open` 需 `path`；
    `save/applyEdit` 由 `sessionId` 取会话的真实身份，`payload.path` / `target.resourceId`
    若提供必须与会话一致，否则 `REJECTED / ERR_COMMAND_INVALID`
-6. `idempotencyKey` 命中 → 校验指纹（命令语义 + Provider + 资源 + 会话）一致后再**重新授权**，
-   通过才返回原收据（`deduplicated: true`）；授权已撤销 → `REJECTED`，不返回旧结果
+6. `idempotencyKey` 命中 → 校验**语义指纹**一致后再**重新授权**，通过才返回原收据
+   （`deduplicated: true`）；授权已撤销 → `REJECTED`，不返回旧结果。
+   指纹 = 命令类型 + 读写方向 + Provider + 资源 + 会话 + 本次语义：
+   `applyEdit` 含 `expectedVersion` 与 `buffer` 的 SHA-256；`save` 含 `expectedVersion`、
+   `serializerId` 与待保存缓冲的 SHA-256。只存哈希，不存原文；`commandId` 不参与指纹。
 7. 授权：对**实际资源**判定（会话绑定的 path + providerId）→ 拒绝即 `REJECTED / ERR_PERMISSION_DENIED`
 8. 执行：`APPLIED / REJECTED / FAILED / UNKNOWN`
 
@@ -35,6 +40,9 @@
 - 审计字段记录**实际** `resourceId` 与 `resourcePath/providerId`；身份冲突拒绝额外记录
   `claimedResourceId` / `claimedPath` 与 `verifiedPath`。
 - `sessionId` 只是定位标识，不是访问凭证；`getResult` 按 actor 隔离。
+- `resolveProvider(providerId)` 返回的 Provider 必须与会话创建时绑定的存储根一致
+  （同 `providerId` 不同根 → `REJECTED / ERR_RESOURCE_IDENTITY_CONFLICT`）；
+  显式声明错误的 `providerId` → `REJECTED / ERR_COMMAND_INVALID`（F01）。
 
 ## 已知限制
 1. 收据仅内存保存，重启后幂等去重失效（RSK-08，待 ADR）。
@@ -46,6 +54,8 @@
 6. `resourceId` 缺省时按 `derived:<providerId>:<path>` 派生，路径写法不同（`./a.md` 与 `a.md`）
    会派生出不同标识；显式 resourceId 由上层资源登记表负责唯一性。
 7. 收据的重放判定依赖当前权限：授权变更后旧收据不再可用（这是刻意的安全取舍）。
+8. 幂等指纹含内容哈希，因此「同一幂等键 + 已变化的缓冲/版本/序列化器」按**新请求**处理并被拒绝；
+   客户端需为新语义分配新的 `idempotencyKey`（旧行为已被安全要求收紧）。
 
 ## 测试入口
 `node tests/run-all.ts`（套件 `command-idempotency`、`permission-unauthorized`、`command-validation`、`s8-resource-identity`）。

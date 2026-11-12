@@ -14,6 +14,7 @@
  * - 审计记录实际资源；拒绝时区分「声称」与「已验证」；
  * - sessionId 只是定位标识，不是访问凭证：每次访问都重新授权（S8-04）。
  */
+import { createHash } from 'node:crypto';
 import type { CommandEnvelope, CommandResult, CommandStatus } from '../contracts/types.ts';
 import type { DocumentService, Serializer, SessionIdentity } from '../document/document-service.ts';
 import type { Logger } from '../observability/logger.ts';
@@ -374,9 +375,31 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
           if (payloadPath && !document.matchesSessionPath(sessionId, payloadPath)) {
             return reject('ERR_COMMAND_INVALID', [{ field: 'path', reason: '声明的 path 与实际会话不一致' }]);
           }
+          // 声明的 providerId 必须与会话实际 Provider 一致（不得静默忽略错误声明）
+          if (claimedProviderId && claimedProviderId !== identity.providerId) {
+            return reject('ERR_COMMAND_INVALID', [
+              { field: 'providerId', reason: '声明的 providerId 与实际会话不一致' },
+            ]);
+          }
           const provider = resolveProvider(identity.providerId);
           if (!provider) {
             return reject('ERR_RESOURCE_NOT_FOUND', undefined, { providerId: identity.providerId });
+          }
+          // F01：`providerId` 相同不代表同一个存储。resolveProvider 返回的 Provider 必须与
+          // 会话创建时绑定的存储根身份一致，否则授权对象（A）与实际写入对象（B）会错配。
+          const providerProbe = document.identityFor({
+            resourceId: identity.resourceId,
+            path: identity.path,
+            provider,
+          });
+          if (providerProbe.status !== 'match') {
+            return reject('ERR_RESOURCE_IDENTITY_CONFLICT', undefined, {
+              resourceId: identity.resourceId,
+              sessionId,
+              resourcePath: identity.path,
+              claimedProviderId: identity.providerId,
+              reason: 'resolveProvider 返回的 Provider 与会话绑定的存储根不一致',
+            });
           }
           target = {
             resourceId: identity.resourceId,
@@ -392,6 +415,21 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
         return reject(code, undefined, { claimedPath: payloadPath, claimedResourceId });
       }
 
+      // F02：幂等指纹必须覆盖「这次操作到底做了什么」，而不只是目标标识。
+      // 只存哈希，不在审计/日志中出现原文。commandId 不参与（合法重试会换 commandId）。
+      const digest = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
+      const semantics = ((): string => {
+        if (envelope.type === 'document.applyEdit') {
+          return `|ev=${envelope.expectedVersion ?? ''}|buf=${digest(String(payload.buffer ?? ''))}`;
+        }
+        if (envelope.type === 'document.save') {
+          const serializerId = typeof payload.serializerId === 'string' ? payload.serializerId : 'identity';
+          const buffered = target.sessionId ? document.getBuffer(target.sessionId) : '';
+          return `|ev=${envelope.expectedVersion ?? ''}|ser=${serializerId}|buf=${digest(buffered)}`;
+        }
+        return '';
+      })();
+
       const fingerprint = [
         envelope.type,
         isWrite ? 'W' : 'R',
@@ -399,7 +437,7 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
         target.resourceId,
         target.path,
         target.sessionId ?? '-',
-      ].join('|');
+      ].join('|') + semantics;
 
       const authorize = (): { allowed: boolean; errorCode?: CommandResult['errorCode'] } => {
         const decision = permission.authorize({

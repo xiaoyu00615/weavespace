@@ -15,6 +15,8 @@ import { test } from 'node:test';
 import { createHarness, writeProjectFile } from '../helpers.ts';
 import { createLocalProvider } from '../../packages/storage/index.ts';
 import { createPermissionService } from '../../packages/permission/index.ts';
+import { createDocumentService } from '../../packages/document/index.ts';
+import { createCommandBus } from '../../packages/command/index.ts';
 
 const sha256 = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
 const errorCodeOf = async (fn: () => Promise<unknown>): Promise<string> => {
@@ -563,6 +565,227 @@ test('S8-15 正常授权下 open/applyEdit/save 仍 APPLIED（含 path 一致与
     );
     assert.equal(saved.status, 'APPLIED');
     assert.equal(await readFile(join(h.root, 'docs/a.md'), 'utf8'), 'v2\n');
+  } finally {
+    await h.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S8-16（F01）：resolveProvider 返回的 Provider 必须与会话绑定的存储根一致
+//   两个不同根目录的 Provider 可以共用同一个 providerId。
+// ---------------------------------------------------------------------------
+test('S8-16 双根 Provider（同 providerId）：applyEdit/save 必须按身份冲突拒绝', async () => {
+  const rootA = await mkdtemp(join(tmpdir(), 's8-rootA-'));
+  const rootB = await mkdtemp(join(tmpdir(), 's8-rootB-'));
+  try {
+    await writeFile(join(rootA, 'doc.md'), 'A-CONTENT\n', 'utf8');
+    await writeFile(join(rootB, 'doc.md'), 'B-CONTENT\n', 'utf8');
+    const providerA = createLocalProvider({ rootDir: rootA });
+    const providerB = createLocalProvider({ rootDir: rootB });
+
+    // 命令总线只认识 A（providerId 相同 → 解析到 A）
+    const document = createDocumentService();
+    const permission = createPermissionService([
+      { actorId: 'user', action: 'read', scope: '' },
+      { actorId: 'user', action: 'write', scope: '' },
+    ]);
+    const bus = createCommandBus({
+      document,
+      permission,
+      resolveProvider: (id) => (id === 'local' ? providerA : undefined),
+    });
+
+    // 会话由内部组件在 B 根上合法打开
+    const foreign = await document.openSession({ resourceId: 'R-B', path: 'doc.md', provider: providerB });
+    const base = document.getSession(foreign.sessionId)!.baseVersion!;
+    const shaBBefore = sha256(await readFile(join(rootB, 'doc.md')));
+    const shaABefore = sha256(await readFile(join(rootA, 'doc.md')));
+
+    // ① applyEdit：授权与实际操作对象会错配（A 被授权，B 会被改）
+    const edit = await bus.dispatch(
+      {
+        commandId: 'c-s8-16a',
+        type: 'document.applyEdit',
+        expectedVersion: 'rev-0',
+        payload: { sessionId: foreign.sessionId, buffer: 'HIJACKED\n' },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(edit.status, 'REJECTED', 'Provider 根不一致时不得授权通过');
+    assert.equal(edit.errorCode, 'ERR_RESOURCE_IDENTITY_CONFLICT');
+    assert.equal(document.getBuffer(foreign.sessionId), 'B-CONTENT\n', '缓冲不得被改动');
+    assert.equal(document.getSession(foreign.sessionId)!.revision, 0);
+
+    // ② save：同样必须拒绝，且两个根的文件都不变
+    document.applyEdit(foreign.sessionId, 'B-EDITED\n');
+    const revision = document.getSession(foreign.sessionId)!.revision;
+
+    const save = await bus.dispatch(
+      {
+        commandId: 'c-s8-16b',
+        type: 'document.save',
+        expectedVersion: base,
+        payload: { sessionId: foreign.sessionId },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(save.status, 'REJECTED');
+    assert.equal(save.errorCode, 'ERR_RESOURCE_IDENTITY_CONFLICT');
+
+    assert.equal(sha256(await readFile(join(rootB, 'doc.md'))), shaBBefore, 'B 根不得被写入');
+    assert.equal(sha256(await readFile(join(rootA, 'doc.md'))), shaABefore, 'A 根不得被写入');
+    assert.equal(document.getSession(foreign.sessionId)!.revision, revision);
+  } finally {
+    await rm(rootA, { recursive: true, force: true }).catch(() => {});
+    await rm(rootB, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test('S8-17 显式声明错误的 providerId：必须拒绝，不得静默忽略', async () => {
+  const h = await createHarness({
+    grants: [
+      { actorId: 'user', action: 'read', scope: '' },
+      { actorId: 'user', action: 'write', scope: '' },
+    ],
+  });
+  try {
+    await writeProjectFile(h.root, 'docs/a.md', 'v1\n');
+    const v = await h.document.openSession({ resourceId: 'R17', path: 'docs/a.md', provider: h.provider });
+    h.document.applyEdit(v.sessionId, 'v2\n');
+    const base = h.document.getSession(v.sessionId)!.baseVersion!;
+
+    const out = await h.bus.dispatch(
+      {
+        commandId: 'c-s8-17',
+        type: 'document.save',
+        expectedVersion: base,
+        payload: { sessionId: v.sessionId, providerId: 'remote' },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(out.status, 'REJECTED');
+    assert.equal(out.errorCode, 'ERR_COMMAND_INVALID');
+    assert.equal(await readFile(join(h.root, 'docs/a.md'), 'utf8'), 'v1\n', '磁盘不得变化');
+  } finally {
+    await h.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S8-18（F02）：幂等指纹必须覆盖命令语义（applyEdit 的 buffer / expectedVersion）
+// ---------------------------------------------------------------------------
+test('S8-18 同一幂等键提交不同 buffer 的 applyEdit：必须拒绝，缓冲保持第一次的结果', async () => {
+  const h = await createHarness({
+    grants: [
+      { actorId: 'user', action: 'read', scope: '' },
+      { actorId: 'user', action: 'write', scope: '' },
+    ],
+  });
+  try {
+    await writeProjectFile(h.root, 'docs/a.md', 'v1\n');
+    const v = await h.document.openSession({ resourceId: 'R18', path: 'docs/a.md', provider: h.provider });
+
+    const first = await h.bus.dispatch(
+      {
+        commandId: 'c-s8-18a',
+        type: 'document.applyEdit',
+        idempotencyKey: 'idem-18',
+        expectedVersion: 'rev-0',
+        payload: { sessionId: v.sessionId, buffer: 'EDIT-A\n' },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(first.status, 'APPLIED');
+    assert.equal(h.document.getBuffer(v.sessionId), 'EDIT-A\n');
+
+    const second = await h.bus.dispatch(
+      {
+        commandId: 'c-s8-18b',
+        type: 'document.applyEdit',
+        idempotencyKey: 'idem-18',
+        expectedVersion: 'rev-1',
+        payload: { sessionId: v.sessionId, buffer: 'EDIT-B\n' },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(second.status, 'REJECTED', '不同 buffer 不得命中同一幂等键');
+    assert.equal(second.errorCode, 'ERR_COMMAND_INVALID');
+    assert.equal(h.document.getBuffer(v.sessionId), 'EDIT-A\n', '缓冲不得被第二次内容覆盖');
+  } finally {
+    await h.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S8-19（F02）：save 的幂等指纹覆盖 expectedVersion / serializerId / 待保存缓冲
+// ---------------------------------------------------------------------------
+test('S8-19 save：内容或 expectedVersion 变化后复用同键必须拒绝；完全相同重试仍去重', async () => {
+  const h = await createHarness();
+  try {
+    h.permission.grant({ actorId: 'user', action: 'read', scope: '' });
+    h.permission.grant({ actorId: 'user', action: 'write', scope: '' });
+    await writeProjectFile(h.root, 'docs/a.md', 'v1\n');
+    const v = await h.document.openSession({ resourceId: 'R19', path: 'docs/a.md', provider: h.provider });
+    h.document.applyEdit(v.sessionId, 'v2\n');
+    const base = h.document.getSession(v.sessionId)!.baseVersion!;
+
+    const first = await h.bus.dispatch(
+      {
+        commandId: 'c-s8-19a',
+        type: 'document.save',
+        idempotencyKey: 'idem-19',
+        expectedVersion: base,
+        payload: { sessionId: v.sessionId },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(first.status, 'APPLIED');
+    const diskAfterFirst = sha256(await readFile(join(h.root, 'docs/a.md')));
+
+    // ① 完全相同语义（新 commandId、同幂等键）→ 应去重，不重复写盘
+    const replay = await h.bus.dispatch(
+      {
+        commandId: 'c-s8-19b',
+        type: 'document.save',
+        idempotencyKey: 'idem-19',
+        expectedVersion: base,
+        payload: { sessionId: v.sessionId },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(replay.status, 'APPLIED');
+    assert.equal(replay.deduplicated, true, '合法重试必须仍被去重');
+    assert.equal(sha256(await readFile(join(h.root, 'docs/a.md'))), diskAfterFirst, '不得重复写盘');
+
+    // ② 改变缓冲后再复用同键 → 语义不同，必须拒绝
+    h.document.applyEdit(v.sessionId, 'v3\n');
+    const changedBuffer = await h.bus.dispatch(
+      {
+        commandId: 'c-s8-19c',
+        type: 'document.save',
+        idempotencyKey: 'idem-19',
+        expectedVersion: base,
+        payload: { sessionId: v.sessionId },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(changedBuffer.status, 'REJECTED');
+    assert.equal(changedBuffer.errorCode, 'ERR_COMMAND_INVALID');
+    assert.equal(sha256(await readFile(join(h.root, 'docs/a.md'))), diskAfterFirst, '拒绝时不得写盘');
+
+    // ③ 只改 expectedVersion 也必须拒绝
+    const changedVersion = await h.bus.dispatch(
+      {
+        commandId: 'c-s8-19d',
+        type: 'document.save',
+        idempotencyKey: 'idem-19',
+        expectedVersion: 'sha256:deadbeef',
+        payload: { sessionId: v.sessionId },
+      },
+      { actorId: 'user' },
+    );
+    assert.equal(changedVersion.status, 'REJECTED');
+    assert.equal(changedVersion.errorCode, 'ERR_COMMAND_INVALID');
   } finally {
     await h.cleanup();
   }

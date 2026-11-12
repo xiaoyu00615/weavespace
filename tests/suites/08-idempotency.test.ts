@@ -41,8 +41,7 @@ test('CT-07 同一 idempotencyKey 重复保存 → 只产生一次副作用，�
     );
     assert.equal(first.status, 'APPLIED');
 
-    // 再次保存同一幂等键：应命中收据，不重新写盘
-    h.document.applyEdit(sessionId, 'v3\n'); // 即使缓冲变化，幂等键仍应回到原结果
+    // 完全相同语义的重试（新 commandId、同幂等键）：应命中收据，不重新写盘
     const second = await h.bus.dispatch(
       {
         commandId: 'cmd-i2',
@@ -59,6 +58,23 @@ test('CT-07 同一 idempotencyKey 重复保存 → 只产生一次副作用，�
 
     assert.equal(await readFile(join(h.root, 'idem.md'), 'utf8'), 'v2\n', '磁盘内容只能被写一次');
     assert.equal(h.bus.receiptCount(), 1);
+
+    // S8-F02 起：幂等指纹覆盖待保存缓冲，缓冲变了就不再是「同一个请求」→ 必须拒绝，
+    // 不能再用旧收据谎报成功（旧行为已按安全要求收紧）。
+    h.document.applyEdit(sessionId, 'v3\n');
+    const reused = await h.bus.dispatch(
+      {
+        commandId: 'cmd-i3',
+        type: 'document.save',
+        idempotencyKey: 'idem-key-1',
+        expectedVersion: base,
+        payload: { sessionId },
+      },
+      { actorId: 'user-a' },
+    );
+    assert.equal(reused.status, 'REJECTED');
+    assert.equal(reused.errorCode, 'ERR_COMMAND_INVALID');
+    assert.equal(await readFile(join(h.root, 'idem.md'), 'utf8'), 'v2\n', '拒绝时不得写盘');
   } finally {
     await h.cleanup();
   }
