@@ -76,6 +76,9 @@ interface ApiEnvelope {
   contentVersion?: string | null;
 }
 
+/** 单次请求上限：请求挂住时也要让保存流程收敛为 UNKNOWN，而不是永久锁定（F02）。 */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 async function request(
   baseUrl: string,
   path: string,
@@ -84,6 +87,7 @@ async function request(
   const res = await fetch(`${baseUrl}${path}`, {
     ...init,
     credentials: 'same-origin',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
   });
   let body: ApiEnvelope = {};

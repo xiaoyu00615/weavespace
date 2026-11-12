@@ -12,7 +12,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { createShellServer, type ShellServer } from '../../apps/server/src/server.ts';
-import { createEditQueue } from '../../apps/shell/src/client/edit-queue.ts';
+import { createLiveClient } from '../../apps/shell/src/client/client-api.ts';
+import { createEditQueue, flushLatest } from '../../apps/shell/src/client/edit-queue.ts';
+import { runSaveFlow } from '../../apps/shell/src/client/save-flow.ts';
 import type { StorageFaultHooks } from '../../packages/storage/index.ts';
 
 const sha = (content: Buffer | string): string =>
@@ -552,4 +554,274 @@ test('S9B-18 测试临时目录不落在仓库内', async () => {
   assert.equal(info.isDirectory(), true);
   assert.equal(base.startsWith(tmpdir()), true);
   await rm(base, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// F01（S9B-19~22）：编辑同步失败必须阻止保存
+// ---------------------------------------------------------------------------
+test('S9B-19 编辑被拒绝时 flush 报失败，保存不得把旧内容写成草稿', async () => {
+  await withServer(async ({ root, server, post, api }) => {
+    const opened = await post('/api/open', { path: 'a.md' });
+    const doc = opened.body.document;
+    const live = createLiveClient(server.url);
+
+    // 第一次 applyEdit 被业务拒绝（模拟权限/会话失效），之后恢复正常
+    let rejectNext = true;
+    const client = {
+      applyEdit: async (sessionId: string, buffer: string, expectedVersion?: string | null) => {
+        if (rejectNext) {
+          rejectNext = false;
+          return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED' };
+        }
+        return live.applyEdit(sessionId, buffer, expectedVersion);
+      },
+    };
+
+    const queue = createEditQueue<string>(async (text) => {
+      const outcome = await client.applyEdit(doc.sessionId, text, doc.baseVersion);
+      if (outcome.status !== 'APPLIED') {
+        throw Object.assign(new Error('edit rejected'), { errorCode: outcome.errorCode });
+      }
+      return text;
+    });
+
+    queue.schedule('UI 的 B 内容\n');
+    const flushed = await queue.flush();
+    assert.equal(flushed.ok, false, '同步失败必须被 flush 报告');
+
+    let committed = false;
+    const result = await runSaveFlow({
+      buffer: 'UI 的 B 内容\n',
+      sync: () => flushLatest(queue, 'UI 的 B 内容\n'),
+      commit: async () => {
+        committed = true;
+        return { status: 'COMMITTED' as const, contentVersion: null };
+      },
+    });
+
+    assert.equal(result.attempted, false, '同步失败时不得发起保存');
+    assert.equal(result.status, 'FAILED');
+    assert.equal(result.dirty, true, '脏标记必须保留');
+    assert.equal(committed, false);
+
+    // Core 与会话缓冲仍是 A；磁盘也仍是 A
+    const reread = await api(`/api/document?sessionId=${doc.sessionId}&viewId=${doc.viewId}`);
+    assert.equal(reread.body.document.content, '# A\n\n原始内容\n');
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '# A\n\n原始内容\n');
+  });
+});
+
+test('S9B-20 超过 1 MiB 的编辑被服务端拒绝，保存被阻止且磁盘不变', async () => {
+  await withServer(async ({ root, server, post }) => {
+    const opened = await post('/api/open', { path: 'a.md' });
+    const doc = opened.body.document;
+    const client = createLiveClient(server.url);
+    const huge = 'x'.repeat(1024 * 1024 + 4096);
+
+    const queue = createEditQueue<string>(async (text) => {
+      const outcome = await client.applyEdit(doc.sessionId, text, doc.baseVersion);
+      if (outcome.status !== 'APPLIED') {
+        throw Object.assign(new Error('edit rejected'), { errorCode: outcome.errorCode });
+      }
+      return text;
+    });
+
+    queue.schedule(huge);
+    const flushed = await queue.flush();
+    assert.equal(flushed.ok, false, '超大请求必须被视为同步失败');
+
+    const result = await runSaveFlow({
+      buffer: huge,
+      sync: () => flushLatest(queue, huge),
+      commit: async () => ({ status: 'COMMITTED' as const, contentVersion: null }),
+    });
+    assert.equal(result.attempted, false);
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '# A\n\n原始内容\n', '磁盘不得被写');
+  });
+});
+
+test('S9B-21 网络故障导致 applyEdit 抛错：保存被阻止', async () => {
+  // 先起一个服务再关掉，拿到一个确定没人监听的端口
+  const deadRoot = await mkdtemp(join(tmpdir(), 'ws-s9b-dead-'));
+  const dead = await createShellServer({ rootDir: deadRoot, port: 0 });
+  const deadUrl = dead.url;
+  await dead.close();
+
+  const client = createLiveClient(deadUrl);
+  const queue = createEditQueue<string>(async (text) => {
+    const outcome = await client.applyEdit('session-1', text, 'sha256:dead');
+    if (outcome.status !== 'APPLIED') throw new Error('unreachable');
+    return text;
+  });
+
+  queue.schedule('断网时的输入\n');
+  const flushed = await queue.flush();
+  assert.equal(flushed.ok, false, '网络异常必须被报告为同步失败');
+
+  let committed = false;
+  const result = await runSaveFlow({
+    buffer: '断网时的输入\n',
+    sync: () => flushLatest(queue, '断网时的输入\n'),
+    commit: async () => {
+      committed = true;
+      return { status: 'COMMITTED' as const, contentVersion: null };
+    },
+  });
+  assert.equal(result.attempted, false);
+  assert.equal(result.dirty, true);
+  assert.equal(committed, false);
+
+  await rm(deadRoot, { recursive: true, force: true }).catch(() => {});
+});
+
+test('S9B-22 失败后重新同步成功：可以正常保存并写盘', async () => {
+  await withServer(async ({ root, server, post }) => {
+    const opened = await post('/api/open', { path: 'a.md' });
+    const doc = opened.body.document;
+    const live = createLiveClient(server.url);
+
+    let rejectNext = true;
+    const flaky = {
+      applyEdit: async (sessionId: string, buffer: string, expectedVersion?: string | null) => {
+        if (rejectNext) {
+          rejectNext = false;
+          return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED' };
+        }
+        return live.applyEdit(sessionId, buffer, expectedVersion);
+      },
+    };
+
+    const queue = createEditQueue<string>(async (text) => {
+      const outcome = await flaky.applyEdit(doc.sessionId, text, doc.baseVersion);
+      if (outcome.status !== 'APPLIED') throw new Error('edit rejected');
+      return text;
+    });
+
+    queue.schedule('第一次失败的 B\n');
+    assert.equal((await queue.flush()).ok, false);
+
+    const blocked = await runSaveFlow({
+      buffer: '第一次失败的 B\n',
+      sync: () => flushLatest(queue, '第一次失败的 B\n'),
+      commit: () => live.saveDocument(doc.sessionId, doc.baseVersion, doc.viewId),
+    });
+    assert.equal(blocked.attempted, false);
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '# A\n\n原始内容\n');
+
+    // 再次提交同一缓冲：这次同步成功 → 允许保存
+    queue.schedule('第一次失败的 B\n');
+    const ok = await runSaveFlow({
+      buffer: '第一次失败的 B\n',
+      sync: () => flushLatest(queue, '第一次失败的 B\n'),
+      commit: () => live.saveDocument(doc.sessionId, doc.baseVersion, doc.viewId),
+    });
+    assert.equal(ok.attempted, true);
+    assert.equal(ok.status, 'COMMITTED');
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '第一次失败的 B\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F02（S9B-23~25）：保存状态收敛
+// ---------------------------------------------------------------------------
+test('S9B-23 保存请求抛异常（断网）：UNKNOWN、保留脏标记，绝不报成功', async () => {
+  const result = await runSaveFlow({
+    buffer: '草稿\n',
+    sync: async () => ({ ok: true as const, lastSynced: '草稿\n' }),
+    commit: async () => {
+      throw Object.assign(new TypeError('fetch failed'), { errorCode: undefined });
+    },
+  });
+
+  assert.equal(result.status, 'UNKNOWN', '网络异常不得伪装为 COMMITTED');
+  assert.equal(result.attempted, true);
+  assert.equal(result.dirty, true, '未确认的结果不得清除脏标记');
+  assert.equal(result.documentState, 'OUTCOME_UNKNOWN');
+  assert.equal(result.baseVersion, null, '不得假装拿到了新版本基线');
+});
+
+test('S9B-24 保存成功但 Core 仍有新编辑：标记保持 dirty', async () => {
+  const result = await runSaveFlow({
+    buffer: '草稿\n',
+    sync: async () => ({ ok: true as const, lastSynced: '草稿\n' }),
+    commit: async () => ({
+      status: 'COMMITTED',
+      contentVersion: 'sha256:new',
+      document: {
+        sessionId: 'session-1',
+        viewId: 'view-1',
+        resourceId: 'doc:a.md',
+        path: 'a.md',
+        content: '更新的草稿\n',
+        baseVersion: 'sha256:new',
+        revision: 3,
+        dirty: true,
+        documentState: 'EDITING_DIRTY',
+      },
+    }),
+  });
+
+  assert.equal(result.status, 'COMMITTED');
+  assert.equal(result.dirty, true, '保存期间的新编辑不能被旧响应标记为已保存');
+  assert.equal(result.baseVersion, 'sha256:new');
+});
+
+test('S9B-25 各保存结论保持既有 Core 语义（CONFLICT / UNKNOWN / FAILED）', async () => {
+  const caseOf = async (status: 'CONFLICT' | 'UNKNOWN' | 'FAILED', errorCode: string) =>
+    runSaveFlow({
+      buffer: 'x\n',
+      sync: async () => ({ ok: true as const, lastSynced: 'x\n' }),
+      commit: async () => ({ status, errorCode }),
+    });
+
+  const conflict = await caseOf('CONFLICT', 'ERR_DOCUMENT_VERSION_CONFLICT');
+  assert.equal(conflict.dirty, true);
+  assert.equal(conflict.documentState, 'CONFLICT');
+  assert.equal(conflict.errorCode, 'ERR_DOCUMENT_VERSION_CONFLICT');
+
+  const unknown = await caseOf('UNKNOWN', 'ERR_OUTCOME_UNKNOWN');
+  assert.equal(unknown.documentState, 'OUTCOME_UNKNOWN');
+  assert.equal(unknown.dirty, true);
+
+  const failed = await caseOf('FAILED', 'ERR_RESOURCE_NOT_TEXT');
+  assert.equal(failed.documentState, 'FAILED');
+  assert.equal(failed.errorCode, 'ERR_RESOURCE_NOT_TEXT');
+  assert.equal(failed.dirty, true);
+});
+
+// ---------------------------------------------------------------------------
+// F03（S9B-26）：强制回环绑定
+// ---------------------------------------------------------------------------
+test('S9B-26 非回环地址在 listen 之前被拒绝，默认与 IPv6 回环可用', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'ws-s9b-bind-'));
+  const closed: ShellServer[] = [];
+  try {
+    for (const host of ['0.0.0.0', '::', '192.168.1.10', 'example.com']) {
+      await assert.rejects(
+        () => createShellServer({ rootDir: base, port: 0, host }),
+        (err: { errorCode?: string }) => err.errorCode === 'ERR_PERMISSION_DENIED',
+        `${host} 必须被拒绝`,
+      );
+    }
+
+    // 默认绑定 127.0.0.1
+    const v4 = await createShellServer({ rootDir: base, port: 0 });
+    closed.push(v4);
+    assert.equal(v4.url.startsWith('http://127.0.0.1:'), true);
+
+    // 显式回环仍然可用（本机若不支持 IPv6 则记为跳过，不伪造通过）
+    const v6 = await createShellServer({ rootDir: base, port: 0, host: '::1' }).catch((err) => {
+      if ((err as NodeJS.ErrnoException).code === 'EADDRNOTAVAIL') return null;
+      throw err;
+    });
+    if (v6) {
+      closed.push(v6);
+      assert.equal(v6.url.startsWith('http://[::1]:'), true);
+      const res = await fetch(`${v6.url}/api/health`);
+      assert.equal(res.status, 200);
+    }
+  } finally {
+    for (const server of closed) await server.close().catch(() => {});
+    await rm(base, { recursive: true, force: true }).catch(() => {});
+  }
 });

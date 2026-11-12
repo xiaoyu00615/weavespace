@@ -40,6 +40,8 @@ node apps/server/src/main.ts <项目根目录> [端口]     # 或 npm run start:
 
 ## 安全边界
 
+- **绑定地址**：只接受 `127.0.0.1` / `::1` / `localhost`；`0.0.0.0`、`::`、`192.168.x.x` 等
+  在**创建监听之前**直接抛 `ERR_PERMISSION_DENIED`。请求侧 Host 检查不能替代绑定限制。
 - **Host**：必须是 `127.0.0.1[:port]` / `localhost[:port]` / `[::1][:port]`，其余 403（防 DNS rebinding）。
 - **Origin**：写请求若带 `Origin`，必须在白名单内（缺省为同源 + `127.0.0.1:5178`）；`Sec-Fetch-Site` 为 `cross-site` 一律拒绝。
 - **CORS**：不发送任何 `Access-Control-Allow-Origin`，跨源页面无法直接调用。

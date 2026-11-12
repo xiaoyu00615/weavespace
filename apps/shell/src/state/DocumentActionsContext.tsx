@@ -16,7 +16,8 @@ import {
   type DocumentSnapshot,
   type WeaveSpaceClient,
 } from '../client/client-api';
-import { createEditQueue, type EditQueue } from '../client/edit-queue';
+import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
+import { runSaveFlow } from '../client/save-flow';
 import { DEMO_CONTENTS, DEMO_NODES } from '../data/demo-project';
 import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
@@ -81,6 +82,17 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
 
   const queues = useRef(new Map<string, EditQueue>());
+  /**
+   * 保存期间锁定的文档（F02）。用 ref 而不是 React 状态做判定：
+   * `saving` 的渲染更新是异步的，不能作为「是否允许继续改 / 继续保存」的唯一依据。
+   */
+  const locked = useRef(new Set<string>());
+
+  /** 幂等地解除保存锁，并确保 `saving` 一定回到 false。 */
+  const unlocked = (docId: string): void => {
+    locked.current.delete(docId);
+    dispatch({ type: 'TAB_PATCH', docId, patch: { saving: false } });
+  };
 
   const actions = useMemo<DocumentActions>(() => {
     const queueFor = (docId: string, sessionId: string): EditQueue => {
@@ -96,9 +108,12 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         if (outcome.status !== 'APPLIED' || !outcome.document) {
           dispatch({
             type: 'NOTICE',
-            message: `编辑未被接受：${outcome.errorCode ?? '未知错误'}（Core 缓冲可能落后于编辑器）`,
+            message: `编辑未被接受：${outcome.errorCode ?? '未知错误'}（Core 缓冲落后于编辑器，已阻止保存）`,
           });
-          return;
+          // 必须抛错：队列据此记住「最后一次同步失败」，保存流程才不会把旧内容当成草稿写盘
+          throw Object.assign(new Error(`applyEdit 被拒绝: ${outcome.errorCode ?? 'unknown'}`), {
+            errorCode: outcome.errorCode ?? 'ERR_EDIT_REJECTED',
+          });
         }
         // 只回写 Core 的 revision/状态，**不回写内容**：编辑器永远以用户输入为准
         const latest = stateRef.current.tabs.find((tab) => tab.docId === docId);
@@ -155,6 +170,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       editDoc(docId: string, text: string) {
         const tab = stateRef.current.tabs.find((item) => item.docId === docId);
         if (!tab) return;
+        // 保存期间的输入一律丢弃：Core 正在比较版本，不能让缓冲在保存途中继续变化
+        if (locked.current.has(docId)) return;
         dispatch({ type: 'EDIT_DOC', docId, text });
         if (tab.mode !== 'live' || !tab.sessionId) return;
         queueFor(docId, tab.sessionId).schedule(text);
@@ -163,104 +180,87 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       async saveTab(docId: string) {
         const tab = stateRef.current.tabs.find((item) => item.docId === docId);
         if (!tab) return;
-        if (tab.saving) {
+        // 用 ref 判定（而不是 tab.saving）：后者要等一次渲染才更新
+        if (locked.current.has(docId)) {
           dispatch({ type: 'NOTICE', message: '正在保存中，请稍候' });
           return;
         }
 
-        if (tab.mode === 'demo') {
-          dispatch({ type: 'TAB_PATCH', docId, patch: { saving: true } });
-          const outcome = await clientFor('demo').saveDocument(tab.sessionId ?? '', '');
-          dispatch({
-            type: 'SAVE_RESULT',
-            docId,
-            status: 'DEMO',
-            errorCode: null,
-            dirty: false,
-            documentState: 'DEMO',
-            baseVersion: outcome.contentVersion ?? tab.baseVersion,
-            revision: null,
-            notice: '演示保存：仅清除未保存标记，没有写入任何磁盘文件',
-          });
-          return;
-        }
-
-        if (!tab.sessionId || !tab.baseVersion) {
-          dispatch({ type: 'NOTICE', message: '缺少版本基线（会话未成功建立），无法保存' });
-          return;
-        }
-
+        const mode = tab.mode;
+        const client = clientFor(mode);
+        locked.current.add(docId);
         dispatch({ type: 'TAB_PATCH', docId, patch: { saving: true } });
-        // 先把在途/排队的编辑全部提交，保证保存的是最终缓冲
-        await queues.current.get(docId)?.flush();
 
-        const latest = stateRef.current.tabs.find((item) => item.docId === docId) ?? tab;
-        const outcome = await clientFor(latest.mode).saveDocument(
-          latest.sessionId as string,
-          latest.baseVersion as string,
-          latest.viewId,
-        );
-        const doc = outcome.document;
+        try {
+          if (mode === 'demo') {
+            const outcome = await client.saveDocument(tab.sessionId ?? '', '');
+            dispatch({
+              type: 'SAVE_RESULT',
+              docId,
+              status: 'DEMO',
+              errorCode: null,
+              dirty: false,
+              documentState: 'DEMO',
+              baseVersion: outcome.contentVersion ?? tab.baseVersion,
+              revision: null,
+              notice: '演示保存：仅清除未保存标记，没有写入任何磁盘文件',
+            });
+            return;
+          }
 
-        if (outcome.status === 'COMMITTED') {
-          const stillDirty = doc?.dirty ?? false;
+          if (!tab.sessionId || !tab.baseVersion) {
+            dispatch({ type: 'NOTICE', message: '缺少版本基线（会话未成功建立），无法保存' });
+            return;
+          }
+
+          const sessionId = tab.sessionId;
+          const buffer = tab.buffer;
+          const queue = queues.current.get(docId);
+
+          // 保存前的门禁：草稿必须已同步到 Core，否则不发起写盘（F01）
+          const result = await runSaveFlow({
+            buffer,
+            sync: async () =>
+              queue
+                ? flushLatest(queue, buffer)
+                : { ok: true as const, lastSynced: buffer },
+            commit: () => {
+              const latest = stateRef.current.tabs.find((item) => item.docId === docId);
+              return client.saveDocument(
+                sessionId,
+                latest?.baseVersion ?? (tab.baseVersion as string),
+                latest?.viewId ?? null,
+              );
+            },
+          });
+
           dispatch({
             type: 'SAVE_RESULT',
             docId,
-            status: 'COMMITTED',
-            errorCode: null,
-            dirty: stillDirty,
-            documentState: doc?.documentState ?? 'CLEAN',
-            baseVersion: outcome.contentVersion ?? doc?.baseVersion ?? latest.baseVersion,
-            revision: doc?.revision ?? null,
-            notice: stillDirty
-              ? '已写入磁盘，但保存期间又有新编辑（仍未保存）'
-              : '已保存到磁盘',
+            status: result.status,
+            errorCode: result.errorCode,
+            dirty: result.dirty,
+            documentState: result.documentState,
+            baseVersion: result.baseVersion,
+            revision: result.revision,
+            notice: result.notice,
           });
-          return;
-        }
-
-        if (outcome.status === 'CONFLICT') {
-          dispatch({
-            type: 'SAVE_RESULT',
-            docId,
-            status: 'CONFLICT',
-            errorCode: outcome.errorCode ?? 'ERR_DOCUMENT_VERSION_CONFLICT',
-            dirty: true,
-            documentState: doc?.documentState ?? 'CONFLICT',
-            baseVersion: null,
-            revision: doc?.revision ?? null,
-            notice: '版本冲突：磁盘已被外部修改，编辑内容已保留，未覆盖磁盘',
-          });
-          return;
-        }
-
-        if (outcome.status === 'UNKNOWN') {
+        } catch {
+          // 兜底：任何未预期异常都必须收敛为 UNKNOWN，且保留草稿（绝不留下永久 SAVING）
           dispatch({
             type: 'SAVE_RESULT',
             docId,
             status: 'UNKNOWN',
-            errorCode: outcome.errorCode ?? 'ERR_OUTCOME_UNKNOWN',
+            errorCode: 'ERR_OUTCOME_UNKNOWN',
             dirty: true,
-            documentState: doc?.documentState ?? 'OUTCOME_UNKNOWN',
+            documentState: 'OUTCOME_UNKNOWN',
             baseVersion: null,
-            revision: doc?.revision ?? null,
-            notice: '保存结果未确认（UNKNOWN）：不要重复保存，请人工核对磁盘',
+            revision: null,
+            notice: '保存流程异常：结果未确认，草稿已保留',
           });
-          return;
+        } finally {
+          unlocked(docId);
         }
-
-        dispatch({
-          type: 'SAVE_RESULT',
-          docId,
-          status: 'FAILED',
-          errorCode: outcome.errorCode ?? 'ERR_SAVE_FAILED',
-          dirty: true,
-          documentState: doc?.documentState ?? 'FAILED',
-          baseVersion: null,
-          revision: doc?.revision ?? null,
-          notice: `保存失败：${outcome.errorCode ?? '未知错误'}（编辑内容已保留）`,
-        });
       },
 
       async closeTab(docId: string) {
@@ -312,6 +312,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           }
         }
         queues.current.clear();
+        locked.current.clear();
         dispatch({ type: 'SET_MODE', mode });
         if (mode === 'live') {
           dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });

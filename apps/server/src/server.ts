@@ -88,6 +88,17 @@ const DEFAULT_PORT = 5177;
 const DEFAULT_MAX_BODY = 1024 * 1024;
 const VITE_DEV_ORIGINS = ['http://127.0.0.1:5178', 'http://localhost:5178'];
 
+/**
+ * 绑定地址校验（F03）：只接受明确验证过的回环地址。
+ * 请求侧 Host 检查不能替代它——`0.0.0.0` 监听会让局域网直连，此时浏览器仍可伪造 Host。
+ */
+function isLoopbackBindHost(host: string): boolean {
+  const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+  if (/^127(\.\d{1,3}){3}$/.test(bare)) return true;
+  if (bare === '::1') return true;
+  return bare.toLowerCase() === 'localhost';
+}
+
 /** 只允许回环主机名，任何域名（DNS rebinding 的典型形态）一律拒绝。 */
 function hostAllowed(host: string | undefined): boolean {
   if (!host) return false;
@@ -181,6 +192,15 @@ interface ViewRecord {
 export async function createShellServer(options: ShellServerOptions): Promise<ShellServer> {
   const actorId = options.actorId ?? 'local-user';
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY;
+  const bindHost = options.host ?? '127.0.0.1';
+
+  // 必须在建 provider / listen 之前拒绝：非回环绑定等于把服务暴露给整个网络
+  if (!isLoopbackBindHost(bindHost)) {
+    throw Object.assign(
+      new Error(`拒绝绑定非回环地址: ${bindHost}（本服务只能监听 127.0.0.1 / ::1 / localhost）`),
+      { errorCode: 'ERR_PERMISSION_DENIED' as const },
+    );
+  }
 
   const provider: StorageProvider = createLocalProvider({
     rootDir: options.rootDir,
@@ -504,7 +524,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options.port ?? DEFAULT_PORT, options.host ?? '127.0.0.1', () => resolve());
+    server.listen(options.port ?? DEFAULT_PORT, bindHost, () => resolve());
   });
 
   const address = server.address() as AddressInfo;

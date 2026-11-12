@@ -28,11 +28,15 @@ export function EditorPane({ docId }: { docId: string }) {
         className="editor__area"
         value={tab.buffer}
         spellCheck={false}
+        // 保存期间锁定输入：Core 正在比较版本，缓冲不能在保存途中变化（F02）
+        disabled={tab.saving}
+        aria-busy={tab.saving}
         aria-label={`${tab.title} 源码`}
         onChange={(event) => actions.editDoc(docId, event.target.value)}
       />
       <div className="editor__footer">
         {tab.buffer.length} 字符 · {tab.buffer.split('\n').length} 行 · {status}
+        {tab.saving ? ' · 正在保存（已锁定输入）' : ''}
         {live && tab.lastStatus ? ` · 上次保存：${tab.lastStatus}` : ''}
         {live && tab.errorCode ? ` · ${tab.errorCode}` : ''}
       </div>
