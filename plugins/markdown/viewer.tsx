@@ -1,13 +1,17 @@
 /**
- * 极简 Markdown 渲染（S9-A）。
+ * Markdown 预览渲染（S9-A，S10-A 迁入插件）。
  *
- * 解析逻辑在 `markdown-parser.ts`（纯函数、可被 Node 直接测试），本文件只做
+ * 解析逻辑在 `blocks.ts`（纯函数、可被 Node 直接测试），本文件只做
  * AST → React 节点的映射，**始终不使用 dangerouslySetInnerHTML**，因此不存在 HTML 注入面。
  * 链接的协议白名单在解析期完成（`safeHref`），这里只判断 `href` 是否存在：
  * `href === null` 的链接按原始文本输出，不会产出任何可执行/可跳转的锚点。
+ *
+ * S10-A：本文件属于 **Markdown 插件**，通过 `file.viewer` 能力对外提供，
+ * 宿主（Shell）只按能力解析，不 import 本文件。
  */
 import type { ReactElement, ReactNode } from 'react';
-import { parseMarkdown, type Block, type Inline } from './markdown-parser';
+import type { ViewerCapability } from '../../packages/contracts/types.ts';
+import { parseMarkdown, type Block, type Inline } from './blocks.ts';
 
 function inlineNodes(inlines: Inline[], keyBase: string): ReactNode[] {
   return inlines.map((node, i) => {
@@ -106,4 +110,19 @@ export function MarkdownView({ source }: { source: string }): ReactElement {
       {blocks.map((block, i) => renderBlock(block, `b${i}`))}
     </div>
   );
+}
+
+/**
+ * `file.viewer` 能力实现：把内容渲染为 Markdown 预览。
+ *
+ * 能力契约（见 `packages/contracts/types.ts` 的 `ViewerCapability`）只要求
+ * 「内容 → 可显示节点」，不涉及存储、会话或保存；因此本插件无法绕过
+ * Core 的权限与条件保存链路。
+ */
+export function createMarkdownViewer(): ViewerCapability {
+  return {
+    apiVersion: '1',
+    extensions: ['.md', '.markdown'],
+    render: ({ content }) => <MarkdownView source={content} />,
+  };
 }

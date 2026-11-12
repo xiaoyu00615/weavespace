@@ -6,7 +6,11 @@ export type PaneId = 'primary' | 'secondary';
 export type AuxTab = 'ai' | 'tasks' | 'diagnostics';
 export type NavKey = 'projects' | 'plugins' | 'diagnostics';
 
-export type DocumentKind = 'markdown' | 'text';
+/**
+ * 资源与文档只描述**事实**（是目录/是文件、扩展名），不描述「用哪个插件渲染」。
+ * 查看器由能力注册表按扩展名解析（S10-A），因此新增格式不需要改这里。
+ */
+export type ResourceEntryKind = 'folder' | 'file';
 
 /** demo：内置演示数据，绝不写盘；live：经 localhost API 读写真实文件。 */
 export type ClientMode = 'demo' | 'live';
@@ -14,7 +18,9 @@ export type ClientMode = 'demo' | 'live';
 export interface ResourceNodeState {
   id: string;
   name: string;
-  kind: 'folder' | 'markdown' | 'text';
+  kind: ResourceEntryKind;
+  /** 文件扩展名（小写含点）；目录为空。能力注册表据此选择查看器。 */
+  extension?: string;
   path?: string;
   children?: ResourceNodeState[];
 }
@@ -31,7 +37,8 @@ export interface DocTab {
   docId: string;
   path: string;
   title: string;
-  kind: DocumentKind;
+  /** 文件扩展名；决定预览用哪个查看器能力，而不是写死格式分支。 */
+  extension: string;
   buffer: string;
   dirty: boolean;
   mode: ClientMode;

@@ -6,13 +6,14 @@
  * - 页面里的“保存”只清掉 dirty 标记并给出演示提示，**不会写入磁盘**；
  * - 未来由 Core 的 Client API 提供真实资源树与文档内容（见 ../client/client-api.ts）。
  */
-import type { DocumentKind, ResourceNodeState } from '../state/types';
+import type { ResourceNodeState } from '../state/types';
 
 export interface DemoNode {
   /** 树内唯一 key，同时作为演示文档 id。 */
   id: string;
   name: string;
-  kind: 'folder' | DocumentKind;
+  kind: 'folder' | 'file';
+  extension?: string;
   children?: DemoNode[];
 }
 
@@ -24,6 +25,7 @@ export function toResourceNodes(nodes: DemoNode[]): ResourceNodeState[] {
     id: node.id,
     name: node.name,
     kind: node.kind,
+    extension: node.extension,
     children: node.children ? toResourceNodes(node.children) : undefined,
   }));
 }
@@ -35,8 +37,8 @@ export const DEMO_TREE: DemoNode[] = [
     name: '剧本',
     kind: 'folder',
     children: [
-      { id: 'doc-scene-01', name: '第01场_巷口.md', kind: 'markdown' },
-      { id: 'doc-scene-02', name: '第02场_天台.md', kind: 'markdown' },
+      { id: 'doc-scene-01', name: '第01场_巷口.md', kind: 'file', extension: '.md' },
+      { id: 'doc-scene-02', name: '第02场_天台.md', kind: 'file', extension: '.md' },
     ],
   },
   {
@@ -44,8 +46,8 @@ export const DEMO_TREE: DemoNode[] = [
     name: '设定',
     kind: 'folder',
     children: [
-      { id: 'doc-characters', name: '人物小传.md', kind: 'markdown' },
-      { id: 'doc-locations', name: '场景清单.md', kind: 'markdown' },
+      { id: 'doc-characters', name: '人物小传.md', kind: 'file', extension: '.md' },
+      { id: 'doc-locations', name: '场景清单.md', kind: 'file', extension: '.md' },
     ],
   },
   {
@@ -53,8 +55,8 @@ export const DEMO_TREE: DemoNode[] = [
     name: '笔记',
     kind: 'folder',
     children: [
-      { id: 'doc-todo', name: '待办.md', kind: 'markdown' },
-      { id: 'doc-raw', name: '素材索引.txt', kind: 'text' },
+      { id: 'doc-todo', name: '待办.md', kind: 'file', extension: '.md' },
+      { id: 'doc-raw', name: '素材索引.txt', kind: 'file', extension: '.txt' },
     ],
   },
 ];

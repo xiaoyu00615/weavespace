@@ -90,6 +90,26 @@ export interface PluginManifest {
   entrypoints: { host?: string; client?: string };
 }
 
+/**
+ * 查看器能力契约（能力标识 `file.viewer`，S10-A）。
+ *
+ * 插件只提供「如何把内容变成可显示节点」，**不**接触存储、会话或保存链路；
+ * 宿主负责渲染与回退。返回值对 contracts 而言是不透明节点（`unknown`），
+ * 由宿主按其渲染运行时解释，避免 contracts 反向依赖具体 UI 实现（ENG-002）。
+ */
+export interface ViewerRenderInput {
+  content: string;
+  path: string;
+}
+
+export interface ViewerCapability {
+  /** 契约版本，与宿主 `CAPABILITY_API_MAJOR` 对齐。 */
+  readonly apiVersion: string;
+  /** 该实现可处理的扩展名（小写、含点）；由宿主据此选择实现。 */
+  readonly extensions: readonly string[];
+  render(input: ViewerRenderInput): unknown;
+}
+
 /** 结构化日志记录（docs/09 必填字段）。 */
 export interface LogRecord {
   timestamp: string;

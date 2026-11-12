@@ -16,7 +16,10 @@ export type ClientMode = 'demo' | 'live';
 export interface ResourceNode {
   id: string;
   name: string;
-  kind: 'folder' | 'markdown' | 'text';
+  /** 只区分目录/文件；格式由 `extension` + 能力注册表决定（S10-A）。 */
+  kind: 'folder' | 'file';
+  /** 文件扩展名（小写含点）；目录为空。 */
+  extension?: string;
   /** 文件相对路径（live 用于 open）；demo 下与 id 相同。 */
   path?: string;
   children?: ResourceNode[];

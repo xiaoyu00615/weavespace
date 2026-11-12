@@ -1,6 +1,9 @@
+import type { ReactNode } from 'react';
 import { useDocumentActions } from '../state/DocumentActionsContext';
+import { useViewer } from '../capabilities/CapabilityContext';
+import { renderViewerSafely } from '../capabilities/safe-render';
+import { ViewerBoundary } from '../capabilities/ViewerBoundary';
 import { useWorkspace } from '../state/WorkspaceContext';
-import { MarkdownView } from '../lib/markdown';
 
 const STATUS_TEXT: Record<string, string> = {
   CLEAN: '已与磁盘一致',
@@ -44,23 +47,53 @@ export function EditorPane({ docId }: { docId: string }) {
   );
 }
 
-/** 预览视图：Markdown 渲染或纯文本原样显示。 */
+/**
+ * 预览视图（S10-A）：**不**直接依赖任何格式实现，只按扩展名向能力注册表要查看器。
+ *
+ * 三种情况都只影响本窗格：
+ * - 有提供者 → 渲染它返回的节点；
+ * - 没有提供者（插件被停用且无回退）→ 显示原因，文档缓冲与保存不受影响；
+ * - 提供者抛错 → 局部错误提示（`renderViewerSafely` + `ViewerBoundary`）。
+ */
 export function PreviewPane({ docId }: { docId: string }) {
   const { state } = useWorkspace();
   const tab = state.tabs.find((item) => item.docId === docId);
+  // Hook 必须无条件执行：未打开文档时用空扩展名占位
+  const viewer = useViewer(tab?.extension ?? '');
   if (!tab) return <div className="pane__empty">文档未打开</div>;
+
+  const rendered = viewer.ok
+    ? renderViewerSafely(viewer.viewer, { content: tab.buffer, path: tab.path })
+    : null;
 
   return (
     <div className="preview">
-      {tab.kind === 'markdown' ? (
-        <MarkdownView source={tab.buffer} />
-      ) : (
-        <pre className="preview__plain">{tab.buffer}</pre>
+      {!viewer.ok && (
+        <div className="preview__error" role="alert">
+          <strong>没有可用的查看器</strong>
+          <div>{viewer.reason}</div>
+          <div className="preview__error-hint">
+            可在左侧「插件」中启用对应能力；文档内容与未保存修改不受影响。
+          </div>
+        </div>
+      )}
+      {viewer.ok && rendered && !rendered.ok && (
+        <div className="preview__error" role="alert">
+          <strong>查看器渲染失败</strong>
+          <div>
+            {rendered.errorCode}：{rendered.message}
+          </div>
+          <div className="preview__error-hint">文档内容与未保存修改不受影响。</div>
+        </div>
+      )}
+      {viewer.ok && rendered?.ok && (
+        <ViewerBoundary providerId={viewer.providerId}>{rendered.node as ReactNode}</ViewerBoundary>
       )}
       <div className="preview__footer">
+        {viewer.ok ? `查看器：${viewer.providerId}` : '查看器：无'}
         {tab.mode === 'live'
-          ? '预览由编辑缓冲实时渲染；磁盘内容以保存结果为准'
-          : '预览由演示缓冲实时渲染，不读取磁盘'}
+          ? ' · 预览由编辑缓冲实时渲染；磁盘内容以保存结果为准'
+          : ' · 预览由演示缓冲实时渲染，不读取磁盘'}
       </div>
     </div>
   );

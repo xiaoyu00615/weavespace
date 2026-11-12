@@ -17,6 +17,7 @@ import {
   type WeaveSpaceClient,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
+import { extensionOf } from '../capabilities/registry';
 import { backupDraftBeforeReload } from '../client/draft-backup';
 import { runSaveFlow } from '../client/save-flow';
 import { DEMO_CONTENTS, DEMO_NODES } from '../data/demo-project';
@@ -76,7 +77,7 @@ async function copyText(text: string): Promise<boolean> {
 function tabFromSnapshot(
   docId: string,
   title: string,
-  kind: DocTab['kind'],
+  extension: string,
   mode: ClientMode,
   doc: DocumentSnapshot,
 ): DocTab {
@@ -84,7 +85,7 @@ function tabFromSnapshot(
     docId,
     path: doc.path,
     title,
-    kind,
+    extension,
     buffer: doc.content,
     dirty: doc.dirty,
     mode,
@@ -217,7 +218,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           tab: tabFromSnapshot(
             docId,
             node.name,
-            node.kind === 'markdown' ? 'markdown' : 'text',
+            // 只记录扩展名：用哪个查看器由能力注册表决定，不再在动作层写死格式分支
+            node.extension ?? extensionOf(node.name),
             mode,
             outcome.document,
           ),
