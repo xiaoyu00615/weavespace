@@ -759,3 +759,63 @@ button {
   color: var(--accent);
   border-color: #b9cdfb;
 }
+
+/* ---- S9-B：版本冲突恢复面板（仅在 CONFLICT 时出现） ---- */
+.conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid #f0c9a8;
+  border-radius: 8px;
+  background: #fff8f1;
+}
+
+.conflict__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.conflict__title {
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.conflict__hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.conflict__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.conflict__error {
+  margin: 0;
+  font-size: 12px;
+  color: #b42318;
+}
+
+.conflict__disk-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.conflict__pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

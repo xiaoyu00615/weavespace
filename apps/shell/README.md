@@ -109,5 +109,8 @@ AST 映射成 React 节点。解析逻辑因此可以被 Node 直接加载并回
 5. UI 验证方式：`tsc` + `vite build` + 解析器回归套件（`tests/suites/19-s9a-markdown.test.ts`）
    + 端到端接口测试（`tests/suites/20-s9b-live-file.test.ts`）+ 真实 Chrome（CDP）冒烟；
    仓库内未引入 playwright/puppeteer，浏览器冒烟脚本不随仓库分发。
-6. live 模式没有"另存为/强制覆盖/丢弃未保存"的入口：冲突与失败时只能保留编辑内容。
+6. 冲突恢复：出现 `CONFLICT` 时工具栏下方出现恢复面板，可「查看磁盘版本」「复制草稿」
+   「重新加载（丢弃草稿）」。重新加载需要 `window.confirm` 明确确认；确认前会把草稿备份到
+   `sessionStorage`（`ws:draft-backup:<path>`）并尽力复制到剪贴板；重载失败时草稿保持不变。
+   仍没有"另存为/强制覆盖"入口。
 7. 未做多用户与并发编辑：单进程、单 actor（`local-user`）。

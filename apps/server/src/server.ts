@@ -21,6 +21,8 @@
  *   POST /api/edit      {sessionId, buffer, expectedVersion?}
  *   POST /api/save      {sessionId, expectedVersion}
  *   POST /api/close     {sessionId, viewId}
+ *   GET  /api/document/disk ?sessionId&viewId  只读查看磁盘上的当前版本（冲突恢复用）
+ *   POST /api/reload    {sessionId, viewId, discardDraft:true}  用磁盘内容覆盖会话（需显式确认）
  */
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -71,6 +73,29 @@ export interface ShellServer {
   readonly actorId: string;
   readonly rootDir: string;
   close(): Promise<void>;
+}
+
+/** 把 Core/Storage 的错误码映射成 HTTP 语义（对外仍是 JSON + status）。 */
+function httpStatusOfDomainError(errorCode: string | undefined): number {
+  switch (errorCode) {
+    case 'ERR_DOCUMENT_DIRTY':
+    case 'ERR_DOCUMENT_VERSION_CONFLICT':
+      return 409;
+    case 'ERR_PERMISSION_DENIED':
+    case 'ERR_PATH_OUTSIDE_ROOT':
+    case 'ERR_RESOURCE_IDENTITY_CONFLICT':
+      return 403;
+    case 'ERR_RESOURCE_NOT_FOUND':
+    case 'ERR_DOCUMENT_NOT_FOUND':
+      return 404;
+    case 'ERR_RESOURCE_NOT_TEXT':
+    case 'ERR_ENCODING_UNSUPPORTED':
+    case 'ERR_SAVE_FAILED':
+    case 'ERR_STORAGE_IO':
+      return 422;
+    default:
+      return 500;
+  }
 }
 
 class HttpError extends Error {
@@ -318,6 +343,29 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       return;
     }
 
+    if (method === 'GET' && pathname === '/api/document/disk') {
+      const sessionId = url.searchParams.get('sessionId') ?? '';
+      const viewId = url.searchParams.get('viewId') ?? undefined;
+      if (!sessionId) throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 sessionId');
+      if (!identityOf(sessionId)) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
+      requireView(sessionId, viewId);
+      authorizeRead(sessionId);
+      const identity = identityOf(sessionId)!;
+      try {
+        // 只读查看：用会话绑定的路径读写，客户端无法指定其它位置
+        const disk = await provider.read(identity.path);
+        sendJson(res, 200, {
+          status: 'APPLIED',
+          content: disk.content,
+          contentVersion: disk.contentVersion,
+        });
+      } catch (err) {
+        const code = (err as { errorCode?: string }).errorCode;
+        throw new HttpError(httpStatusOfDomainError(code), code ?? 'ERR_STORAGE_IO', '磁盘内容不可读');
+      }
+      return;
+    }
+
     if (method === 'GET' && pathname === '/api/document') {
       const sessionId = url.searchParams.get('sessionId') ?? '';
       const viewId = url.searchParams.get('viewId') ?? undefined;
@@ -357,7 +405,12 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           await replyCommandFailure(res, outcome.status, outcome.errorCode);
           return;
         }
-        const handle = outcome.result as { viewId: string; sessionId: string; resourceId: string };
+        const handle = outcome.result as {
+          viewId: string;
+          sessionId: string;
+          resourceId: string;
+          reloaded?: boolean;
+        };
         const identity = identityOf(handle.sessionId);
         if (!identity) throw new HttpError(500, 'ERR_COMMAND_INTERNAL', '会话未建立');
         views.set(handle.viewId, {
@@ -369,6 +422,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         authorizeRead(handle.sessionId);
         sendJson(res, 200, {
           status: 'APPLIED',
+          reloaded: handle.reloaded === true,
           document: documentDto(handle.sessionId, handle.viewId),
         });
         return;
@@ -444,6 +498,46 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           contentVersion: outcome.resultingVersion ?? null,
           document: documentDto(sessionId, typeof body.viewId === 'string' ? body.viewId : null),
         });
+        return;
+      }
+
+      if (pathname === '/api/reload') {
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+        const viewId = typeof body.viewId === 'string' ? body.viewId : '';
+        if (!sessionId || !viewId) {
+          throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 sessionId 或 viewId');
+        }
+        // 「明确确认」是协议的一部分：缺少该标记一律拒绝，服务端不替用户做丢弃决定
+        if (body.discardDraft !== true) {
+          throw new HttpError(409, 'ERR_DOCUMENT_DIRTY', '覆盖草稿必须显式确认（discardDraft: true）');
+        }
+        requireView(sessionId, viewId);
+        const identity = identityOf(sessionId);
+        if (!identity) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
+        for (const action of ['read', 'write'] as const) {
+          const decision = permission.authorize({
+            actorId,
+            action,
+            resourcePath: identity.path,
+            providerId: identity.providerId,
+          });
+          if (!decision.allowed) {
+            throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+          }
+        }
+
+        try {
+          const reloaded = await document.reload(sessionId, { discardDirty: true });
+          sendJson(res, 200, {
+            status: 'APPLIED',
+            document: documentDto(sessionId, viewId),
+            previousDraft: reloaded.previousContent,
+            previousBaseVersion: reloaded.previousBaseVersion,
+          });
+        } catch (err) {
+          const code = (err as { errorCode?: string }).errorCode;
+          throw new HttpError(httpStatusOfDomainError(code), code ?? 'ERR_STORAGE_IO', '重载失败');
+        }
         return;
       }
 

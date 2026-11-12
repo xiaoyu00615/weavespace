@@ -43,6 +43,23 @@ export interface OpenOutcome {
   errorCode?: string | null;
   message?: string;
   document?: DocumentSnapshot;
+  /** true 表示服务端检测到磁盘变化，已把会话内容与基线刷新为磁盘版本。 */
+  reloaded?: boolean;
+}
+
+/** 磁盘上的当前版本（冲突恢复时只读查看，不写任何东西）。 */
+export interface DiskSnapshot {
+  content: string;
+  contentVersion: string;
+}
+
+export interface ReloadOutcome {
+  status: 'APPLIED' | 'REJECTED';
+  errorCode?: string | null;
+  message?: string;
+  document?: DocumentSnapshot;
+  /** 覆盖前的草稿（服务端回传，供 UI 备份）。 */
+  previousDraft?: string;
 }
 
 export interface SaveOutcome {
@@ -66,6 +83,16 @@ export interface WeaveSpaceClient {
   applyEdit(sessionId: string, buffer: string, expectedVersion?: string | null): Promise<OpenOutcome>;
   saveDocument(sessionId: string, expectedVersion: string, viewId?: string | null): Promise<SaveOutcome>;
   closeDocument(sessionId: string, viewId: string): Promise<CloseOutcome>;
+  /** 只读查看磁盘当前内容（冲突恢复入口的第一步）。 */
+  readDisk(sessionId: string, viewId?: string | null): Promise<
+    | { status: 'APPLIED'; content: string; contentVersion: string }
+    | { status: 'REJECTED'; errorCode: string | null; message?: string }
+  >;
+  /**
+   * 用磁盘内容覆盖会话。**调用方必须已经取得用户明确确认**（服务端也会强制校验
+   * `discardDraft: true`），否则草稿会被丢弃。
+   */
+  reloadDocument(sessionId: string, viewId: string): Promise<ReloadOutcome>;
 }
 
 interface ApiEnvelope {
@@ -122,6 +149,7 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         errorCode: body.errorCode ?? null,
         message: body.message,
         document: body.document,
+        reloaded: (body as { reloaded?: boolean }).reloaded === true,
       };
     },
     async readDocument(sessionId: string, viewId?: string | null) {
@@ -172,6 +200,33 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         status: body.status === 'APPLIED' ? 'APPLIED' : 'REJECTED',
         errorCode: body.errorCode ?? null,
         message: body.message,
+      };
+    },
+    async readDisk(sessionId: string, viewId?: string | null) {
+      const query = new URLSearchParams({ sessionId });
+      if (viewId) query.set('viewId', viewId);
+      const { body } = await request(baseUrl, `/api/document/disk?${query.toString()}`);
+      const asDisk = body as { content?: string; contentVersion?: string };
+      if (body.status === 'APPLIED' && typeof asDisk.content === 'string') {
+        return {
+          status: 'APPLIED' as const,
+          content: asDisk.content,
+          contentVersion: asDisk.contentVersion ?? '',
+        };
+      }
+      return { status: 'REJECTED' as const, errorCode: body.errorCode ?? null, message: body.message };
+    },
+    async reloadDocument(sessionId: string, viewId: string) {
+      const { body } = await request(baseUrl, '/api/reload', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId, viewId, discardDraft: true }),
+      });
+      return {
+        status: body.status === 'APPLIED' ? 'APPLIED' : 'REJECTED',
+        errorCode: body.errorCode ?? null,
+        message: body.message,
+        document: body.document,
+        previousDraft: (body as { previousDraft?: string }).previousDraft,
       };
     },
   };
@@ -258,6 +313,31 @@ export function createDemoClient(
     },
     async closeDocument() {
       return { status: 'APPLIED' };
+    },
+    async readDisk(sessionId: string) {
+      const id = sessionId.replace('demo-session:', '');
+      return {
+        status: 'APPLIED' as const,
+        content: contents[id] ?? '',
+        contentVersion: `demo:${id}`,
+      };
+    },
+    async reloadDocument(sessionId: string, viewId: string) {
+      const id = sessionId.replace('demo-session:', '');
+      return {
+        status: 'APPLIED' as const,
+        document: {
+          sessionId,
+          viewId,
+          resourceId: id,
+          path: id,
+          content: contents[id] ?? '',
+          baseVersion: `demo:${id}`,
+          revision: 0,
+          dirty: false,
+          documentState: 'DEMO',
+        },
+      };
     },
   };
 }

@@ -1,4 +1,5 @@
 import { AuxPanel } from '../components/AuxPanel';
+import { ConflictBanner } from '../components/ConflictBanner';
 import { DocumentToolbar } from '../components/DocumentToolbar';
 import { GlobalNav } from '../components/GlobalNav';
 import { ProjectTree } from '../components/ProjectTree';
@@ -29,6 +30,7 @@ export function ShellLayout() {
       <main className="main">
         <DocumentToolbar />
         <TabStrip />
+        <ConflictBanner />
         <SplitWorkspace />
       </main>
 

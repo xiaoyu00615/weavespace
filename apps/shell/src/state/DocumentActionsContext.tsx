@@ -35,9 +35,42 @@ export interface DocumentActions {
   switchMode(mode: ClientMode): Promise<void>;
   /** 重新拉取 live 资源树。 */
   reloadResources(): Promise<void>;
+  /** 只读查看磁盘当前内容（冲突恢复第一步）。 */
+  fetchDiskVersion(docId: string): Promise<
+    { ok: true; content: string; contentVersion: string } | { ok: false; errorCode: string | null; message?: string }
+  >;
+  /** 把当前草稿复制到剪贴板（尽力而为，失败返回 false）。 */
+  copyDraft(docId: string): Promise<boolean>;
+  /**
+   * 用磁盘内容覆盖会话（冲突恢复）。**必须由用户明确确认**后才调用；
+   * 调用前会把草稿备份到本标签页并在可能时复制到剪贴板。
+   */
+  reloadFromDisk(docId: string): Promise<boolean>;
 }
 
 const DocumentActionsContext = createContext<DocumentActions | null>(null);
+
+/** 冲突重载前的草稿备份前缀：只写 sessionStorage，不落任何用户目录。 */
+const DRAFT_BACKUP_PREFIX = 'ws:draft-backup:';
+
+function backupDraftLocally(path: string, content: string): boolean {
+  try {
+    window.sessionStorage.setItem(`${DRAFT_BACKUP_PREFIX}${path}`, content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 尽力复制到剪贴板；无权限/无 API 时返回 false（由调用方提示用户手动复制）。 */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function tabFromSnapshot(
   docId: string,
@@ -139,8 +172,31 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           return;
         }
         const docId = node.path ?? node.id;
-        if (stateRef.current.tabs.some((tab) => tab.docId === docId)) {
+        const existing = stateRef.current.tabs.find((tab) => tab.docId === docId);
+        if (existing) {
           dispatch({ type: 'ACTIVATE_TAB', docId });
+          // 干净标签可能与磁盘脱节（页面刷新后旧视图仍在服务端）：重新打开并同步内容。
+          // 有草稿时不动：Core 也不会在 dirty 时刷新，返回值就是会话缓冲，回填会覆盖输入。
+          if (existing.mode === 'live' && !existing.dirty) {
+            const refreshed = await clientFor('live').openDocument(docId);
+            if (refreshed.status === 'APPLIED' && refreshed.document) {
+              const doc = refreshed.document;
+              if (doc.content !== existing.buffer || doc.baseVersion !== existing.baseVersion) {
+                dispatch({
+                  type: 'TAB_PATCH',
+                  docId,
+                  patch: {
+                    buffer: doc.content,
+                    baseVersion: doc.baseVersion,
+                    revision: doc.revision,
+                    dirty: false,
+                    documentState: doc.documentState,
+                  },
+                });
+                dispatch({ type: 'NOTICE', message: '检测到磁盘变化：已同步最新内容与版本' });
+              }
+            }
+          }
           return;
         }
 
@@ -165,6 +221,13 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
             outcome.document,
           ),
         });
+        // 放在 OPEN_TAB 之后：OPEN_TAB 会写"已打开"提示，不能让刷新提示被覆盖
+        if (outcome.reloaded) {
+          dispatch({
+            type: 'NOTICE',
+            message: '检测到磁盘已被外部修改：已重新载入最新内容与版本',
+          });
+        }
       },
 
       editDoc(docId: string, text: string) {
@@ -332,6 +395,108 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           } finally {
             dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
           }
+        }
+      },
+
+      async fetchDiskVersion(docId: string) {
+        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        if (!tab || tab.mode !== 'live' || !tab.sessionId) {
+          return { ok: false as const, errorCode: 'ERR_DOCUMENT_NOT_FOUND' };
+        }
+        try {
+          const disk = await clientFor('live').readDisk(tab.sessionId, tab.viewId);
+          if (disk.status !== 'APPLIED') {
+            return { ok: false as const, errorCode: disk.errorCode ?? null, message: disk.message };
+          }
+          return { ok: true as const, content: disk.content, contentVersion: disk.contentVersion };
+        } catch {
+          return { ok: false as const, errorCode: 'ERR_STORAGE_IO' };
+        }
+      },
+
+      async copyDraft(docId: string) {
+        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        if (!tab) return false;
+        const copied = await copyText(tab.buffer);
+        const backedUp = backupDraftLocally(tab.path, tab.buffer);
+        dispatch({
+          type: 'NOTICE',
+          message: copied
+            ? '草稿已复制到剪贴板'
+            : backedUp
+              ? '剪贴板不可用：草稿已备份到本标签页（ws:draft-backup）'
+              : '剪贴板不可用，且备份失败：请手动复制草稿',
+        });
+        return copied;
+      },
+
+      async reloadFromDisk(docId: string) {
+        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        if (!tab || tab.mode !== 'live') return false;
+        if (!tab.sessionId || !tab.viewId) {
+          dispatch({ type: 'NOTICE', message: '缺少会话信息，无法重新加载' });
+          return false;
+        }
+        if (locked.current.has(docId)) {
+          dispatch({ type: 'NOTICE', message: '当前文档正在保存/重载中，请稍候' });
+          return false;
+        }
+
+        // 明确确认：默认取消，只有用户点「确定」才丢弃草稿
+        const confirmed = window.confirm(
+          '将用磁盘上的最新内容覆盖当前草稿，未保存的修改会丢失。\n\n建议先点「复制草稿」。确定继续？',
+        );
+        if (!confirmed) {
+          dispatch({ type: 'NOTICE', message: '已取消重新加载：草稿保持不变' });
+          return false;
+        }
+
+        locked.current.add(docId);
+        dispatch({ type: 'TAB_PATCH', docId, patch: { saving: true } });
+        try {
+          // 先让在途编辑落定，避免重载后又被旧缓冲覆盖
+          await queues.current.get(docId)?.flush();
+          const draft = stateRef.current.tabs.find((item) => item.docId === docId)?.buffer ?? tab.buffer;
+          const backedUp = backupDraftLocally(tab.path, draft);
+          const copied = await copyText(draft);
+
+          const outcome = await clientFor('live').reloadDocument(tab.sessionId, tab.viewId);
+          if (outcome.status !== 'APPLIED' || !outcome.document) {
+            dispatch({
+              type: 'NOTICE',
+              message: `重新加载失败：${outcome.errorCode ?? '未知错误'}（草稿仍保留）`,
+            });
+            return false;
+          }
+          const doc = outcome.document;
+          queues.current.delete(docId);
+          dispatch({
+            type: 'TAB_PATCH',
+            docId,
+            patch: {
+              buffer: doc.content,
+              baseVersion: doc.baseVersion,
+              revision: doc.revision,
+              dirty: false,
+              documentState: doc.documentState,
+              errorCode: null,
+              lastStatus: null,
+            },
+          });
+          dispatch({
+            type: 'NOTICE',
+            message: copied
+              ? '已从磁盘重新加载（旧草稿已复制到剪贴板）'
+              : backedUp
+                ? '已从磁盘重新加载（旧草稿已备份到本标签页）'
+                : '已从磁盘重新加载（旧草稿未能备份）',
+          });
+          return true;
+        } catch {
+          dispatch({ type: 'NOTICE', message: '重新加载失败（网络异常），草稿仍保留' });
+          return false;
+        } finally {
+          unlocked(docId);
         }
       },
 

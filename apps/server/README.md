@@ -25,6 +25,8 @@ node apps/server/src/main.ts <项目根目录> [端口]     # 或 npm run start:
 | POST | `/api/edit` | `{sessionId, buffer, expectedVersion?}` → `document.applyEdit` |
 | POST | `/api/save` | `{sessionId, expectedVersion}` → `document.save` 条件保存 |
 | POST | `/api/close` | `{sessionId, viewId}` → 关闭视图（未保存则拒绝） |
+| GET | `/api/document/disk` | `?sessionId&viewId` → 只读查看磁盘当前内容与版本（冲突恢复第一步） |
+| POST | `/api/reload` | `{sessionId, viewId, discardDraft:true}` → 用磁盘内容覆盖会话；**缺 `discardDraft` 一律 409**，并回传 `previousDraft` |
 
 **`status` 是权威结果，HTTP 状态码不是**：
 
@@ -35,6 +37,8 @@ node apps/server/src/main.ts <项目根目录> [端口]     # 或 npm run start:
 | 保存失败（如目标变成二进制） | 422 | `FAILED` |
 | 结果未确认 | 202 | `UNKNOWN` |
 | 关闭被未保存内容阻止 | 409 | `REJECTED` + `ERR_DOCUMENT_DIRTY` |
+| 未经确认的重载 | 409 | `REJECTED` + `ERR_DOCUMENT_DIRTY` |
+| 重载时磁盘不可读/已删除 | 404 | `REJECTED`（草稿保持） |
 
 `UNKNOWN` 既不是成功也不是失败：不写收据、不自动重试，需人工核对磁盘。
 

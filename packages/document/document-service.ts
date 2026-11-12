@@ -91,6 +91,8 @@ export interface ViewHandle {
   viewId: string;
   sessionId: string;
   resourceId: string;
+  /** true 表示本次打开检测到磁盘变化，已把会话内容/基线刷新为磁盘版本（S9B-A）。 */
+  reloaded?: boolean;
 }
 
 export interface CloseViewResult {
@@ -98,6 +100,15 @@ export interface CloseViewResult {
   /** true 表示因存在未保存修改而拒绝关闭（内容仍被保留）。 */
   protectedDirty: boolean;
   reason?: string;
+}
+
+/** 从磁盘重载会话内容的结果（S9B-C）。 */
+export interface ReloadResult {
+  content: string;
+  contentVersion: string;
+  /** 重载前的草稿与基线，供调用方备份/展示，避免误丢弃。 */
+  previousContent: string;
+  previousBaseVersion: string | null;
 }
 
 export interface ReconcileResult {
@@ -138,6 +149,13 @@ export interface DocumentService {
   getBuffer(sessionId: string): string;
   applyEdit(sessionId: string, nextBuffer: string): DocumentStateView;
   save(sessionId: string, serializer: Serializer): Promise<SaveResult>;
+  /**
+   * 用磁盘内容覆盖会话（冲突恢复，S9B-C）。
+   *
+   * `discardDirty` 必须由调用方在用户明确确认后传 true；
+   * 否则存在未保存修改时直接拒绝（`ERR_DOCUMENT_DIRTY`），Core 绝不自行丢弃草稿。
+   */
+  reload(sessionId: string, options?: { discardDirty?: boolean }): Promise<ReloadResult>;
   reconcile(sessionId: string, serializer: Serializer): Promise<ReconcileResult>;
   detectExternalChange(sessionId: string): Promise<{ changed: boolean; diskVersion: string | null }>;
   drainEvents(): DocumentEvent[];
@@ -150,7 +168,7 @@ export interface DocumentService {
 }
 
 export interface DocumentEvent {
-  type: 'SESSION_OPENED' | 'EDIT_APPLIED' | 'SAVE_STARTED' | 'SAVE_COMMITTED' | 'SAVE_CONFLICT' | 'SAVE_FAILED' | 'SAVE_UNKNOWN' | 'VIEW_CLOSED' | 'CLOSE_BLOCKED_DIRTY';
+  type: 'SESSION_OPENED' | 'DOCUMENT_RELOADED' | 'EDIT_APPLIED' | 'SAVE_STARTED' | 'SAVE_COMMITTED' | 'SAVE_CONFLICT' | 'SAVE_FAILED' | 'SAVE_UNKNOWN' | 'VIEW_CLOSED' | 'CLOSE_BLOCKED_DIRTY';
   sessionId: string;
   resourceId: string;
   occurredAt: string;
@@ -256,6 +274,44 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
 
       let sessionId = sessionsByResource.get(input.resourceId);
       let session = sessionId ? sessions.get(sessionId) : undefined;
+      let reloaded = false;
+
+      /**
+       * S9B-A：会话在「全部视图已关闭且没有未保存修改」时被复用时，磁盘可能已被外部编辑器改动。
+       * 此时必须重新读取磁盘并刷新会话，否则用户会看到旧内容、拿着旧 baseVersion，
+       * 一保存就必然 CONFLICT（且 UI 没有恢复入口）。
+       *
+       * 唯一的禁止条件是 **dirty**：不能拿磁盘内容覆盖正在编辑的草稿（S9B-B）。
+       * 不按「有没有视图」判断——页面刷新/崩溃会留下无人认领的旧视图，
+       * 若因此跳过刷新，用户重开后仍会拿着旧版本保存，缺陷会以另一种形式复现。
+       */
+      if (session && !session.dirty) {
+        try {
+          const disk = await session.provider.read(session.path);
+          if (disk.contentVersion !== session.baseVersion) {
+            const previousBaseVersion = session.baseVersion;
+            session.buffer = disk.content;
+            session.baseVersion = disk.contentVersion;
+            session.state = 'CLEAN';
+            session.revision += 1;
+            reloaded = true;
+            emit({
+              type: 'DOCUMENT_RELOADED',
+              sessionId: session.sessionId,
+              resourceId: session.resourceId,
+              detail: {
+                reason: 'reopen-after-external-change',
+                views: session.views.size,
+                previousBaseVersion,
+                baseVersion: disk.contentVersion,
+              },
+            });
+          }
+        } catch {
+          // 磁盘不可读/已删除：保留会话现状（不伪装成已刷新），后续保存会 CONFLICT，
+          // 由用户通过冲突恢复入口处理。
+        }
+      }
 
       if (!session) {
         const read = await readForOpen(input.provider, input.path);
@@ -287,7 +343,7 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
       const viewId = `view-${++viewCounter}`;
       views.set(viewId, session.sessionId);
       session.views.add(viewId);
-      return { viewId, sessionId: session.sessionId, resourceId: session.resourceId };
+      return { viewId, sessionId: session.sessionId, resourceId: session.resourceId, reloaded };
     },
 
     async closeView(viewId: string): Promise<CloseViewResult> {
@@ -482,6 +538,36 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
           return { ...result, durationMs };
         }
       }
+    },
+
+    async reload(sessionId: string, options?: { discardDirty?: boolean }): Promise<ReloadResult> {
+      const session = require(sessionId);
+      if (session.dirty && options?.discardDirty !== true) {
+        throw Object.assign(new Error('会话存在未保存修改，未经确认不得用磁盘内容覆盖'), {
+          errorCode: 'ERR_DOCUMENT_DIRTY' as const,
+        });
+      }
+      // 读取失败（不存在/不可读/非文本）必须上抛：绝不能用空内容或旧内容伪装成"重载成功"
+      const read = await session.provider.read(session.path);
+      const previousContent = session.buffer;
+      const previousBaseVersion = session.baseVersion;
+      session.buffer = read.content;
+      session.baseVersion = read.contentVersion;
+      session.dirty = false;
+      session.state = 'CLEAN';
+      session.revision += 1;
+      emit({
+        type: 'DOCUMENT_RELOADED',
+        sessionId,
+        resourceId: session.resourceId,
+        detail: {
+          reason: 'explicit-reload',
+          discardedDirty: previousContent !== read.content,
+          previousBaseVersion,
+          baseVersion: read.contentVersion,
+        },
+      });
+      return { content: read.content, contentVersion: read.contentVersion, previousContent, previousBaseVersion };
     },
 
     async reconcile(sessionId: string, serializer: Serializer): Promise<ReconcileResult> {

@@ -825,3 +825,218 @@ test('S9B-26 非回环地址在 listen 之前被拒绝，默认与 IPv6 回环�
     await rm(base, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+// ---------------------------------------------------------------------------
+// S9B-A：关闭视图后外部改盘，重开必须读到最新磁盘内容
+// ---------------------------------------------------------------------------
+test('S9B-27 关闭后外部改盘：重开读到最新内容与版本，再次保存成功', async () => {
+  await withServer(async ({ root, post }) => {
+    const file = join(root, 'a.md');
+    const opened = await post('/api/open', { path: 'a.md' });
+    const doc = opened.body.document;
+    assert.equal(opened.body.reloaded, false, '首次打开不应标记为已刷新');
+
+    await post('/api/edit', { sessionId: doc.sessionId, viewId: doc.viewId, buffer: '# v2\n' });
+    const saved = await post('/api/save', {
+      sessionId: doc.sessionId,
+      viewId: doc.viewId,
+      expectedVersion: doc.baseVersion,
+    });
+    assert.equal(saved.body.status, 'COMMITTED');
+
+    const closed = await post('/api/close', { sessionId: doc.sessionId, viewId: doc.viewId });
+    assert.equal(closed.body.status, 'APPLIED');
+
+    // 外部编辑器改盘
+    await writeFile(file, '# v3 外部写入\n', 'utf8');
+
+    const reopened = await post('/api/open', { path: 'a.md' });
+    assert.equal(reopened.status, 200);
+    const doc2 = reopened.body.document;
+    assert.equal(doc2.sessionId, doc.sessionId, '仍是同一会话（复用而非重建）');
+    assert.equal(doc2.content, '# v3 外部写入\n', '重开必须读到最新磁盘内容');
+    assert.equal(doc2.baseVersion, sha(Buffer.from('# v3 外部写入\n', 'utf8')));
+    assert.equal(reopened.body.reloaded, true, '必须报告已刷新');
+    assert.equal(doc2.dirty, false);
+    assert.equal(doc2.documentState, 'CLEAN');
+
+    // 再编辑保存：必须恢复正常
+    await post('/api/edit', { sessionId: doc2.sessionId, viewId: doc2.viewId, buffer: '# v4 继续编辑\n' });
+    const saved2 = await post('/api/save', {
+      sessionId: doc2.sessionId,
+      viewId: doc2.viewId,
+      expectedVersion: doc2.baseVersion,
+    });
+    assert.equal(saved2.body.status, 'COMMITTED', '冲突修复后应能继续保存');
+    assert.equal(await readFile(file, 'utf8'), '# v4 继续编辑\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S9B-B：有未保存修改的会话不得被磁盘内容覆盖
+// ---------------------------------------------------------------------------
+test('S9B-28 有未保存修改时外部改盘：保存 CONFLICT，草稿保持原样', async () => {
+  await withServer(async ({ root, post, api }) => {
+    const opened = await post('/api/open', { path: 'a.md' });
+    const doc = opened.body.document;
+    await post('/api/edit', { sessionId: doc.sessionId, viewId: doc.viewId, buffer: '# 我的草稿\n' });
+
+    await writeFile(join(root, 'a.md'), '# 外部改动\n', 'utf8');
+
+    const saved = await post('/api/save', {
+      sessionId: doc.sessionId,
+      viewId: doc.viewId,
+      expectedVersion: doc.baseVersion,
+    });
+    assert.equal(saved.body.status, 'CONFLICT');
+
+    const reread = await api(`/api/document?sessionId=${doc.sessionId}&viewId=${doc.viewId}`);
+    assert.equal(reread.body.document.content, '# 我的草稿\n', '草稿不得被磁盘内容覆盖');
+    assert.equal(reread.body.document.dirty, true);
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '# 外部改动\n', '磁盘不得被覆盖');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S9B-C：冲突恢复入口
+// ---------------------------------------------------------------------------
+async function makeConflict(sessionCtx: {
+  root: string;
+  post: (p: string, b: unknown) => Promise<ApiResponse>;
+}) {
+  const opened = await sessionCtx.post('/api/open', { path: 'a.md' });
+  const doc = opened.body.document;
+  await sessionCtx.post('/api/edit', {
+    sessionId: doc.sessionId,
+    viewId: doc.viewId,
+    buffer: '# 冲突时的草稿\n',
+  });
+  await writeFile(join(sessionCtx.root, 'a.md'), '# 磁盘新版本\n', 'utf8');
+  const saved = await sessionCtx.post('/api/save', {
+    sessionId: doc.sessionId,
+    viewId: doc.viewId,
+    expectedVersion: doc.baseVersion,
+  });
+  assert.equal(saved.body.status, 'CONFLICT');
+  return doc;
+}
+
+test('S9B-29 未经显式确认的重载被拒绝，草稿不丢', async () => {
+  await withServer(async ({ root, post, api }) => {
+    const doc = await makeConflict({ root, post });
+
+    for (const payload of [
+      { sessionId: doc.sessionId, viewId: doc.viewId },
+      { sessionId: doc.sessionId, viewId: doc.viewId, discardDraft: false },
+      { sessionId: doc.sessionId, viewId: doc.viewId, discardDraft: 'yes' },
+    ]) {
+      const res = await post('/api/reload', payload);
+      assert.equal(res.status, 409, '缺少显式确认必须拒绝');
+      assert.equal(res.body.errorCode, 'ERR_DOCUMENT_DIRTY');
+    }
+
+    const reread = await api(`/api/document?sessionId=${doc.sessionId}&viewId=${doc.viewId}`);
+    assert.equal(reread.body.document.content, '# 冲突时的草稿\n');
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '# 磁盘新版本\n');
+  });
+});
+
+test('S9B-30 显式确认后重载：内容与版本对齐磁盘，可继续编辑保存', async () => {
+  await withServer(async ({ root, post, api }) => {
+    const doc = await makeConflict({ root, post });
+
+    const reloaded = await post('/api/reload', {
+      sessionId: doc.sessionId,
+      viewId: doc.viewId,
+      discardDraft: true,
+    });
+    assert.equal(reloaded.status, 200);
+    assert.equal(reloaded.body.status, 'APPLIED');
+    assert.equal(reloaded.body.document.content, '# 磁盘新版本\n');
+    assert.equal(reloaded.body.document.baseVersion, sha(Buffer.from('# 磁盘新版本\n', 'utf8')));
+    assert.equal(reloaded.body.document.dirty, false);
+    assert.equal(reloaded.body.document.documentState, 'CLEAN');
+    assert.equal(reloaded.body.previousDraft, '# 冲突时的草稿\n', '必须回传旧草稿供备份');
+
+    // 冲突解除后可正常保存
+    await post('/api/edit', { sessionId: doc.sessionId, viewId: doc.viewId, buffer: '# 重载后编辑\n' });
+    const saved = await post('/api/save', {
+      sessionId: doc.sessionId,
+      viewId: doc.viewId,
+      expectedVersion: reloaded.body.document.baseVersion,
+    });
+    assert.equal(saved.body.status, 'COMMITTED');
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '# 重载后编辑\n');
+
+    const reread = await api(`/api/document?sessionId=${doc.sessionId}&viewId=${doc.viewId}`);
+    assert.equal(reread.body.document.dirty, false);
+  });
+});
+
+test('S9B-31 重载失败（磁盘文件已删除）：返回错误且原有草稿不丢失', async () => {
+  await withServer(async ({ root, post, api }) => {
+    const doc = await makeConflict({ root, post });
+    await rm(join(root, 'a.md'), { force: true });
+
+    const reloaded = await post('/api/reload', {
+      sessionId: doc.sessionId,
+      viewId: doc.viewId,
+      discardDraft: true,
+    });
+    assert.equal(reloaded.status, 404);
+    assert.equal(reloaded.body.status, 'REJECTED');
+
+    const reread = await api(`/api/document?sessionId=${doc.sessionId}&viewId=${doc.viewId}`);
+    assert.equal(reread.body.document.content, '# 冲突时的草稿\n', '重载失败不得清空草稿');
+    assert.equal(reread.body.document.dirty, true);
+  });
+});
+
+test('S9B-32 磁盘版本只读查看：返回磁盘内容，伪造会话被拒绝', async () => {
+  await withServer(async ({ root, post, api }) => {
+    const opened = await post('/api/open', { path: 'a.md' });
+    const doc = opened.body.document;
+    await writeFile(join(root, 'a.md'), '# 磁盘上的内容\n', 'utf8');
+
+    const disk = await api(`/api/document/disk?sessionId=${doc.sessionId}&viewId=${doc.viewId}`);
+    assert.equal(disk.status, 200);
+    assert.equal(disk.body.content, '# 磁盘上的内容\n');
+    assert.equal(disk.body.contentVersion, sha(Buffer.from('# 磁盘上的内容\n', 'utf8')));
+
+    // 只读查看不改变会话与磁盘
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '# 磁盘上的内容\n');
+    const session = await api(`/api/document?sessionId=${doc.sessionId}&viewId=${doc.viewId}`);
+    assert.equal(session.body.document.content, '# A\n\n原始内容\n', '会话内容不受只读查看影响');
+
+    const forged = await api('/api/document/disk?sessionId=session-999&viewId=view-999');
+    assert.equal(forged.status, 404);
+  });
+});
+
+test('S9B-33 干净会话即使还有视图（页面刷新残留）也会在重开时同步磁盘', async () => {
+  await withServer(async ({ root, post }) => {
+    const opened = await post('/api/open', { path: 'a.md' });
+    const doc = opened.body.document;
+    // 不关闭视图：模拟浏览器刷新后旧 view 仍留在服务端
+    await writeFile(join(root, 'a.md'), '# 磁盘新内容\n', 'utf8');
+
+    const reopened = await post('/api/open', { path: 'a.md' });
+    assert.equal(reopened.body.document.content, '# 磁盘新内容\n', '干净会话必须同步磁盘');
+    assert.equal(reopened.body.reloaded, true);
+    assert.equal(
+      reopened.body.document.baseVersion,
+      sha(Buffer.from('# 磁盘新内容\n', 'utf8')),
+    );
+
+    // 有草稿时仍然不覆盖（回归保护）
+    await post('/api/edit', {
+      sessionId: doc.sessionId,
+      viewId: reopened.body.document.viewId,
+      buffer: '# 我的草稿\n',
+    });
+    await writeFile(join(root, 'a.md'), '# 磁盘又变了\n', 'utf8');
+    const third = await post('/api/open', { path: 'a.md' });
+    assert.equal(third.body.document.content, '# 我的草稿\n', 'dirty 时不得被磁盘覆盖');
+    assert.equal(third.body.reloaded, false);
+  });
+});

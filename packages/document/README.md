@@ -12,6 +12,19 @@
 - `reconcile(sessionId, serializer)` → `APPLIED | NOT_APPLIED | UNKNOWN`
 - `detectExternalChange(sessionId)` / `drainEvents()`
 
+## 重开与冲突恢复（S9-B 补正）
+
+- **重开时校验磁盘（A）**：复用的会话只要**不是 dirty**，`openSession` 就重新读取磁盘；
+  版本不一致就用磁盘内容刷新 `buffer`/`baseVersion`，并在 `ViewHandle.reloaded` 上标注。
+  否则用户会拿着旧版本去保存，必然 CONFLICT。
+  这里刻意不看「有没有视图」：页面刷新/崩溃会留下无人认领的旧视图，若因此跳过刷新，
+  缺陷会以另一种形式复现。
+- **dirty 时绝不刷新（B）**：不能用磁盘内容覆盖正在编辑的草稿。
+- **显式重载（C）**：`reload(sessionId, { discardDirty: true })` 用磁盘内容覆盖会话，
+  返回 `previousContent` 供调用方备份；未传 `discardDirty` 且会话 dirty 时抛
+  `ERR_DOCUMENT_DIRTY`。Core 不会自行丢弃草稿，也不会用空内容伪装成功。
+- 重载后 `revision` 递增、`dirty=false`、`state=CLEAN`，后续编辑与条件保存恢复正常（D）。
+
 ## 资源身份绑定（S8-01）
 `Session` 在创建时固定 `providerScope`（providerId + 规范根目录）与 `resourceKey`（规范相对路径）。
 `openSession` 命中已有 `resourceId` 时必须两者都一致，否则抛
