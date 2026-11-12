@@ -78,12 +78,20 @@ function boundaryError(detail: string): Error {
  */
 export function mapStorageError(
   err: unknown,
-): 'ERR_PATH_OUTSIDE_ROOT' | 'ERR_PERMISSION_DENIED' | 'ERR_STORAGE_IO' | 'ERR_RESOURCE_NOT_FOUND' {
+):
+  | 'ERR_PATH_OUTSIDE_ROOT'
+  | 'ERR_PERMISSION_DENIED'
+  | 'ERR_STORAGE_IO'
+  | 'ERR_RESOURCE_NOT_FOUND'
+  | 'ERR_ENCODING_UNSUPPORTED'
+  | 'ERR_RESOURCE_NOT_TEXT' {
   const own = (err as { errorCode?: string } | undefined)?.errorCode;
   if (own === 'ERR_PATH_OUTSIDE_ROOT') return 'ERR_PATH_OUTSIDE_ROOT';
   if (own === 'ERR_PERMISSION_DENIED') return 'ERR_PERMISSION_DENIED';
   if (own === 'ERR_STORAGE_IO') return 'ERR_STORAGE_IO';
   if (own === 'ERR_RESOURCE_NOT_FOUND') return 'ERR_RESOURCE_NOT_FOUND';
+  if (own === 'ERR_ENCODING_UNSUPPORTED') return 'ERR_ENCODING_UNSUPPORTED';
+  if (own === 'ERR_RESOURCE_NOT_TEXT') return 'ERR_RESOURCE_NOT_TEXT';
 
   const code = codeOf(err);
   if (code === 'EPERM' || code === 'EACCES') return 'ERR_PERMISSION_DENIED';

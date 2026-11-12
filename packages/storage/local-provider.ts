@@ -32,6 +32,7 @@ import {
   toStorageError,
   type RootBoundary,
 } from './path-safety.ts';
+import { decodeUtf8Text, encodeUtf8Text, textError } from './text-safety.ts';
 
 /** 统一错误映射在路径安全层实现（避免与 provider 循环依赖），此处转出便于调用方使用。 */
 export { mapStorageError } from './path-safety.ts';
@@ -101,20 +102,33 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
   const boundary: RootBoundary = createRootBoundary(rootDir);
 
   /**
-   * 「允许缺失」的版本读取：仅用于 `writeConditional` 的创建语义
-   * （expectedVersion=null 表示“仅当不存在时创建”）。
+   * 读取既有目标：同时给出字节版本与「能否作为文本」的判定（S5-02）。
    *
-   * 只有 ENOENT 返回 null；读取失败（EPERM/EACCES/EBUSY…）必须上抛，
+   * 只有 ENOENT 返回 `exists:false`；读取失败（EPERM/EACCES/EBUSY…）必须上抛，
    * 否则会把「读不出来」误判成「可以创建」，进而覆盖已存在文件（S4-R2）。
    */
-  async function versionIfPresent(absolutePath: string): Promise<string | null> {
+  type ExistingTarget =
+    | { exists: false }
+    | {
+        exists: true;
+        version: string;
+        textFailure: { errorCode: 'ERR_RESOURCE_NOT_TEXT' | 'ERR_ENCODING_UNSUPPORTED'; detail: string } | null;
+      };
+
+  async function inspectExisting(absolutePath: string): Promise<ExistingTarget> {
+    let buf: Buffer;
     try {
-      const buf = await readFile(absolutePath);
-      return contentVersionOf(buf);
+      buf = await readFile(absolutePath);
     } catch (err) {
-      if (isMissing(err)) return null;
+      if (isMissing(err)) return { exists: false };
       throw toStorageError(err);
     }
+    const decoded = decodeUtf8Text(buf);
+    return {
+      exists: true,
+      version: contentVersionOf(buf),
+      textFailure: decoded.ok ? null : { errorCode: decoded.errorCode, detail: decoded.detail },
+    };
   }
 
   /**
@@ -210,9 +224,15 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       } catch (err) {
         throw toStorageError(err); // 与 stat 使用同一映射（S4-R2）
       }
+
+      // S5-01/02：文本接口必须严格解码；非法字节或二进制特征一律拒绝，
+      // 绝不以 U+FFFD 替换后返回（那会让下一次保存静默破坏原始字节）。
+      const decoded = decodeUtf8Text(buf);
+      if (!decoded.ok) throw textError(decoded);
+
       return {
-        content: buf.toString('utf8'),
-        contentVersion: contentVersionOf(buf),
+        content: decoded.content,
+        contentVersion: contentVersionOf(buf), // 版本仍基于原始磁盘字节
         encoding: 'utf8',
       };
     },
@@ -236,13 +256,27 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         return { status: 'FAILED', errorCode: mapStorageError(err) };
       }
 
-      let currentVersion: string | null;
+      // S5-02：先校验「要写入的内容」本身可无损编码（未配对代理项、NUL/控制字节）
+      const encoded = encodeUtf8Text(content);
+      if (!Buffer.isBuffer(encoded)) {
+        return { status: 'FAILED', errorCode: encoded.errorCode };
+      }
+      const payload = encoded;
+
+      let target: ExistingTarget;
       try {
-        currentVersion = await versionIfPresent(check.absolutePath);
+        target = await inspectExisting(check.absolutePath);
       } catch (err) {
         // 版本无法确认 → 既不能放行覆盖，也不能谎报冲突
         return { status: 'FAILED', errorCode: mapStorageError(err) };
       }
+
+      // S5-02：已识别的非文本目标一律拒绝覆盖（不得用文本 API 改写二进制/非 UTF-8 文件）
+      if (target.exists && target.textFailure) {
+        return { status: 'FAILED', errorCode: target.textFailure.errorCode };
+      }
+
+      const currentVersion: string | null = target.exists ? target.version : null;
 
       if (expectedVersion === null) {
         if (currentVersion !== null) {
@@ -278,7 +312,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
 
         const absolutePath = afterMkdir.absolutePath;
         tempPath = join(dirname(absolutePath), `.ws-tmp-${process.pid}-${Date.now()}`);
-        await writeFile(tempPath, content, 'utf8');
+        await writeFile(tempPath, payload);
 
         // 边界漂移检查点 ③：rename 前最后一次确认
         assertBoundaryStable(boundary);
@@ -289,7 +323,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         return { status: 'FAILED', errorCode: mapStorageError(err) };
       }
 
-      const committedVersion = contentVersionOf(content);
+      const committedVersion = contentVersionOf(payload);
       if (faults.afterCommit) {
         try {
           faults.afterCommit();

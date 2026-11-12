@@ -133,7 +133,21 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
           };
         }
         const serializerId = typeof payload.serializerId === 'string' ? payload.serializerId : 'identity';
-        const serializer = options.resolveSerializer?.(serializerId) ?? identitySerializer;
+        // S5-05：显式指定但无法解析的 serializerId 不得静默回退 identity 直写；
+        // 未指定（或明确 'identity'）才使用原样文本写回，其文本安全校验由 storage 侧强制。
+        let serializer: Serializer;
+        const resolvedSerializer = options.resolveSerializer?.(serializerId);
+        if (resolvedSerializer) {
+          serializer = resolvedSerializer;
+        } else if (serializerId === 'identity') {
+          serializer = identitySerializer;
+        } else {
+          return {
+            status: 'REJECTED',
+            errorCode: 'ERR_COMMAND_INVALID',
+            result: { serializerId, reason: '未知 serializerId：禁止回退 identity 直写' },
+          };
+        }
         const saved = await document.save(sessionId, serializer);
         const status: CommandStatus =
           saved.status === 'COMMITTED'

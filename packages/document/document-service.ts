@@ -11,9 +11,28 @@
 import type { DocumentState, DocumentStateView, SaveResult } from '../contracts/types.ts';
 import type { Logger } from '../observability/logger.ts';
 import { currentTrace, startMonotonic } from '../observability/trace.ts';
-import type { StorageProvider } from '../storage/local-provider.ts';
+import { contentVersionOf, type ReadResult, type StorageProvider } from '../storage/local-provider.ts';
+import { encodeUtf8Text } from '../storage/text-safety.ts';
 
 export type Serializer = (buffer: string) => string;
+
+/**
+ * 打开文本会话时的读取（S5-04）。
+ *
+ * - 真正不存在（ERR_RESOURCE_NOT_FOUND）→ 返回 null，保留“新建空会话”的合法语义；
+ * - 编码非法 / 二进制 / 权限 / I/O 失败 → 原样抛出，不得伪装成“新建空文件”，
+ *   也不得让调用方拿到一个虚假的 CLEAN 会话；
+ * - 路径安全拒绝沿用 S4 既有契约（不读入内容、得到空会话，见 storage/README 已知限制）。
+ */
+async function readForOpen(provider: StorageProvider, path: string): Promise<ReadResult | null> {
+  try {
+    return await provider.read(path);
+  } catch (err) {
+    const code = (err as { errorCode?: string }).errorCode;
+    if (code === 'ERR_RESOURCE_NOT_FOUND' || code === 'ERR_PATH_OUTSIDE_ROOT') return null;
+    throw err;
+  }
+}
 
 export interface OpenSessionInput {
   resourceId: string;
@@ -141,7 +160,7 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
       let session = sessionId ? sessions.get(sessionId) : undefined;
 
       if (!session) {
-        const read = await input.provider.read(input.path).catch(() => null);
+        const read = await readForOpen(input.provider, input.path);
         sessionId = `session-${++sessionCounter}`;
         session = {
           sessionId,
@@ -340,7 +359,31 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
         };
       }
       const expected = serializer(session.buffer);
-      if (disk.content === expected) {
+
+      // S5-03：判定「副作用是否已发生」必须比较**字节级**版本，而不是解码后的文本。
+      // 不同字节可能解码成同一字符串，用文本比较会把未生效的写入误报为 APPLIED。
+      let expectedVersion: string;
+      try {
+        const encoded = encodeUtf8Text(expected);
+        if (!Buffer.isBuffer(encoded)) {
+          return {
+            outcome: 'UNKNOWN',
+            diskVersion: disk.contentVersion,
+            dirty: session.dirty,
+            detail: `序列化结果无法无损编码（${encoded.errorCode}），无法确认副作用是否已发生`,
+          };
+        }
+        expectedVersion = contentVersionOf(encoded);
+      } catch {
+        return {
+          outcome: 'UNKNOWN',
+          diskVersion: disk.contentVersion,
+          dirty: session.dirty,
+          detail: '序列化结果无法编码，无法确认副作用是否已发生',
+        };
+      }
+
+      if (disk.contentVersion === expectedVersion) {
         session.baseVersion = disk.contentVersion;
         session.dirty = false;
         session.state = 'CLEAN';

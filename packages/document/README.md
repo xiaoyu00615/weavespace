@@ -25,9 +25,13 @@ Session 是不可重建状态：未保存缓冲绝不能被静默丢弃（DATA-0
 
 ## 已知限制
 1. 会话仅存于内存；进程退出后缓冲不保留（恢复区未实现，docs/06「恢复策略」）。
-2. `reconcile` 以「磁盘内容 === 序列化缓冲」判定 APPLIED，等价于内容比较，非事务收据。
+2. `reconcile` 以**字节级 contentVersion**（序列化结果的 UTF-8 字节 SHA-256）与磁盘比较判定
+   APPLIED，不再比较解码后的文本；无法读取或无法确认时保持 `UNKNOWN`。
 3. 无 `watch`；外部变更需主动 `detectExternalChange`。
-4. 未覆盖编码/BOM/CRLF 差异（由插件 Serializer 声明）。
+4. 编码安全在 storage 侧强制（S5）：非 UTF-8 / 二进制内容不会进入会话；
+   `openSession` 只在「真正不存在」时创建空会话，编码/权限/IO 失败一律抛出。
+   路径安全拒绝仍沿用 S4 契约（空会话、不读入内容，见 storage/README 已知限制 13）。
+5. 插件序列化器仍由调用方提供；核心只保证「文本可无损往返」，不解释具体格式。
 
 ## 测试入口
-`node tests/run-all.ts`（套件 `session-shared`、`save-conflict`、`save-failure`、`dirty-protection`）。
+`node tests/run-all.ts`（套件 `session-shared`、`save-conflict`、`save-failure`、`dirty-protection`、`s5-encoding-integrity`）。

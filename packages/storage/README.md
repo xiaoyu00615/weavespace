@@ -64,6 +64,25 @@
 | `writeConditional` | **边界比对（先于版本比较，F06）** → 解析 → 版本校验 → **边界比对** → `mkdir` → **再次解析** → **边界比对** → 写临时文件 → **边界比对** → `rename`；任一步失败即 `FAILED` |
 | `list` | 校验边界后遍历；跳过 dirent 标记为链接的条目；每级目录递归前再次校验是否为可信解析结果 |
 
+## 文本安全（S5）
+
+**定位**：`read()` 是 **UTF-8 文本接口**，不是通用二进制读取器。无法安全表示为文本的内容必须
+拒绝，绝不返回“有损字符串”——否则下一次保存会把 U+FFFD 写回磁盘，原始字节永久丢失。
+
+| 环节 | 规则 |
+|---|---|
+| 解码 | `TextDecoder('utf-8', { fatal: true, ignoreBOM: true })`：非法字节 → `ERR_ENCODING_UNSUPPORTED`；BOM 保留为内容首字符（不剥离）；CRLF 不规范化 |
+| 二进制门禁 | NUL、不安全控制字节（`0x00-0x08`、`0x0B`、`0x0E-0x1F`、`0x7F`）、已知签名（PNG/JPEG/GIF/ZIP/PDF/ELF）→ `ERR_RESOURCE_NOT_TEXT` |
+| 版本 | `contentVersion` 始终基于**原始磁盘字节** |
+| 写入（内容） | 未配对 UTF-16 代理项 → `ERR_ENCODING_UNSUPPORTED`；含不安全控制字节 → `ERR_RESOURCE_NOT_TEXT`（不得用文本 API 造二进制） |
+| 写入（目标） | 目标是已识别的非文本 → `FAILED`（`ERR_RESOURCE_NOT_TEXT` / `ERR_ENCODING_UNSUPPORTED`），不改写字节 |
+| 会话打开 | 只有 `ERR_RESOURCE_NOT_FOUND`（真正不存在）才创建空会话；编码/二进制/权限/IO 失败直接抛出 |
+
+**这是有限启发式，不是通用二进制识别器**：未建签名的私有格式不会被识别，仍须靠插件声明
+（docs/06「文件格式特性」）。合法文本中包含字面 U+FFFD 不受影响（按字节往返判定，不看字符）。
+
+调用方：`DocumentService.save()` 与直接调用 `writeConditional()` 走同一门禁。
+
 ## 错误语义（S4-R2）
 
 | OS 错误 | 注册错误码 | 语义 |
@@ -98,6 +117,10 @@
 | 期望版本与磁盘不一致 | `CONFLICT / ERR_DOCUMENT_VERSION_CONFLICT` |
 | 创建时目标已存在（`expectedVersion=null`） | `CONFLICT` |
 | 版本无法读取（EPERM/EACCES/EBUSY） | `FAILED / ERR_PERMISSION_DENIED` 或 `ERR_STORAGE_IO`（不覆盖） |
+| 内容不是合法 UTF-8（GBK/Latin-1…） | `FAILED / ERR_ENCODING_UNSUPPORTED`（`read` 抛错），字节不变 |
+| 内容是二进制（NUL/签名/控制字节） | `FAILED / ERR_RESOURCE_NOT_TEXT`（`read` 抛错），字节不变 |
+| 写入目标已是非文本 | `FAILED`（同上错误码），不覆盖、不产生临时文件残留 |
+| 写入内容含未配对代理项 | `FAILED / ERR_ENCODING_UNSUPPORTED`，磁盘不变 |
 | **边界漂移 + 版本冲突同时成立**（F06） | 优先 `FAILED / ERR_PATH_OUTSIDE_ROOT`，不返回普通 `CONFLICT` |
 | `stat` 确认存在后目标消失（窗口内被删除） | `exists:false`（一致结果），绝不 `exists:true/contentVersion:null` |
 | `stat` 确认存在后目标变为非普通文件（F05） | 抛 `ERR_STORAGE_IO`（不当作不存在） |
@@ -132,6 +155,15 @@
     不再返回 `changed:false`；正常缺失仍返回 `exists:false`（S4-15 / S4-16 / S4R2-01 / S4R2-09 已覆盖）。
 12. **EPERM/EACCES 集成用例未执行**：构造该状态需要修改临时文件 ACL，本轮未获授权，
     以 `NOT_RUN` 记录；分类逻辑由 `mapStorageError` 的单元测试覆盖，`EBUSY` 集成用例已真实执行。
+13. **二进制识别是有限启发式**（S5）：只覆盖 NUL、常见控制字节与少量魔数签名。DOCX/PSD/BLEND
+    等容器格式若没有命中签名（例如被截断），仍可能被当作“含非法字节的文本”拒绝（方向安全），
+    或需要插件层显式声明；不宣称能识别任意二进制。
+14. **控制字节可能误伤**：含 ANSI 转义（`0x1B`）等控制字符的文本会被判为非文本而拒绝。
+    这是刻意的保守取舍；如确有需要，应在插件层声明编码/转义策略，而不是放宽核心门禁。
+15. **编码判定为全量内存操作**：`read` 需要对整个 Buffer 做严格解码与逐字节扫描，
+    `writeConditional` 也会整块解码既有目标以判定是否可覆盖；大文件成本未测量。
+16. **路径安全拒绝仍会产生空会话**：`document.openSession` 对 `ERR_PATH_OUTSIDE_ROOT` 沿用 S4
+    契约（不读入内容、返回空会话），该 P1-8 遗留不在 S5 范围内修改。
     **该 `NOT_RUN` 不能通过删除 `skip` 转为 PASS**——授权后必须补真正的 ACL 断言。
 13. **`document.openSession` 仍会吞掉读取失败**（`catch(() => null)` → 空缓冲）。
     经 junction 打开时不会泄漏根外内容（read 已被拒），但会得到一个空会话；
