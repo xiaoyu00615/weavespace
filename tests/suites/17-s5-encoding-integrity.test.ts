@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -411,5 +411,176 @@ test('S5-13 document.save：未知 serializerId 必须 REJECTED，不得回退 i
     assert.equal(await readFile(join(h.root, 'cmd.md'), 'utf8'), 'v1\n');
   } finally {
     await h.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S5-14（F01）：路径安全错误不得被 openSession 吞成空会话
+// ---------------------------------------------------------------------------
+test('S5-14 openSession 经重解析点路径：必须抛 ERR_PATH_OUTSIDE_ROOT 且不建会话', async (t) => {
+  const sb = await sandbox('open-path');
+  try {
+    const outside = join(sb.root, '..', `s5-outside-${Date.now()}`);
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, 'secret.md'), 'SECRET\n', 'utf8');
+    await symlink(outside, join(sb.root, 'escape'), 'junction');
+
+    const provider = createLocalProvider({ rootDir: sb.root });
+    const doc = createDocumentService();
+
+    assert.equal(
+      await errorCodeOf(() =>
+        doc.openSession({ resourceId: 'r-path', path: 'escape/secret.md', provider }),
+      ),
+      'ERR_PATH_OUTSIDE_ROOT',
+      '路径安全错误必须原样抛出',
+    );
+    assert.equal(doc.getSessionByResource('r-path'), undefined, '不得创建 CLEAN 会话');
+
+    await rm(outside, { recursive: true, force: true }).catch(() => {});
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EPERM') {
+      t.skip('NOT_RUN: 当前环境无法创建 junction');
+      return;
+    }
+    throw err;
+  } finally {
+    await sb.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S5-15（F02）：Serializer 抛异常 —— 不得留下永久 SAVING
+// ---------------------------------------------------------------------------
+test('S5-15 Serializer 抛异常：FAILED + 保持 dirty/baseVersion，事件与磁盘均正确', async () => {
+  const sb = await sandbox('serializer-throw');
+  try {
+    const file = await put(sb.root, 'doc.md', Buffer.from('v1\n', 'utf8'));
+    const before = sha256(await readFile(file));
+    const provider = createLocalProvider({ rootDir: sb.root });
+    const doc = createDocumentService();
+    const view = await doc.openSession({ resourceId: 'r-ser', path: 'doc.md', provider });
+    const baseVersion = doc.getSession(view.sessionId)!.baseVersion;
+
+    doc.applyEdit(view.sessionId, 'v2\n');
+    doc.drainEvents();
+
+    const saved = await doc.save(view.sessionId, () => {
+      throw new Error('serializer boom');
+    });
+    const session = doc.getSession(view.sessionId)!;
+    const events = doc.drainEvents();
+
+    assert.equal(saved.status, 'FAILED');
+    assert.equal(saved.errorCode, 'ERR_SAVE_FAILED');
+    assert.equal(session.state, 'FAILED', '不得停留在 SAVING');
+    assert.equal(session.dirty, true, '未落盘的编辑必须保持 dirty');
+    assert.equal(session.baseVersion, baseVersion, '未交给 Storage 时 baseVersion 不得改变');
+    assert.equal(sha256(await readFile(file)), before, '磁盘字节不得变化');
+
+    const failed = events.find((e) => e.type === 'SAVE_FAILED');
+    assert.ok(failed, '必须发出 SAVE_FAILED 事件');
+    assert.equal(failed?.errorCode, 'ERR_SAVE_FAILED');
+    assert.equal((failed?.detail as { phase?: string })?.phase, 'serialize');
+    assert.equal(events.some((e) => e.type === 'SAVE_COMMITTED'), false);
+  } finally {
+    await sb.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S5-16（F02）：Provider 抛异常 —— 结果不可确认，必须报 UNKNOWN 而不是 FAILED
+// ---------------------------------------------------------------------------
+test('S5-16 Provider 写入抛异常：必须 UNKNOWN/OUTCOME_UNKNOWN，不得报 FAILED', async () => {
+  const sb = await sandbox('provider-throw');
+  try {
+    const file = await put(sb.root, 'doc.md', Buffer.from('v1\n', 'utf8'));
+    const before = sha256(await readFile(file));
+    const base = createLocalProvider({ rootDir: sb.root });
+    const provider = {
+      ...base,
+      writeConditional: async () => {
+        throw Object.assign(new Error('provider exploded'), { errorCode: 'ERR_STORAGE_IO' });
+      },
+    };
+    const doc = createDocumentService();
+    const view = await doc.openSession({ resourceId: 'r-prov', path: 'doc.md', provider });
+
+    doc.applyEdit(view.sessionId, 'v2\n');
+    doc.drainEvents();
+
+    const saved = await doc.save(view.sessionId, (b) => b);
+    const session = doc.getSession(view.sessionId)!;
+    const events = doc.drainEvents();
+
+    assert.equal(saved.status, 'UNKNOWN', '写入已交给 Provider 且结果不明时必须 UNKNOWN');
+    assert.equal(saved.errorCode, 'ERR_OUTCOME_UNKNOWN');
+    assert.equal(session.state, 'OUTCOME_UNKNOWN');
+    assert.equal(session.dirty, true);
+    assert.equal(sha256(await readFile(file)), before, '本用例磁盘未被修改，SHA 必须不变');
+    assert.ok(events.some((e) => e.type === 'SAVE_UNKNOWN'), '必须发出 SAVE_UNKNOWN 事件');
+    assert.equal(events.some((e) => e.type === 'SAVE_FAILED'), false);
+  } finally {
+    await sb.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S5-17（F02）：reconcile 中 Serializer 抛异常 —— 必须返回 UNKNOWN，不得抛出
+// ---------------------------------------------------------------------------
+test('S5-17 reconcile 中 Serializer 抛异常：返回 UNKNOWN 且会话状态不变', async () => {
+  const sb = await sandbox('reconcile-throw');
+  try {
+    await put(sb.root, 'doc.md', Buffer.from('v1\n', 'utf8'));
+    const provider = createLocalProvider({ rootDir: sb.root });
+    const doc = createDocumentService();
+    const view = await doc.openSession({ resourceId: 'r-rec-throw', path: 'doc.md', provider });
+    doc.applyEdit(view.sessionId, 'v2\n');
+    const stateBefore = doc.getSession(view.sessionId)!.state;
+
+    const rec = await doc.reconcile(view.sessionId, () => {
+      throw new Error('serializer boom in reconcile');
+    });
+
+    assert.equal(rec.outcome, 'UNKNOWN', '序列化失败不得抛出或误报');
+    assert.equal(doc.getSession(view.sessionId)!.state, stateBefore, 'UNKNOWN 不得自动改变状态');
+    assert.equal(doc.getSession(view.sessionId)!.dirty, true);
+  } finally {
+    await sb.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// S5-18（F03）：写入侧必须与读取侧共用二进制签名规则
+// ---------------------------------------------------------------------------
+test('S5-18 纯 ASCII 二进制签名（GIF/PDF）不得通过文本接口写入', async () => {
+  const sb = await sandbox('signature-write');
+  try {
+    const file = await put(sb.root, 'note.txt', Buffer.from('keep\n', 'utf8'));
+    const before = sha256(await readFile(file));
+    const provider = createLocalProvider({ rootDir: sb.root });
+
+    const gif = await provider.writeConditional('new.gif', 'GIF89a\u0001\u0000binary-ish', null);
+    assert.equal(gif.status, 'FAILED');
+    assert.equal(gif.errorCode, 'ERR_RESOURCE_NOT_TEXT', 'GIF 签名写入必须被拒绝');
+    assert.equal(existsSync(join(sb.root, 'new.gif')), false, '不得产生文件副作用');
+
+    const pdf = await provider.writeConditional('new.pdf', '%PDF-1.4\nmock\n', null);
+    assert.equal(pdf.status, 'FAILED');
+    assert.equal(pdf.errorCode, 'ERR_RESOURCE_NOT_TEXT', 'PDF 签名写入必须被拒绝');
+    assert.equal(existsSync(join(sb.root, 'new.pdf')), false);
+
+    // 覆盖既有文本文件同样必须拒绝，且原字节不变
+    const overwrite = await provider.writeConditional('note.txt', 'GIF89a-rest', null);
+    assert.equal(overwrite.status, 'FAILED');
+    assert.equal(overwrite.errorCode, 'ERR_RESOURCE_NOT_TEXT');
+    assert.equal(sha256(await readFile(file)), before);
+
+    // 合法文本不受影响
+    const ok = await provider.writeConditional('ok.md', '# 标题\n正文\n', null);
+    assert.equal(ok.status, 'COMMITTED');
+    assert.equal(await readFile(join(sb.root, 'ok.md'), 'utf8'), '# 标题\n正文\n');
+  } finally {
+    await sb.cleanup();
   }
 });

@@ -61,6 +61,30 @@ function hex2(v: number): string {
 }
 
 /**
+ * 读写共用的字节层判定（F03）：二进制签名 + 不安全控制字节。
+ *
+ * 读取与写入必须使用同一套规则，否则「读不出来的内容」仍可能由文本接口写出，
+ * 或反之——那会让门禁形同虚设。
+ */
+function screenTextBytes(
+  buf: Uint8Array,
+): { ok: false; errorCode: TextRejectCode; detail: string } | null {
+  const signature = detectSignature(buf);
+  if (signature) {
+    return { ok: false, errorCode: 'ERR_RESOURCE_NOT_TEXT', detail: `疑似二进制内容（${signature} 签名）` };
+  }
+  const ctrl = findUnsafeControlByte(buf);
+  if (ctrl !== null) {
+    return {
+      ok: false,
+      errorCode: 'ERR_RESOURCE_NOT_TEXT',
+      detail: `内容包含不安全控制字节 ${hex2(ctrl)}`,
+    };
+  }
+  return null;
+}
+
+/**
  * 把磁盘字节按 UTF-8 文本解读。
  *
  * - 二进制特征（签名/控制字节/NUL）→ `ERR_RESOURCE_NOT_TEXT`
@@ -68,14 +92,8 @@ function hex2(v: number): string {
  * - 合法 UTF-8（含 BOM、CRLF、字面 U+FFFD）→ 原文返回
  */
 export function decodeUtf8Text(buf: Uint8Array): TextDecodeResult {
-  const signature = detectSignature(buf);
-  if (signature) {
-    return reject('ERR_RESOURCE_NOT_TEXT', `疑似二进制内容（${signature} 签名），不能作为文本读取`);
-  }
-  const ctrl = findUnsafeControlByte(buf);
-  if (ctrl !== null) {
-    return reject('ERR_RESOURCE_NOT_TEXT', `内容包含不安全控制字节 ${hex2(ctrl)}，不能作为文本读取`);
-  }
+  const screening = screenTextBytes(buf);
+  if (screening) return screening;
 
   try {
     // ignoreBOM:true = 不剥离 BOM（保留为内容首字符）
@@ -124,14 +142,10 @@ export function encodeUtf8Text(content: string): Buffer | TextEncodeFailure {
   }
 
   const buf = Buffer.from(content, 'utf8');
-  const ctrl = findUnsafeControlByte(buf);
-  if (ctrl !== null) {
-    return {
-      ok: false,
-      errorCode: 'ERR_RESOURCE_NOT_TEXT',
-      detail: `内容包含不安全控制字节 ${hex2(ctrl)}，不能通过文本接口写入`,
-    };
-  }
+  // F03：与读取共用同一套字节规则，保证“写进去的内容”一定能被文本接口读回，
+  // 且已识别的二进制签名不会经由文本接口被创建或覆盖。
+  const screening = screenTextBytes(buf);
+  if (screening) return screening;
   return buf;
 }
 

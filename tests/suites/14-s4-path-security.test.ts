@@ -458,24 +458,26 @@ test('S4-15 正常项目目录中 read/stat/writeConditional/list 既有行为�
 });
 
 // ---------------------------------------------------------------------------
-// S4-16：stat 的安全错误在唯一调用方（document.detectExternalChange）不得被误认为“文件不存在”
+// S4-16：会话打开后发生路径安全变化 → detectExternalChange 必须抛可识别错误
+//   注意：本用例不再依赖“非法路径可打开空会话”的既有缺陷（该缺陷已在 S5-01 修复）。
 // ---------------------------------------------------------------------------
-test('S4-16 stat 安全错误不得被调用方误认为普通文件不存在', { skip: NOT_RUN_J }, async () => {
+test('S4-16 会话打开后路径变成重解析点：detectExternalChange 必须抛 ERR_PATH_OUTSIDE_ROOT', { skip: NOT_RUN_J }, async () => {
   const sb = await makeSandbox('caller');
   try {
-    await symlink(sb.outside, join(sb.root, 'escape'), 'junction');
+    // 1) 先用合法普通路径打开会话（此时 sub 是真实目录，无任何链接）
+    await mkdir(join(sb.root, 'sub'), { recursive: true });
+    await writeFile(join(sb.root, 'sub', 'ok.md'), 'ok\n', 'utf8');
     const provider = createLocalProvider({ rootDir: sb.root });
     const doc = createDocumentService();
 
-    // 经 junction 的会话：openSession 的 read 被拒 → 空缓冲（P1-8 既有行为，无内容泄漏）
-    const v = await doc.openSession({
-      resourceId: 'r-s4-16',
-      path: 'escape/secret.md',
-      provider,
-    });
-    assert.equal(doc.getBuffer(v.sessionId), '', 'openSession 不得读入根外内容');
+    const v = await doc.openSession({ resourceId: 'r-s4-16', path: 'sub/ok.md', provider });
+    assert.equal(doc.getBuffer(v.sessionId), 'ok\n', '合法路径必须能正常读入');
 
-    // 关键断言：安全错误必须冒泡为可识别错误，而不是被吞成 changed:false
+    // 2) 受控构造路径安全变化：把 sub 换成指向根外的 junction（同一相对路径现在经过重解析点）
+    await rm(join(sb.root, 'sub'), { recursive: true, force: true });
+    await symlink(sb.outside, join(sb.root, 'sub'), 'junction');
+
+    // 3) 关键断言：安全错误必须冒泡为可识别错误，而不是被吞成 changed:false
     let thrown: string | null = null;
     let swallowed: { changed: boolean } | null = null;
     try {
@@ -486,7 +488,7 @@ test('S4-16 stat 安全错误不得被调用方误认为普通文件不存在', 
     assert.equal(thrown, 'ERR_PATH_OUTSIDE_ROOT', '安全错误必须可被调用方识别');
     assert.equal(swallowed, null, '不得把安全错误静默转成 changed:false（等价于“文件不存在”）');
 
-    // 正常文件仍返回 changed 结构
+    // 4) 对照：正常文件仍返回 changed 结构
     await writeFile(join(sb.root, 'ok.md'), 'ok\n', 'utf8');
     const v2 = await doc.openSession({ resourceId: 'r-s4-16-ok', path: 'ok.md', provider });
     const normal = await doc.detectExternalChange(v2.sessionId);

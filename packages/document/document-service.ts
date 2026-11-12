@@ -17,19 +17,18 @@ import { encodeUtf8Text } from '../storage/text-safety.ts';
 export type Serializer = (buffer: string) => string;
 
 /**
- * 打开文本会话时的读取（S5-04）。
+ * 打开文本会话时的读取（S5-04 / F01）。
  *
  * - 真正不存在（ERR_RESOURCE_NOT_FOUND）→ 返回 null，保留“新建空会话”的合法语义；
- * - 编码非法 / 二进制 / 权限 / I/O 失败 → 原样抛出，不得伪装成“新建空文件”，
- *   也不得让调用方拿到一个虚假的 CLEAN 会话；
- * - 路径安全拒绝沿用 S4 既有契约（不读入内容、得到空会话，见 storage/README 已知限制）。
+ * - 其余一切失败（路径安全、编码非法、二进制、权限、I/O）→ 原样抛出，
+ *   不得伪装成“新建空文件”，也不得让调用方拿到一个虚假的 CLEAN 会话。
  */
 async function readForOpen(provider: StorageProvider, path: string): Promise<ReadResult | null> {
   try {
     return await provider.read(path);
   } catch (err) {
     const code = (err as { errorCode?: string }).errorCode;
-    if (code === 'ERR_RESOURCE_NOT_FOUND' || code === 'ERR_PATH_OUTSIDE_ROOT') return null;
+    if (code === 'ERR_RESOURCE_NOT_FOUND') return null;
     throw err;
   }
 }
@@ -264,12 +263,54 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
         detail: { revision: savedRevision },
       });
 
-      const payload = serializer(session.buffer);
-      const result = await session.provider.writeConditional(
-        session.path,
-        payload,
-        session.baseVersion,
-      );
+      // F02：序列化阶段失败必须收敛为明确失败。此时写请求尚未交给 Provider，
+      // 磁盘未被触碰，因此 baseVersion 不得改变（否则会把未发生的写当成已知基线），
+      // 状态也不得停留在 SAVING。
+      let payload: string;
+      try {
+        payload = serializer(session.buffer);
+      } catch (err) {
+        const durationMs = elapsed();
+        session.state = 'FAILED';
+        session.dirty = true;
+        session.lastErrorCode = 'ERR_SAVE_FAILED';
+        emit({
+          type: 'SAVE_FAILED',
+          sessionId,
+          resourceId: session.resourceId,
+          errorCode: 'ERR_SAVE_FAILED',
+          detail: {
+            phase: 'serialize',
+            durationMs,
+            reason: err instanceof Error ? err.message : String(err),
+          },
+        });
+        return { status: 'FAILED', errorCode: 'ERR_SAVE_FAILED', durationMs };
+      }
+
+      let result: SaveResult;
+      try {
+        result = await session.provider.writeConditional(session.path, payload, session.baseVersion);
+      } catch (err) {
+        // F02：写请求已交给 Provider，异常导致「是否已落盘」无法确认 → 保守报 UNKNOWN。
+        // 不得报 FAILED（副作用可能已发生），也不得报成功。
+        const durationMs = elapsed();
+        session.state = 'OUTCOME_UNKNOWN';
+        session.dirty = true;
+        session.lastErrorCode = 'ERR_OUTCOME_UNKNOWN';
+        emit({
+          type: 'SAVE_UNKNOWN',
+          sessionId,
+          resourceId: session.resourceId,
+          errorCode: 'ERR_OUTCOME_UNKNOWN',
+          detail: {
+            phase: 'provider',
+            durationMs,
+            reason: err instanceof Error ? err.message : String(err),
+          },
+        });
+        return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN', durationMs };
+      }
       const durationMs = elapsed();
 
       switch (result.status) {
@@ -358,7 +399,18 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
           detail: '磁盘不可读，无法判定副作用是否已发生',
         };
       }
-      const expected = serializer(session.buffer);
+      // F02：序列化失败不得直接抛出——无法确认磁盘副作用，必须保持 UNKNOWN。
+      let expected: string;
+      try {
+        expected = serializer(session.buffer);
+      } catch (err) {
+        return {
+          outcome: 'UNKNOWN',
+          diskVersion: disk.contentVersion,
+          dirty: session.dirty,
+          detail: `序列化失败（${err instanceof Error ? err.message : String(err)}），无法确认副作用是否已发生`,
+        };
+      }
 
       // S5-03：判定「副作用是否已发生」必须比较**字节级**版本，而不是解码后的文本。
       // 不同字节可能解码成同一字符串，用文本比较会把未生效的写入误报为 APPLIED。
