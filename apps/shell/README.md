@@ -36,12 +36,31 @@ src/
     StatusBar.tsx          底部状态栏
   state/                   纯数据层：types / workspace-reducer / Context
   data/demo-project.ts     演示项目树与文档内容
-  lib/markdown.tsx         极简 Markdown 渲染（React 节点，无 dangerouslySetInnerHTML）
+  lib/markdown-parser.ts   块级/行内解析 + 链接协议白名单（纯 TS，无 React）
+  lib/markdown.tsx         仅做 AST → React 映射（无 dangerouslySetInnerHTML）
   client/client-api.ts     Client API 边界：未来由 HTTP/WS 访问 Core
   styles/shell.css         布局与主题
 ```
 
 布局只由 CSS Grid 与一个 reducer 决定；调整某个区域不需要动其他组件。
+
+## Markdown 解析约定
+
+解析与渲染是两层：`markdown-parser.ts` 是纯函数（无 React / 无 DOM），`markdown.tsx` 只把
+AST 映射成 React 节点。解析逻辑因此可以被 Node 直接加载并回归测试，
+不需要浏览器或 JSX 转换：`node tests/suites/19-s9a-markdown.test.ts`。
+
+**块级识别与段落终止共用同一个分类器**（`classifyBlock`）。这是为了避免
+「块级分支不接受某行、段落循环却把它当作块级起点」导致 `index` 不前进、
+渲染死循环的情况（`#没有空格`、`##`、`|普通文本`、单独的 `|` 曾触发该问题）。
+分类器的兜底是 `text`，段落循环只在 `text` 上继续，因此**每轮至少消费一行**；
+不认识的语法一律按普通文本输出。
+
+**链接协议白名单**：只放行 `http:` / `https:` / `mailto:` 以及不带协议的相对路径、
+锚点、查询串。`javascript:` / `data:` / `vbscript:` / `file:` 等其他显式协议，
+以及协议相对写法 `//host`，在解析期就会被判定为不可信：`href` 置 `null`，
+渲染层输出原文（纯文本），**不产出任何锚点**。规范化会先剔除 ASCII 控制字符与空格，
+避免 `java\tscript:` 这类伪装绕过判断。渲染层始终不调用 `dangerouslySetInnerHTML`。
 
 ## 与 Core 的边界
 
@@ -55,5 +74,7 @@ src/
 1. 演示数据写死在 `data/demo-project.ts`，刷新即恢复初始内容。
 2. 关闭有未保存修改的标签使用 `window.confirm`，不是正式对话框组件。
 3. 分屏固定为「左源码 / 右预览」两窗格，不支持嵌套、上下分屏与拖拽停靠。
-4. Markdown 渲染只覆盖标题/列表/引用/代码/强调/链接/简单表格，不是完整 CommonMark。
-5. 无自动化 UI 测试；当前验证方式为 `tsc` + `vite build` + SSR 首屏冒烟 + 本地 dev 服务器。
+4. Markdown 渲染只覆盖标题/列表/引用/代码/强调/链接/简单表格，不是完整 CommonMark；
+   链接只支持白名单协议，`[x](javascript:…)` 这类写法按纯文本显示（刻意降级）。
+5. UI 验证方式：`tsc` + `vite build` + 解析器回归套件（`tests/suites/19-s9a-markdown.test.ts`）
+   + 真实 Chrome（CDP）冒烟；仓库内未引入 playwright/puppeteer，浏览器冒烟脚本不随仓库分发。
