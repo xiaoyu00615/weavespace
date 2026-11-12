@@ -141,3 +141,42 @@ test('CT-07c 重复 commandId 被拒绝（幂等必须显式使用 idempotencyKe
     await h.cleanup();
   }
 });
+
+test('CT-07d document.open 的幂等重试返回同一视图（指纹不得含运行期 sessionId）', async () => {
+  const h = await createHarness();
+  try {
+    h.permission.grant({ actorId: 'user-a', action: 'read', scope: '' });
+    await writeProjectFile(h.root, 'open-idem.md', 'v1\n');
+
+    const envelope = (commandId: string, idempotencyKey: string) => ({
+      commandId,
+      type: 'document.open',
+      idempotencyKey,
+      payload: { resourceId: 'res-open-idem', path: 'open-idem.md', providerId: 'local' },
+    });
+
+    const first = await h.bus.dispatch(envelope('cmd-o1', 'idem-open-1'), { actorId: 'user-a' });
+    assert.equal(first.status, 'APPLIED');
+    const firstHandle = first.result as { viewId: string; sessionId: string };
+    assert.equal(h.document.getSession(firstHandle.sessionId)?.views, 1);
+
+    // 完全相同资源声明 + 新 commandId + 同幂等键 → 合法重试，必须去重
+    const second = await h.bus.dispatch(envelope('cmd-o2', 'idem-open-1'), { actorId: 'user-a' });
+    assert.equal(second.status, 'APPLIED', '合法重试不得被指纹误判为新请求');
+    assert.equal(second.deduplicated, true);
+    const replayHandle = second.result as { viewId: string; sessionId: string };
+    assert.equal(replayHandle.sessionId, firstHandle.sessionId);
+    assert.equal(replayHandle.viewId, firstHandle.viewId, '必须返回同一视图');
+    assert.equal(h.document.getSession(firstHandle.sessionId)?.views, 1, '幂等命中不得新增视图');
+
+    // 换一个幂等键 → 是新的请求，正常增加一个视图（同一会话）
+    const third = await h.bus.dispatch(envelope('cmd-o3', 'idem-open-2'), { actorId: 'user-a' });
+    assert.equal(third.status, 'APPLIED');
+    const freshHandle = third.result as { viewId: string; sessionId: string };
+    assert.equal(freshHandle.sessionId, firstHandle.sessionId, '同一资源仍复用同一会话');
+    assert.notEqual(freshHandle.viewId, firstHandle.viewId);
+    assert.equal(h.document.getSession(firstHandle.sessionId)?.views, 2);
+  } finally {
+    await h.cleanup();
+  }
+});

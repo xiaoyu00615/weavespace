@@ -430,13 +430,19 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
         return '';
       })();
 
+      // F03：`document.open` 执行前还不存在 sessionId，若把它计入指纹，
+      // 首次成功后的合法重试会因「- → 实际 sessionId」而被误判为新请求。
+      // 打开操作的稳定身份是 Provider + ResourceId + Path，故不纳入运行期 sessionId；
+      // applyEdit/save 仍保留 sessionId（它决定实际作用对象）。
+      const sessionPart = envelope.type === 'document.open' ? 'open' : (target.sessionId ?? '-');
+
       const fingerprint = [
         envelope.type,
         isWrite ? 'W' : 'R',
         target.providerId,
         target.resourceId,
         target.path,
-        target.sessionId ?? '-',
+        sessionPart,
       ].join('|') + semantics;
 
       const authorize = (): { allowed: boolean; errorCode?: CommandResult['errorCode'] } => {

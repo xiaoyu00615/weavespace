@@ -31,6 +31,8 @@
    指纹 = 命令类型 + 读写方向 + Provider + 资源 + 会话 + 本次语义：
    `applyEdit` 含 `expectedVersion` 与 `buffer` 的 SHA-256；`save` 含 `expectedVersion`、
    `serializerId` 与待保存缓冲的 SHA-256。只存哈希，不存原文；`commandId` 不参与指纹。
+   `document.open` 的指纹**不含运行期 sessionId**（首次执行前它还不存在），
+   稳定身份即 Provider + ResourceId + Path，因此合法重试会返回同一收据与同一 `viewId`。
 7. 授权：对**实际资源**判定（会话绑定的 path + providerId）→ 拒绝即 `REJECTED / ERR_PERMISSION_DENIED`
 8. 执行：`APPLIED / REJECTED / FAILED / UNKNOWN`
 
