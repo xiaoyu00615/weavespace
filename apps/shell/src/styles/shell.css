@@ -722,3 +722,40 @@ button {
     grid-template-columns: 56px 200px minmax(0, 1fr) 36px !important;
   }
 }
+
+/* ---- S9-B：真实文件模式（live）的少量状态样式；不改动整体视觉 ---- */
+.badge--live {
+  border-color: #b9cdfb;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chip--primary {
+  border-color: #b9cdfb;
+  color: var(--accent);
+}
+
+.chip--primary:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.tree__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tab__mode {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.statusbar__badge--live {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: #b9cdfb;
+}

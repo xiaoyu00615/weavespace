@@ -6,7 +6,7 @@
  * - 页面里的“保存”只清掉 dirty 标记并给出演示提示，**不会写入磁盘**；
  * - 未来由 Core 的 Client API 提供真实资源树与文档内容（见 ../client/client-api.ts）。
  */
-import type { DocumentKind } from '../state/types';
+import type { DocumentKind, ResourceNodeState } from '../state/types';
 
 export interface DemoNode {
   /** 树内唯一 key，同时作为演示文档 id。 */
@@ -17,6 +17,17 @@ export interface DemoNode {
 }
 
 export const DEMO_PROJECT_NAME = '演示项目 · 雨夜';
+
+/** 演示树与 live 资源树共用同一形状，组件无需按模式分叉渲染。 */
+export function toResourceNodes(nodes: DemoNode[]): ResourceNodeState[] {
+  return nodes.map((node) => ({
+    id: node.id,
+    name: node.name,
+    kind: node.kind,
+    children: node.children ? toResourceNodes(node.children) : undefined,
+  }));
+}
+
 
 export const DEMO_TREE: DemoNode[] = [
   {
@@ -47,6 +58,8 @@ export const DEMO_TREE: DemoNode[] = [
     ],
   },
 ];
+
+export const DEMO_NODES: ResourceNodeState[] = toResourceNodes(DEMO_TREE);
 
 const CONTENTS: Record<string, string> = {
   'doc-scene-01': `# 第 01 场 · 巷口

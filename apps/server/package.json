@@ -1,0 +1,11 @@
+{
+  "name": "weavespace-server",
+  "private": true,
+  "version": "0.0.0-s9b",
+  "type": "module",
+  "description": "WeaveSpace localhost Client API（S9-B）：浏览器与 Core 之间的唯一本机通道",
+  "scripts": {
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

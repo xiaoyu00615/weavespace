@@ -1,11 +1,16 @@
-import { DEMO_CONTENTS, DEMO_PROJECT_NAME, DEMO_TREE } from '../data/demo-project';
-import type { DemoNode } from '../data/demo-project';
+import { DEMO_NODES, DEMO_PROJECT_NAME } from '../data/demo-project';
+import { useDocumentActions } from '../state/DocumentActionsContext';
 import { useWorkspace } from '../state/WorkspaceContext';
+import type { ResourceNodeState } from '../state/types';
 
-function FileRow({ node, depth }: { node: DemoNode; depth: number }) {
-  const { state, dispatch } = useWorkspace();
-  const selected = state.selectedPath === node.id;
-  const activeDoc = state.tabs.some((tab) => tab.docId === node.id);
+/** 文件行：点击后由动作层决定「演示读取」还是「经 Core 打开」。 */
+function FileRow({ node, depth }: { node: ResourceNodeState; depth: number }) {
+  const { state } = useWorkspace();
+  const actions = useDocumentActions();
+  const docId = node.path ?? node.id;
+  const selected = state.selectedPath === docId;
+  const activeDoc = state.tabs.some((tab) => tab.docId === docId);
+  const liveOpen = state.tabs.find((tab) => tab.docId === docId)?.mode === 'live';
 
   return (
     <li>
@@ -20,28 +25,21 @@ function FileRow({ node, depth }: { node: DemoNode; depth: number }) {
           .filter(Boolean)
           .join(' ')}
         style={{ paddingLeft: 12 + depth * 14 }}
-        onClick={() =>
-          dispatch({
-            type: 'OPEN_FILE',
-            docId: node.id,
-            path: node.name,
-            title: node.name,
-            kind: node.kind === 'markdown' ? 'markdown' : 'text',
-            content: DEMO_CONTENTS[node.id] ?? '',
-          })
-        }
+        onClick={() => void actions.openNode(node)}
       >
         <span className="tree__glyph" aria-hidden="true">
           ¶
         </span>
         <span className="tree__name">{node.name}</span>
-        {activeDoc && <span className="tree__dot" title="已在标签中打开" />}
+        {activeDoc && (
+          <span className="tree__dot" title={liveOpen ? '已打开（真实文件）' : '已在标签中打开'} />
+        )}
       </button>
     </li>
   );
 }
 
-function FolderRow({ node, depth }: { node: DemoNode; depth: number }) {
+function FolderRow({ node, depth }: { node: ResourceNodeState; depth: number }) {
   const { state, dispatch } = useWorkspace();
   const expanded = state.expanded[node.id] ?? false;
 
@@ -75,10 +73,17 @@ function FolderRow({ node, depth }: { node: DemoNode; depth: number }) {
   );
 }
 
-/** 项目文件树：数据来自内置演示结构，不含真实文件访问。 */
+/**
+ * 项目文件树：
+ * - demo 模式渲染内置演示树（不接触磁盘）；
+ * - live 模式渲染服务端返回的授权资源树（只包含 Core 允许的文本文件）。
+ */
 export function ProjectTree() {
   const { state, dispatch } = useWorkspace();
+  const actions = useDocumentActions();
+  const nodes = state.mode === 'live' ? state.resources : DEMO_NODES;
   const expandedFolders = Object.values(state.expanded).filter(Boolean).length;
+  const projectName = state.mode === 'live' ? '本地测试项目' : DEMO_PROJECT_NAME;
 
   if (state.treeCollapsed) {
     return (
@@ -100,23 +105,37 @@ export function ProjectTree() {
     <aside className="tree" aria-label="项目树">
       <header className="tree__header">
         <div>
-          <div className="tree__project">{DEMO_PROJECT_NAME}</div>
+          <div className="tree__project">{projectName}</div>
           <div className="tree__meta">
-            {DEMO_TREE.length} 个分组 · {expandedFolders} 个已展开
+            {state.loadingResources
+              ? '正在加载…'
+              : `${nodes.length} 个分组 · ${expandedFolders} 个已展开`}
           </div>
         </div>
-        <button
-          type="button"
-          className="icon-button"
-          onClick={() => dispatch({ type: 'TOGGLE_TREE' })}
-          title="折叠项目树"
-        >
-          «
-        </button>
+        <div className="tree__actions">
+          {state.mode === 'live' && (
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => void actions.reloadResources()}
+              title="重新读取资源树"
+            >
+              ↻
+            </button>
+          )}
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => dispatch({ type: 'TOGGLE_TREE' })}
+            title="折叠项目树"
+          >
+            «
+          </button>
+        </div>
       </header>
 
       <ul className="tree__root">
-        {DEMO_TREE.map((node) =>
+        {nodes.map((node) =>
           node.kind === 'folder' ? (
             <FolderRow key={node.id} node={node} depth={0} />
           ) : (
@@ -125,7 +144,11 @@ export function ProjectTree() {
         )}
       </ul>
 
-      <footer className="tree__footer">演示数据 · 与真实磁盘无关</footer>
+      <footer className="tree__footer">
+        {state.mode === 'live'
+          ? '真实文件 · 仅显示服务端授权的项目范围'
+          : '演示数据 · 与真实磁盘无关'}
+      </footer>
     </aside>
   );
 }

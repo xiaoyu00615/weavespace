@@ -1,9 +1,9 @@
 {
   "name": "weavespace-shell",
   "private": true,
-  "version": "0.0.0-s9a",
+  "version": "0.0.0-s9b",
   "type": "module",
-  "description": "WeaveSpace 工作台 Shell（S9-A 演示版，不接触真实文件）",
+  "description": "WeaveSpace 工作台 Shell（S9-A 布局 + S9-B 真实文件模式）",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

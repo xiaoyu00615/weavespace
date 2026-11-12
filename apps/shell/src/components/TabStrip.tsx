@@ -1,18 +1,20 @@
+import { useDocumentActions } from '../state/DocumentActionsContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 
-/** 文件标签：切换活动文档、关闭标签（脏缓冲需确认）。 */
+/** 文件标签：切换活动文档、关闭标签（关闭规则由动作层按模式判定）。 */
 export function TabStrip() {
   const { state, dispatch } = useWorkspace();
+  const actions = useDocumentActions();
   const activeDocId =
     state.focusedPane === 'secondary' ? state.panes.secondary.docId : state.panes.primary.docId;
 
-  const closeTab = (docId: string, dirty: boolean) => {
-    if (dirty && !window.confirm('该标签有未保存的演示修改，仍要关闭吗？')) return;
-    dispatch({ type: 'CLOSE_TAB', docId });
-  };
-
   if (state.tabs.length === 0) {
-    return <div className="tabs tabs--empty">尚未打开文档 · 从左侧文件树选择</div>;
+    return (
+      <div className="tabs tabs--empty">
+        尚未打开文档 · 从左侧文件树选择
+        {state.mode === 'live' ? '（真实文件）' : '（演示）'}
+      </div>
+    );
   }
 
   return (
@@ -29,13 +31,21 @@ export function TabStrip() {
               onClick={() => dispatch({ type: 'ACTIVATE_TAB', docId: tab.docId })}
             >
               {tab.title}
-              {tab.dirty && <span className="tab__dirty" title="有未保存的演示修改" />}
+              {tab.dirty && (
+                <span
+                  className="tab__dirty"
+                  title={
+                    tab.mode === 'live' ? '有未保存的真实文件修改' : '有未保存的演示修改'
+                  }
+                />
+              )}
+              {tab.mode === 'live' && <span className="tab__mode">真实</span>}
             </button>
             <button
               type="button"
               className="tab__close"
               aria-label={`关闭 ${tab.title}`}
-              onClick={() => closeTab(tab.docId, tab.dirty)}
+              onClick={() => void actions.closeTab(tab.docId)}
             >
               ×
             </button>

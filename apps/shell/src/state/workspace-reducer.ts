@@ -1,5 +1,12 @@
 import { DEFAULT_EXPANDED } from '../data/demo-project';
-import type { DocTab, LayoutMode, PaneId, WorkspaceAction, WorkspaceState } from './types';
+import type {
+  DocTab,
+  LayoutMode,
+  PaneId,
+  ResourceNodeState,
+  WorkspaceAction,
+  WorkspaceState,
+} from './types';
 
 const MIN_RATIO = 25;
 const MAX_RATIO = 75;
@@ -21,6 +28,9 @@ export const INITIAL_STATE: WorkspaceState = {
   auxCollapsed: true,
   auxTab: 'ai',
   notice: '演示数据：不读取、不写入本机文件',
+  mode: 'demo',
+  resources: [],
+  loadingResources: false,
 };
 
 function clampRatio(value: number): number {
@@ -38,6 +48,15 @@ function pickFallback(tabs: DocTab[], removedIndex: number): string | null {
 function setPaneTarget(state: WorkspaceState, pane: PaneId): PaneId {
   // 单视图模式下一切操作都落在主窗格，避免出现“看不见的活动窗格”。
   return state.layout === 'single' ? 'primary' : pane;
+}
+
+/** 进入 live 时自动展开一级目录，避免首屏全是收起状态。 */
+function defaultExpandedFor(nodes: ResourceNodeState[]): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const node of nodes) {
+    if (node.kind === 'folder') out[node.id] = true;
+  }
+  return out;
 }
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
@@ -63,30 +82,64 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         expanded: { ...state.expanded, [action.path]: !state.expanded[action.path] },
       };
 
-    case 'OPEN_FILE': {
-      const existing = state.tabs.find((tab) => tab.docId === action.docId);
+    case 'SET_MODE': {
+      if (action.mode === state.mode) return state;
+      return {
+        ...state,
+        mode: action.mode,
+        // 切换模式等于换一个工作区：未保存内容不允许被静默丢弃，调用方需先拦截
+        tabs: [],
+        resources: [],
+        selectedPath: null,
+        expanded: action.mode === 'demo' ? { ...DEFAULT_EXPANDED } : {},
+        panes: {
+          primary: { docId: null, mode: 'editor' },
+          secondary: { docId: null, mode: 'preview' },
+        },
+        notice:
+          action.mode === 'live'
+            ? '真实文件模式：读取本机测试项目（写入经 Core）'
+            : '演示数据：不读取、不写入本机文件',
+      };
+    }
+
+    case 'SET_RESOURCES':
+      return {
+        ...state,
+        resources: action.nodes,
+        expanded:
+          Object.keys(state.expanded).length === 0
+            ? defaultExpandedFor(action.nodes)
+            : state.expanded,
+      };
+
+    case 'SET_LOADING_RESOURCES':
+      return { ...state, loadingResources: action.loading };
+
+    case 'OPEN_TAB': {
+      const existing = state.tabs.find((tab) => tab.docId === action.tab.docId);
       const tabs = existing
-        ? state.tabs
-        : [
-            ...state.tabs,
-            {
-              docId: action.docId,
-              path: action.path,
-              title: action.title,
-              kind: action.kind,
-              buffer: action.content,
-              dirty: false,
-            },
-          ];
+        ? state.tabs.map((tab) => (tab.docId === action.tab.docId ? { ...tab, ...action.tab } : tab))
+        : [...state.tabs, action.tab];
       const pane = setPaneTarget(state, state.focusedPane);
       return {
         ...state,
         tabs,
-        selectedPath: action.docId,
-        panes: { ...state.panes, [pane]: { ...state.panes[pane], docId: action.docId } },
-        notice: existing ? '已在标签中打开该文档' : `已打开（演示）：${action.title}`,
+        selectedPath: action.tab.docId,
+        panes: { ...state.panes, [pane]: { ...state.panes[pane], docId: action.tab.docId } },
+        notice: existing
+          ? '已在标签中打开该文档'
+          : `已打开（${action.tab.mode === 'live' ? '真实文件' : '演示'}）：${action.tab.title}`,
       };
     }
+
+    case 'TAB_PATCH':
+      return {
+        ...state,
+        tabs: state.tabs.map((tab) =>
+          tab.docId === action.docId ? { ...tab, ...action.patch } : tab,
+        ),
+      };
 
     case 'ACTIVATE_TAB': {
       const pane = setPaneTarget(state, state.focusedPane);
@@ -107,8 +160,28 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           panes[pane] = { ...panes[pane], docId: fallback };
         }
       });
-      return { ...state, tabs: remaining, panes, notice: '已关闭标签（演示缓冲丢弃）' };
+      return { ...state, tabs: remaining, panes, notice: '已关闭标签' };
     }
+
+    case 'SAVE_RESULT':
+      return {
+        ...state,
+        tabs: state.tabs.map((tab) =>
+          tab.docId === action.docId
+            ? {
+                ...tab,
+                saving: false,
+                dirty: action.dirty,
+                lastStatus: action.status,
+                errorCode: action.errorCode,
+                documentState: action.documentState ?? tab.documentState,
+                baseVersion: action.baseVersion ?? tab.baseVersion,
+                revision: action.revision ?? tab.revision,
+              }
+            : tab,
+        ),
+        notice: action.notice,
+      };
 
     case 'SET_PANE_MODE':
       return {
@@ -135,7 +208,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           primary: { ...state.panes.primary, docId: state.panes.primary.docId ?? anchor },
           secondary: { docId: state.panes.secondary.docId ?? anchor, mode: 'preview' },
         },
-        notice: '左右分屏：左侧源码 / 右侧预览（演示）',
+        notice: '左右分屏：左侧源码 / 右侧预览',
       };
     }
 
@@ -146,15 +219,16 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return {
         ...state,
         tabs: state.tabs.map((tab) =>
-          tab.docId === action.docId ? { ...tab, buffer: action.text, dirty: true } : tab,
+          tab.docId === action.docId
+            ? {
+                ...tab,
+                buffer: action.text,
+                dirty: true,
+                documentState:
+                  tab.documentState === 'SAVING' ? 'SAVING' : tab.documentState === 'DEMO' ? 'DEMO' : 'EDITING_DIRTY',
+              }
+            : tab,
         ),
-      };
-
-    case 'DEMO_SAVE':
-      return {
-        ...state,
-        tabs: state.tabs.map((tab) => (tab.docId === action.docId ? { ...tab, dirty: false } : tab)),
-        notice: '演示保存：仅清除未保存标记，没有写入任何磁盘文件',
       };
 
     case 'NOTICE':

@@ -1,20 +1,47 @@
+import { useDocumentActions } from '../state/DocumentActionsContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 import { DEMO_PROJECT_NAME } from '../data/demo-project';
 
-/** 顶部上下文工具栏：布局切换、演示保存、辅助面板开关。 */
+/** 顶部上下文工具栏：模式切换、布局切换、保存、辅助面板开关。 */
 export function DocumentToolbar() {
   const { state, dispatch } = useWorkspace();
+  const actions = useDocumentActions();
   const activeDocId =
     state.focusedPane === 'secondary' ? state.panes.secondary.docId : state.panes.primary.docId;
   const activeTab = state.tabs.find((tab) => tab.docId === activeDocId) ?? null;
+  const live = state.mode === 'live';
 
   return (
     <header className="toolbar" role="toolbar" aria-label="工作台工具栏">
       <div className="toolbar__left">
-        <span className="toolbar__project">{DEMO_PROJECT_NAME}</span>
-        <span className="badge badge--demo" title="所有内容均为内置演示数据">
-          演示模式
+        <span className="toolbar__project">{live ? '本地测试项目' : DEMO_PROJECT_NAME}</span>
+        <span
+          className={live ? 'badge badge--live' : 'badge badge--demo'}
+          title={live ? '真实文件：保存会写入本机测试项目' : '所有内容均为内置演示数据'}
+        >
+          {live ? '真实文件' : '演示模式'}
         </span>
+      </div>
+
+      <div className="toolbar__group" role="group" aria-label="模式">
+        <button
+          type="button"
+          className={!live ? 'chip chip--active' : 'chip'}
+          aria-pressed={!live}
+          onClick={() => void actions.switchMode('demo')}
+          title="使用内置演示数据，不写盘"
+        >
+          演示
+        </button>
+        <button
+          type="button"
+          className={live ? 'chip chip--active' : 'chip'}
+          aria-pressed={live}
+          onClick={() => void actions.switchMode('live')}
+          title="读取本机测试项目（需要先启动 apps/server）"
+        >
+          真实文件
+        </button>
       </div>
 
       <div className="toolbar__group" role="group" aria-label="布局">
@@ -44,12 +71,12 @@ export function DocumentToolbar() {
       <div className="toolbar__right">
         <button
           type="button"
-          className="chip"
-          disabled={!activeTab}
-          title="演示保存：只清除未保存标记，不写磁盘"
-          onClick={() => activeTab && dispatch({ type: 'DEMO_SAVE', docId: activeTab.docId })}
+          className={live ? 'chip chip--primary' : 'chip'}
+          disabled={!activeTab || activeTab.saving}
+          title={live ? '经 Core 条件保存到磁盘（需要版本基线）' : '演示保存：只清除未保存标记，不写磁盘'}
+          onClick={() => activeTab && void actions.saveTab(activeTab.docId)}
         >
-          保存（演示）
+          {activeTab?.saving ? '保存中…' : live ? '保存' : '保存（演示）'}
         </button>
         <button
           type="button"
