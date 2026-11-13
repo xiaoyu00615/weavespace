@@ -27,6 +27,7 @@
  * 已知平台限制见 storage/README.md「路径安全」章节。
  */
 import { lstatSync, realpathSync, statSync } from 'node:fs';
+import type { BigIntStats } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 
 export type PathCheck =
@@ -84,7 +85,9 @@ export function mapStorageError(
   | 'ERR_STORAGE_IO'
   | 'ERR_RESOURCE_NOT_FOUND'
   | 'ERR_ENCODING_UNSUPPORTED'
-  | 'ERR_RESOURCE_NOT_TEXT' {
+  | 'ERR_RESOURCE_NOT_TEXT'
+  | 'ERR_ROOT_CHANGED'
+  | 'ERR_ROOT_IDENTITY_UNSUPPORTED' {
   const own = (err as { errorCode?: string } | undefined)?.errorCode;
   if (own === 'ERR_PATH_OUTSIDE_ROOT') return 'ERR_PATH_OUTSIDE_ROOT';
   if (own === 'ERR_PERMISSION_DENIED') return 'ERR_PERMISSION_DENIED';
@@ -92,6 +95,9 @@ export function mapStorageError(
   if (own === 'ERR_RESOURCE_NOT_FOUND') return 'ERR_RESOURCE_NOT_FOUND';
   if (own === 'ERR_ENCODING_UNSUPPORTED') return 'ERR_ENCODING_UNSUPPORTED';
   if (own === 'ERR_RESOURCE_NOT_TEXT') return 'ERR_RESOURCE_NOT_TEXT';
+  // 根连续性错误必须原样保留：任何折叠都会让调用方误判为"文件不存在/版本冲突"
+  if (own === 'ERR_ROOT_CHANGED') return 'ERR_ROOT_CHANGED';
+  if (own === 'ERR_ROOT_IDENTITY_UNSUPPORTED') return 'ERR_ROOT_IDENTITY_UNSUPPORTED';
 
   const code = codeOf(err);
   if (code === 'EPERM' || code === 'EACCES') return 'ERR_PERMISSION_DENIED';
@@ -195,6 +201,104 @@ export function assertBoundaryStable(boundary: RootBoundary): void {
       `根目录身份已改变（边界漂移）: ${boundary.canonicalRoot} -> ${fresh.canonicalRoot}`,
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// 根目录连续性（S11-A1-G0）
+//
+// 问题：`assertBoundaryStable` 在根目录**被删除**时会重新"锚定最近可解析祖先"
+// （createRootBoundary 的缺失分支），算出的 canonicalRoot 与原始值相同，
+// 于是"边界稳定"判定通过 —— 根消失因而不可检测，写链路会把它重建出来。
+//
+// 解决：额外的根身份令牌 `dev:ino:birthtimeNs`（全部 BigInt）。
+// - 令牌只用于**检测**，不构成唯一性证明（inode 会被复用，见 README「已知限制」）；
+// - 令牌不可用（ino=0）、根非目录、根消失或被替换 → 一律 fail-closed；
+// - 令牌绝不经过 Number / parseInt / JSON 数字：number 模式实测已丢失精度
+//   （242631429925785950 vs 242631429925785946），会把不同 inode 折叠成同一身份。
+// ---------------------------------------------------------------------------
+
+/** 写入链路的分阶段检查点（C0–C4）。 */
+export type RootCheckpoint = 'C0' | 'C1' | 'C2' | 'C3' | 'C4';
+
+/** 参与根身份构造的最小 stat 视图（便于单元验证，不暴露 fs 细节）。 */
+export interface RootStatLike {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly birthtimeNs: bigint;
+  isDirectory(): boolean;
+}
+
+/** 根身份/连续性错误：调用方必须按"项目根不可用"处理，不得降级为不存在。 */
+export function rootChangedError(detail: string): Error {
+  return Object.assign(new Error(detail), { errorCode: 'ERR_ROOT_CHANGED' as const });
+}
+
+/**
+ * 由 bigint stat 构造根身份令牌。
+ *
+ * 精度要求：所有整数保持 BigInt，仅做字符串拼接；任何数值转换都会破坏身份比较。
+ */
+export function buildRootToken(stat: RootStatLike): string {
+  if (!stat.isDirectory()) {
+    throw rootChangedError('根路径不是目录，无法建立根身份');
+  }
+  if (stat.ino === 0n) {
+    throw Object.assign(
+      new Error('文件系统未提供可用的 inode（ino=0），拒绝建立根身份'),
+      { errorCode: 'ERR_ROOT_IDENTITY_UNSUPPORTED' as const },
+    );
+  }
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+}
+
+/**
+ * 读取某个**绝对路径**的根身份令牌。
+ *
+ * - 必须使用 `{ bigint: true }`；number 模式会丢精度；
+ * - 目标不存在 → `ERR_ROOT_CHANGED`（不是"文件不存在"：这里问的是根本身）；
+ * - 其他 I/O/权限失败 → 交由 `toStorageError` 映射为明确错误。
+ */
+export function rootTokenOf(absolutePath: string): string {
+  let stat: BigIntStats;
+  try {
+    stat = statSync(absolutePath, { bigint: true });
+  } catch (err) {
+    if (codeOf(err) === 'ENOENT') {
+      throw rootChangedError(`根目录已不存在，无法确认根身份: ${absolutePath}`);
+    }
+    throw toStorageError(err);
+  }
+  return buildRootToken(stat);
+}
+
+/**
+ * 根连续性断言（C0–C4 与读链路共用）。
+ *
+ * - `establishedToken === null`：根尚未建立（Provider 构造时根不存在），
+ *   只做既有的边界漂移检查，保留"首次写入可初始化"的既有行为；
+ * - 已建立：先确认根仍存在且令牌一致，再做边界漂移检查。
+ *   顺序不可颠倒 —— 根缺失时 `assertBoundaryStable` 会"锚定祖先"而误判通过。
+ */
+export function assertRootContinuity(
+  boundary: RootBoundary,
+  establishedToken: string | null,
+): void {
+  if (establishedToken === null) {
+    assertBoundaryStable(boundary);
+    return;
+  }
+  const current = rootTokenOf(boundary.canonicalRoot);
+  if (current !== establishedToken) {
+    throw rootChangedError(
+      `根目录身份已改变（被删除后重建或被替换）: ${boundary.canonicalRoot}`,
+    );
+  }
+  assertBoundaryStable(boundary);
+}
+
+/** 供写入链路校验「临时文件/目标」仍在授权根内（重解析点改向后不得写出）。 */
+export function isPathInsideRoot(rootAbs: string, candidateAbs: string): boolean {
+  return isInsideRoot(rootAbs, candidateAbs);
 }
 
 /**

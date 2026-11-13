@@ -31,6 +31,16 @@ export const ERROR_CODES = {
   ERR_SAVE_FAILED: 'ERR_SAVE_FAILED',
   ERR_OUTCOME_UNKNOWN: 'ERR_OUTCOME_UNKNOWN',
   ERR_STORAGE_IO: 'ERR_STORAGE_IO',
+  /**
+   * 已建立的根目录身份发生变化：根消失、被移动，或被同名目录替换（G0）。
+   * 这是「项目根不可用」，不得映射为文件不存在或版本冲突，也不得据此重建根。
+   */
+  ERR_ROOT_CHANGED: 'ERR_ROOT_CHANGED',
+  /**
+   * 文件系统未提供可用的根身份（如 `ino === 0`），无法建立连续性校验（G0）。
+   * 必须 fail-closed 拒绝，而不是退化为仅按路径比较。
+   */
+  ERR_ROOT_IDENTITY_UNSUPPORTED: 'ERR_ROOT_IDENTITY_UNSUPPORTED',
   ERR_PLUGIN_INVALID_MANIFEST: 'ERR_PLUGIN_INVALID_MANIFEST',
   ERR_PLUGIN_DUPLICATE_ID: 'ERR_PLUGIN_DUPLICATE_ID',
   ERR_PLUGIN_NOT_REGISTERED: 'ERR_PLUGIN_NOT_REGISTERED',

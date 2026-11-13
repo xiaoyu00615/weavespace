@@ -24,13 +24,16 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/p
 import { dirname, join } from 'node:path';
 import type { SaveResult } from '../contracts/types.ts';
 import {
-  assertBoundaryStable,
+  assertRootContinuity,
   createRootBoundary,
+  isPathInsideRoot,
   isUntrustedResolution,
   mapStorageError,
   resolveInBoundary,
+  rootTokenOf,
   toStorageError,
   type RootBoundary,
+  type RootCheckpoint,
 } from './path-safety.ts';
 import { decodeUtf8Text, encodeUtf8Text, textError } from './text-safety.ts';
 
@@ -52,6 +55,12 @@ export interface StorageFaultHooks {
    * 仅用于测试注入「重新核验前被替换为非普通文件」的窗口。
    */
   beforeReverify?: () => void;
+  /**
+   * 在写入链路的 C0–C4 检查点**之前**执行（G0-10/G0-11）。
+   * 仅用于测试注入"检查与操作之间根被删除/替换"的竞争窗口；
+   * 抛错即视为该检查点失败（C0–C3 → FAILED，C4 → UNKNOWN）。
+   */
+  atCheckpoint?: (checkpoint: RootCheckpoint) => void;
 }
 
 export interface LocalProviderOptions {
@@ -100,6 +109,49 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
   // 根目录身份在此一次性固定；无法确认（EPERM/EACCES/悬空重解析点…）时直接抛错，
   // 不允许“先建 provider、之后每次操作各自猜边界”。
   const boundary: RootBoundary = createRootBoundary(rootDir);
+
+  /**
+   * 根连续性状态（G0-02）。
+   * - `null` = INITIALIZABLE：Provider 构造时根不存在，允许首次合法写入创建根；
+   * - 非空 = ESTABLISHED：已认领真实根身份；根消失/被替换后一律拒绝，绝不重建。
+   */
+  let establishedToken: string | null = null;
+  if (boundary.verified) {
+    try {
+      establishedToken = rootTokenOf(boundary.canonicalRoot);
+    } catch (err) {
+      const code = (err as { errorCode?: string }).errorCode;
+      // ino 不可用是"该文件系统无法提供根身份"，保留原码便于诊断（G0-14）
+      if (code === 'ERR_ROOT_IDENTITY_UNSUPPORTED') throw err;
+      throw Object.assign(
+        new Error(`根目录身份无法确认: ${(err as Error).message}`),
+        { errorCode: 'ERR_PATH_OUTSIDE_ROOT' as const },
+      );
+    }
+  }
+
+  /**
+   * 首次初始化的串行协调（G0-02.6 / G0-07）。
+   * 只在"尚未建立根身份"时使用，避免并发首写各自 mkdir 后各自认领；
+   * ESTABLISHED 之后不加全局锁，正常并发语义保持不变。
+   */
+  let initTail: Promise<void> = Promise.resolve();
+  async function serializeFirstInit<T>(fn: () => Promise<T>): Promise<T> {
+    const previous = initTail;
+    let release: () => void = () => {};
+    initTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous.then(
+      () => undefined,
+      () => undefined,
+    );
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
 
   /**
    * 读取既有目标：同时给出字节版本与「能否作为文本」的判定（S5-02）。
@@ -172,6 +224,144 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
     });
   }
 
+  /**
+   * 实际写入链路（G0-03 / G0-04）。
+   *
+   * C0–C4 是**分阶段检查**，不是原子文件系统事务：检查与随后的系统调用之间仍有
+   * 竞争窗口（无 `openat`/目录句柄）。要求是"任何已确认失败都不得留下非授权副作用"，
+   * 而不是"绝对不会发生"。窗口内已提交但无法确认时返回 UNKNOWN。
+   */
+  async function writeEstablished(
+    path: string,
+    content: string,
+    expectedVersion: string | null,
+  ): Promise<SaveResult> {
+    const checkpoint = (id: RootCheckpoint): void => {
+      faults.atCheckpoint?.(id);
+    };
+
+    // 全程只使用这一个固定边界；后续不再重新建立边界来决定“根在哪里”
+    const check = resolveInBoundary(boundary, path);
+    if (!check.ok) {
+      return { status: 'FAILED', errorCode: check.errorCode };
+    }
+
+    // C0：目标路径解析后、版本读取前。
+    // 顺序不可颠倒 —— 根缺失时 assertBoundaryStable 会"锚定现存祖先"而误判通过。
+    try {
+      checkpoint('C0');
+      assertRootContinuity(boundary, establishedToken);
+    } catch (err) {
+      return { status: 'FAILED', errorCode: mapStorageError(err) };
+    }
+
+    // S5-02：先校验「要写入的内容」本身可无损编码（未配对代理项、NUL/控制字节）
+    const encoded = encodeUtf8Text(content);
+    if (!Buffer.isBuffer(encoded)) {
+      return { status: 'FAILED', errorCode: encoded.errorCode };
+    }
+    const payload = encoded;
+
+    let target: ExistingTarget;
+    try {
+      target = await inspectExisting(check.absolutePath);
+    } catch (err) {
+      // 版本无法确认 → 既不能放行覆盖，也不能谎报冲突
+      return { status: 'FAILED', errorCode: mapStorageError(err) };
+    }
+
+    // S5-02：已识别的非文本目标一律拒绝覆盖（不得用文本 API 改写二进制/非 UTF-8 文件）
+    if (target.exists && target.textFailure) {
+      return { status: 'FAILED', errorCode: target.textFailure.errorCode };
+    }
+
+    const currentVersion: string | null = target.exists ? target.version : null;
+
+    if (expectedVersion === null) {
+      if (currentVersion !== null) {
+        return {
+          status: 'CONFLICT',
+          errorCode: 'ERR_DOCUMENT_VERSION_CONFLICT',
+          contentVersion: currentVersion,
+        };
+      }
+    } else if (currentVersion !== expectedVersion) {
+      return {
+        status: 'CONFLICT',
+        errorCode: 'ERR_DOCUMENT_VERSION_CONFLICT',
+        contentVersion: currentVersion ?? undefined,
+      };
+    }
+
+    let tempPath: string | null = null;
+    try {
+      faults.beforeCommit?.();
+
+      // C1：mkdir 之前。ESTABLISHED 根消失/被替换时绝不允许走到 mkdir（否则就是 D-1 的重建）
+      checkpoint('C1');
+      assertRootContinuity(boundary, establishedToken);
+
+      await mkdir(dirname(check.absolutePath), { recursive: true });
+
+      // mkdir 之后重新解析：新建的目录本身也要逐级校验，且落盘必须用这次的结果
+      const afterMkdir = resolveInBoundary(boundary, path);
+      if (!afterMkdir.ok) {
+        return { status: 'FAILED', errorCode: afterMkdir.errorCode };
+      }
+
+      // 首次初始化：根由本次写入创建，立即认领身份并转为 ESTABLISHED（G0-02.2）。
+      // 失败路径不会来到这里，因此"首次初始化失败"不会留下错误的已建立状态。
+      if (establishedToken === null) {
+        establishedToken = rootTokenOf(boundary.canonicalRoot);
+      }
+
+      // C2：mkdir 之后、写临时文件之前
+      checkpoint('C2');
+      assertRootContinuity(boundary, establishedToken);
+
+      const absolutePath = afterMkdir.absolutePath;
+      const parentDir = dirname(absolutePath);
+      // 目标父目录必须仍在授权根内（重解析点改向时不得把临时文件写到别处）
+      if (!isPathInsideRoot(boundary.canonicalRoot, parentDir)) {
+        return { status: 'FAILED', errorCode: 'ERR_PATH_OUTSIDE_ROOT' };
+      }
+
+      tempPath = join(parentDir, `.ws-tmp-${process.pid}-${Date.now()}`);
+      await writeFile(tempPath, payload);
+
+      // C3：最终 rename 之前
+      checkpoint('C3');
+      assertRootContinuity(boundary, establishedToken);
+
+      await rename(tempPath, absolutePath);
+    } catch (err) {
+      if (tempPath) await rm(tempPath, { force: true }).catch(() => {});
+      // EPERM/EACCES → 权限错误；边界漂移/根身份 → 根错误；其余 → 存储 IO
+      return { status: 'FAILED', errorCode: mapStorageError(err) };
+    }
+
+    const committedVersion = contentVersionOf(payload);
+
+    // C4：rename 之后、确认提交结果之前。
+    // 此处副作用可能已经发生（文件落在提交时的根内），因此只能报 UNKNOWN。
+    try {
+      checkpoint('C4');
+      assertRootContinuity(boundary, establishedToken);
+    } catch {
+      return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN', contentVersion: committedVersion };
+    }
+
+    if (faults.afterCommit) {
+      try {
+        faults.afterCommit();
+      } catch {
+        // 副作用已落盘但确认链中断：必须报 UNKNOWN，不得报成功或失败（docs/04、CT-06）
+        return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN', contentVersion: committedVersion };
+      }
+    }
+    return { status: 'COMMITTED', contentVersion: committedVersion };
+  }
+
   return {
     providerId: 'local',
     rootDir,
@@ -182,7 +372,8 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         // 安全拒绝不得伪装成「文件不存在」：必须以可识别错误码抛出（S4-D）
         throw Object.assign(new Error(check.detail), { errorCode: check.errorCode });
       }
-      assertBoundaryStable(boundary);
+      // G0-05：已建立根消失后不得返回 exists:false（那是"文件不存在"，不是"根不可用"）
+      assertRootContinuity(boundary, establishedToken);
 
       let s;
       try {
@@ -216,7 +407,8 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       if (!check.ok) {
         throw Object.assign(new Error(check.detail), { errorCode: check.errorCode });
       }
-      assertBoundaryStable(boundary);
+      // G0-05：根被删除/替换时必须在读取前失败，不得伪装成"单个文件不存在"
+      assertRootContinuity(boundary, establishedToken);
 
       let buf: Buffer;
       try {
@@ -242,97 +434,11 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       content: string,
       expectedVersion: string | null,
     ): Promise<SaveResult> {
-      // 全程只使用这一个固定边界；后续不再重新建立边界来决定“根在哪里”
-      const check = resolveInBoundary(boundary, path);
-      if (!check.ok) {
-        return { status: 'FAILED', errorCode: check.errorCode };
+      // 首次初始化必须串行：两个并发首写不得各自 mkdir 后各自认领根身份（G0-07）
+      if (establishedToken === null) {
+        return serializeFirstInit(() => writeEstablished(path, content, expectedVersion));
       }
-
-      // F06：边界漂移时版本比较没有意义。必须在读取版本/判定冲突之前先确认边界，
-      // 否则会在已漂移的根上算出一个普通 CONFLICT，掩盖真正的安全拒绝。
-      try {
-        assertBoundaryStable(boundary);
-      } catch (err) {
-        return { status: 'FAILED', errorCode: mapStorageError(err) };
-      }
-
-      // S5-02：先校验「要写入的内容」本身可无损编码（未配对代理项、NUL/控制字节）
-      const encoded = encodeUtf8Text(content);
-      if (!Buffer.isBuffer(encoded)) {
-        return { status: 'FAILED', errorCode: encoded.errorCode };
-      }
-      const payload = encoded;
-
-      let target: ExistingTarget;
-      try {
-        target = await inspectExisting(check.absolutePath);
-      } catch (err) {
-        // 版本无法确认 → 既不能放行覆盖，也不能谎报冲突
-        return { status: 'FAILED', errorCode: mapStorageError(err) };
-      }
-
-      // S5-02：已识别的非文本目标一律拒绝覆盖（不得用文本 API 改写二进制/非 UTF-8 文件）
-      if (target.exists && target.textFailure) {
-        return { status: 'FAILED', errorCode: target.textFailure.errorCode };
-      }
-
-      const currentVersion: string | null = target.exists ? target.version : null;
-
-      if (expectedVersion === null) {
-        if (currentVersion !== null) {
-          return {
-            status: 'CONFLICT',
-            errorCode: 'ERR_DOCUMENT_VERSION_CONFLICT',
-            contentVersion: currentVersion,
-          };
-        }
-      } else if (currentVersion !== expectedVersion) {
-        return {
-          status: 'CONFLICT',
-          errorCode: 'ERR_DOCUMENT_VERSION_CONFLICT',
-          contentVersion: currentVersion ?? undefined,
-        };
-      }
-
-      let tempPath: string | null = null;
-      try {
-        faults.beforeCommit?.();
-        // 边界漂移检查点 ①：mkdir 之前拦截，避免在旧/新任一目标留下目录
-        assertBoundaryStable(boundary);
-
-        await mkdir(dirname(check.absolutePath), { recursive: true });
-
-        // mkdir 之后重新解析：新建的目录本身也要逐级校验，且落盘必须用这次的结果
-        const afterMkdir = resolveInBoundary(boundary, path);
-        if (!afterMkdir.ok) {
-          return { status: 'FAILED', errorCode: afterMkdir.errorCode };
-        }
-        // 边界漂移检查点 ②
-        assertBoundaryStable(boundary);
-
-        const absolutePath = afterMkdir.absolutePath;
-        tempPath = join(dirname(absolutePath), `.ws-tmp-${process.pid}-${Date.now()}`);
-        await writeFile(tempPath, payload);
-
-        // 边界漂移检查点 ③：rename 前最后一次确认
-        assertBoundaryStable(boundary);
-        await rename(tempPath, absolutePath);
-      } catch (err) {
-        if (tempPath) await rm(tempPath, { force: true }).catch(() => {});
-        // EPERM/EACCES → 权限错误；边界漂移 → ERR_PATH_OUTSIDE_ROOT；其余 → 存储 IO
-        return { status: 'FAILED', errorCode: mapStorageError(err) };
-      }
-
-      const committedVersion = contentVersionOf(payload);
-      if (faults.afterCommit) {
-        try {
-          faults.afterCommit();
-        } catch {
-          // 副作用已落盘但确认链中断：必须报 UNKNOWN，不得报成功或失败（docs/04、CT-06）
-          return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN', contentVersion: committedVersion };
-        }
-      }
-      return { status: 'COMMITTED', contentVersion: committedVersion };
+      return writeEstablished(path, content, expectedVersion);
     },
 
     async list(dir = '.'): Promise<string[]> {
@@ -340,7 +446,8 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       if (!check.ok) {
         throw Object.assign(new Error(check.detail), { errorCode: check.errorCode });
       }
-      assertBoundaryStable(boundary);
+      // G0-05：根消失时不得静默表现为"普通空目录"
+      assertRootContinuity(boundary, establishedToken);
 
       const out: string[] = [];
       async function walk(absDir: string, prefix: string): Promise<void> {

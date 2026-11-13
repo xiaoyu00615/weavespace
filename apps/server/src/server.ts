@@ -93,6 +93,11 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_SAVE_FAILED':
     case 'ERR_STORAGE_IO':
       return 422;
+    // 根目录连续性（G0）：项目根不可用既不是"不存在"也不是"冲突"，
+    // 用 503 表达"暂时不可用，需重新建立 provider/重启"，避免误报 404/409/500。
+    case 'ERR_ROOT_CHANGED':
+    case 'ERR_ROOT_IDENTITY_UNSUPPORTED':
+      return 503;
     default:
       return 500;
   }

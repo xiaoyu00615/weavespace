@@ -107,6 +107,31 @@
 因此 `stat()` 不再可能返回 `{ exists:true, contentVersion:null }`（目录等非普通文件的
 `contentVersion:null` 属于明确语义，不在此列）；`EBUSY/EPERM/EACCES` 在任何一步都不当作不存在。
 
+## 根目录连续性（S11-A1-G0）
+
+`assertBoundaryStable` 只能证明"现在解析出的规范根与创建时相同"，**根被删除时它会重新
+锚定最近可解析祖先，算出相同的 `canonicalRoot`，于是"稳定"判定通过**——根消失因此不可检测，
+写链路会把它重建出来（已复现：新建文件会话 + 根被删除 → `COMMITTED` 且根被重建）。
+
+因此增加**根身份令牌**与分阶段检查：
+
+| 概念 | 语义 |
+|---|---|
+| 令牌 | `dev:ino:birthtimeNs`，全部来自 `statSync(path, { bigint: true })`，只做字符串拼接 |
+| INITIALIZABLE | Provider 构造时根不存在（`boundary.verified === false`）：允许**首次**合法写入创建根 |
+| ESTABLISHED | 已捕获根身份；根消失/被同名目录替换后**一律拒绝**，绝不重建 |
+| C0 | 目标路径解析后、版本读取前 |
+| C1 | `mkdir` 之前（ESTABLISHED 根失效时必须在此拦截，否则就是重建） |
+| C2 | `mkdir` 之后、写临时文件之前（含"目标父目录仍在授权根内"复核） |
+| C3 | 最终 `rename` 之前 |
+| C4 | `rename` 之后、确认提交结果之前（失败只能报 `UNKNOWN`） |
+
+首次初始化在进程内**串行**（`serializeFirstInit`），并发首写不会各自认领根身份；
+初始化失败不会残留"已建立"状态。首次写入创建根成功后立即捕获令牌并转为 ESTABLISHED。
+
+`read`/`stat`/`list` 同样先做连续性断言：已建立根消失时抛 `ERR_ROOT_CHANGED`，
+**不得**伪装成"文件不存在"或"空目录"。
+
 ## 失败路径
 | 情形 | 返回 |
 |---|---|
@@ -114,6 +139,9 @@
 | 路径经过重解析点（junction / 符号链接 / 悬空 junction） | `FAILED / ERR_PATH_OUTSIDE_ROOT`（`read`/`stat` 抛错） |
 | 路径或根目录无法确认（EACCES/EPERM/ENAMETOOLONG/解析失败） | `FAILED / ERR_PATH_OUTSIDE_ROOT`（fail closed） |
 | **根目录身份漂移**（父级 junction 改写目标） | `FAILED / ERR_PATH_OUTSIDE_ROOT`；`beforeCommit` 注入的交错下两侧均无对象（窗口内竞争见限制 4） |
+| **已建立的根目录被删除/移动/被同名目录替换**（G0） | `FAILED / ERR_ROOT_CHANGED`（`read`/`stat`/`list` 抛错，`writeConditional` 返回 `FAILED`）；根不被重建 |
+| 根身份无法建立（`ino === 0`、根不是目录，G0） | 构造即拒绝：`ERR_ROOT_IDENTITY_UNSUPPORTED` / `ERR_PATH_OUTSIDE_ROOT` |
+| `rename` 之后根身份发生变化（C4，G0） | `UNKNOWN / ERR_OUTCOME_UNKNOWN`（副作用可能已发生，不得报 `COMMITTED`） |
 | 期望版本与磁盘不一致 | `CONFLICT / ERR_DOCUMENT_VERSION_CONFLICT` |
 | 创建时目标已存在（`expectedVersion=null`） | `CONFLICT` |
 | 版本无法读取（EPERM/EACCES/EBUSY） | `FAILED / ERR_PERMISSION_DENIED` 或 `ERR_STORAGE_IO`（不覆盖） |
@@ -141,8 +169,9 @@
    读取之间目标仍可能变化。实现用「有限次数重试 + 重新 `stat` 核验」把结果收敛到一致状态
    （有效版本 / `exists:false` / `ERR_STORAGE_IO`），但无法覆盖目标持续抖动（反复创建删除）
    的情形；`faults.afterStat` 只是测试注入点，不改变这一事实。
-6. **边界漂移后需重建 provider**：根目录被移动/改名或 junction 被改向后，既有 provider
-   会持续以 `ERR_PATH_OUTSIDE_ROOT` 拒绝，直到重新创建（这是刻意的 fail closed）。
+6. **边界漂移后需重建 provider**：根目录被删除/移动/被同名目录替换时返回 `ERR_ROOT_CHANGED`
+   （不是 `ERR_RESOURCE_NOT_FOUND`），junction 被改向时返回 `ERR_PATH_OUTSIDE_ROOT`；
+   两者都会持续拒绝直到重新创建 provider（刻意的 fail closed，且**不重建根**）。
 7. **每次操作多一次边界重建开销**（一次 `realpath` 或祖先回溯），对万级文件遍历的影响未测量。
 8. **Windows 8.3 短名**：若路径中出现 `PROGRA~1` 这类短名，可能被判定为「解析结果不一致」
    而拒绝（fail closed，方向安全，但属可用性限制）。
@@ -163,6 +192,19 @@
     这是刻意的保守取舍；如确有需要，应在插件层声明编码/转义策略，而不是放宽核心门禁。
 15. **编码判定为全量内存操作**：`read` 需要对整个 Buffer 做严格解码与逐字节扫描，
     `writeConditional` 也会整块解码既有目标以判定是否可覆盖；大文件成本未测量。
+16. **根身份令牌不是唯一性证明**（G0）：`dev:ino:birthtimeNs` 只是**检测**手段。
+    NTFS/ext4 会复用 inode；加入 `birthtimeNs` 可以区分"同名目录被重建"，但**无法排除**
+    卷级回滚/快照恢复导致三者全部复现的极端情形。补偿控制是"校验失败即拒绝 + 草稿永不
+    自动落盘 + 首次初始化串行"，而不是"令牌保证唯一"。
+17. **令牌依赖文件系统能力**（G0）：`ino === 0`（部分 FAT/exFAT、部分网络 FS）时拒绝建立
+    根身份（`ERR_ROOT_IDENTITY_UNSUPPORTED`）；`birthtimeNs === 0` 时令牌退化为 `dev:ino`，
+    仍可用但强度下降。**exFAT 移动盘等场景未实测**，属已知兼容性缺口。
+18. **C0–C4 之间仍有竞争窗口**（G0）：检查不是原子事务。若根在 C2 与 C3 之间被移走，
+    临时文件会随目录一起被移走，**路径型 API 无法再定位并回收它**（无 `openat`/句柄删除语义）。
+    已保证的是：不会提交到任何仍被授权的根、不累积、且错误报告为 `ERR_ROOT_CHANGED`；
+    被移走目录中可能留下一个 `.ws-tmp-*`，属已知残余。
+19. **每次操作多一次 bigint `stat`**（G0）：`read`/`stat`/`list`/写入各检查点都要读根令牌。
+    对万级文件遍历与慢盘的 p95 延迟尚未测量。
 16. **文本接口只支持 UTF-8**：GBK/Big5/Latin-1 等编码的文件当前只能被拒绝（只读）。
     支持其他编码需要插件声明 + 受控转码，而不是放宽核心门禁。
 17. **写入侧同样拒绝已识别签名**（F03）：以 `GIF8`/`%PDF-`/`PK\x03\x04` 等魔数开头的文本
