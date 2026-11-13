@@ -24,7 +24,47 @@ import type { PluginManifest, ViewerCapability } from '../../packages/contracts/
 
 const ROOT = process.cwd();
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/**
+ * 可控 Promise：由测试自己决定何时放行初始化/销毁，不靠 sleep 赌时序。
+ * 不用 `!` 断言赋值，避免类型剥离器处理 definite assignment。
+ */
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolveFn: ((value: T) => void) | undefined;
+  let rejectFn: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((res, rej) => {
+    resolveFn = res;
+    rejectFn = rej;
+  });
+  return {
+    promise,
+    resolve: (value) => resolveFn?.(value),
+    reject: (reason) => rejectFn?.(reason),
+  };
+}
+
+/** 让出事件循环一轮：只为让已发起的异步流程跑到下一个等待点，不是计时竞态。 */
+const yieldToEventLoop = () => new Promise<void>((r) => setTimeout(r, 0));
+
+/** 兜底：任何等待超过 2s 都视为测试自身缺陷，避免整个套件挂起。 */
+async function withDeadline<T>(promise: Promise<T>, label: string, ms = 2000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`测试内部等待超时（${ms}ms）：${label}`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 async function readSource(relPath: string): Promise<string> {
   return readFile(resolve(ROOT, relPath), 'utf8');
@@ -69,6 +109,7 @@ test('R01 [静态] ViewerBoundary 必须带 key（docId + providerId），否则
   // 现状：<ViewerBoundary providerId={viewer.providerId}> —— 无 key。
   // React 会复用同一个边界实例，state.message 一旦被置位，切换到另一篇文档
   // （或换用另一个查看器）后仍然显示"查看器渲染失败"，属于跨文档的状态污染。
+  // 本用例只断言源码结构，**不**声称浏览器中的重置行为已验证（见文件末尾 E2E 待验证）。
   assert.match(
     tag,
     /key=\{/,
@@ -83,26 +124,34 @@ test('R01 [静态] ViewerBoundary 必须带 key（docId + providerId），否则
 // ---------------------------------------------------------------------------
 test('R02-A [运行时] 并发 activate 只执行一次初始化', async () => {
   const runtime = createPluginRuntime();
+  const gate = deferred<void>();
   let inits = 0;
 
   const module: PluginModule = {
     async activate() {
       inits += 1;
-      await sleep(20); // 放大窗口：两个调用都会看到非 ACTIVE 状态
+      await gate.promise; // 初始化被测试卡住，直到显式放行
     },
     capabilities: { 'file.viewer': viewer },
   };
 
   assert.equal(runtime.register(manifestOf(), module).ok, true);
 
-  const [first, second] = await Promise.all([
-    runtime.activate('test.r1'),
-    runtime.activate('test.r1'),
-  ]);
+  // 同一同步执行内发起两个请求：第一个已进入初始化，第二个必须复用同一个
+  // in-flight 过程。计数器在 await 之前自增，因此放行前就已确定，无时序竞态。
+  const first = runtime.activate('test.r1');
+  const second = runtime.activate('test.r1');
+
+  gate.resolve();
+
+  const [firstRecord, secondRecord] = await withDeadline(
+    Promise.all([first, second]),
+    '两个并发 activate',
+  );
 
   assert.equal(inits, 1, `并发激活必须只初始化一次，实际执行了 ${inits} 次`);
-  assert.equal(first?.status, 'ACTIVE');
-  assert.equal(second?.status, 'ACTIVE');
+  assert.equal(firstRecord?.status, 'ACTIVE');
+  assert.equal(secondRecord?.status, 'ACTIVE');
 });
 
 // ---------------------------------------------------------------------------
@@ -110,12 +159,13 @@ test('R02-A [运行时] 并发 activate 只执行一次初始化', async () => {
 // ---------------------------------------------------------------------------
 test('R02-B [运行时] activate 期间的 deactivate 必须排队等待，不得并行执行销毁', async () => {
   const runtime = createPluginRuntime();
+  const gate = deferred<void>();
   const order: string[] = [];
 
   const module: PluginModule = {
     async activate() {
       order.push('init:start');
-      await sleep(30);
+      await gate.promise;
       order.push('init:end');
     },
     async deactivate() {
@@ -127,18 +177,32 @@ test('R02-B [运行时] activate 期间的 deactivate 必须排队等待，不�
   assert.equal(runtime.register(manifestOf(), module).ok, true);
 
   const activating = runtime.activate('test.r1');
-  // 激活尚未完成时请求停用：期望它排队，等初始化结束后再执行销毁
+  // 初始化卡在 gate 上时请求停用：正确实现应排队，等初始化结束再销毁
   const deactivating = runtime.deactivate('test.r1');
 
-  const [, deactivated] = await Promise.all([activating, deactivating]);
+  // 给停用请求一个执行机会：当前实现会在这里直接返回失败（不排队、不销毁）
+  await yieldToEventLoop();
+  const orderWhileBlocked = order.join(',');
 
-  assert.deepEqual(
-    order,
-    ['init:start', 'init:end', 'deinit'],
-    '销毁不得早于初始化结束，也不得被丢弃',
+  gate.resolve();
+
+  const [, deactivated] = await withDeadline(
+    Promise.all([activating, deactivating]),
+    'activate 与 deactivate 串行完成',
   );
-  assert.equal(deactivated.ok, true, '初始化完成后停用应当成功');
-  assert.equal(runtime.status('test.r1')?.status, 'INACTIVE');
+
+  // 汇总断言：顺序、返回值、最终状态一次比较完。
+  // 前一项不满足也能在 actual 里同时看到后两项，不会因 fail-fast 丢掉信息。
+  const snapshot = {
+    order: order.join(','),
+    ok: deactivated.ok,
+    finalStatus: runtime.status('test.r1')?.status,
+  };
+  assert.deepEqual(
+    snapshot,
+    { order: 'init:start,init:end,deinit', ok: true, finalStatus: 'INACTIVE' },
+    `串行化不满足（卡住期间 order=${orderWhileBlocked}）：期望"初始化结束后才销毁、停用成功、最终 INACTIVE"`,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -157,12 +221,12 @@ test('R03a [运行时] 注册与构造不产生激活副作用', async () => {
 
   assert.equal(registered.ok, true);
   assert.equal(registered.record?.status, 'REGISTERED');
-  await sleep(10);
+  await yieldToEventLoop();
   assert.equal(inits, 0, '注册阶段不得执行插件初始化');
   assert.equal(runtime.providersOf('file.viewer').length, 0, '未激活的插件不得提供能力');
 });
 
-test('R03b [运行时] 已 ACTIVE 时重复 activate 幂等（StrictMode effect replay 的最小保障）', async () => {
+test('R03b [运行时] 已 ACTIVE 后重复 activate 幂等（不构成 StrictMode 的 E2E 证据）', async () => {
   const runtime = createPluginRuntime();
   let inits = 0;
 
@@ -173,7 +237,8 @@ test('R03b [运行时] 已 ACTIVE 时重复 activate 幂等（StrictMode effect 
     capabilities: { 'file.viewer': viewer },
   });
 
-  // 模拟 effect 被重复执行：同一插件多次 activate
+  // 只验证一条运行时性质：已 ACTIVE 后再次 activate 不会重复初始化。
+  // 它**不是** StrictMode 双挂载的端到端证据——真实 effect 重放需在浏览器观测。
   await runtime.activate('test.r1');
   await runtime.activate('test.r1');
   await runtime.activate('test.r1');
@@ -195,6 +260,7 @@ test('R03c [静态] Shell 注册表构造时必须无启动副作用（不得在
   // 现状：构造函数里 `pending.push(runtime.activate(...))` 会立即启动插件。
   // 后果：StrictMode 下 useState 初始化器/组件体被调用两次时会产生两次启动，
   // 且"创建注册表"这个动作本身带了不可回滚的副作用（无法在构造阶段被丢弃）。
+  // 同理：只断言构造段文本，**不**声称 StrictMode 双挂载已被浏览器验证。
   assert.equal(
     /runtime\.activate\(/.test(ctorBody),
     false,
