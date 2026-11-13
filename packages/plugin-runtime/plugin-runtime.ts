@@ -143,6 +143,14 @@ export function createPluginRuntime(options: PluginRuntimeOptions = {}): PluginR
    * - 链按 pluginId 分开，不同插件之间没有全局锁，互不阻塞。
    */
   const lifecycleChains = new Map<string, Promise<unknown>>();
+  /**
+   * 正在进行的**激活批次**（S10-A-R2.1）。
+   *
+   * 同一批连续的 activate 共享这里的一次初始化：成功共享 ACTIVE，失败共享 QUARANTINED，
+   * 不会因为上一次失败就让排队请求自动重跑钩子。
+   * `deactivate` 会作废该批次，因此"停用后的再激活"不会被合并掉。
+   */
+  const inFlightActivations = new Map<string, Promise<PluginRecord | undefined>>();
 
   function log(event: string, record: Partial<PluginRecord>, extra: Record<string, unknown> = {}) {
     logger?.log({
@@ -313,9 +321,13 @@ export function createPluginRuntime(options: PluginRuntimeOptions = {}): PluginR
 
     async activate(pluginId: string) {
       if (!records.has(pluginId)) return undefined;
-      // 串行化：并发的第二次 activate 会排到第一次之后，届时状态已是 ACTIVE，
-      // 直接返回而不再调用插件钩子（见 serializeLifecycle 注释）。
-      return serializeLifecycle<PluginRecord | undefined>(pluginId, async () => {
+
+      // 同一批连续的 activate 合并到同一次初始化：期间到达的请求直接复用该 Promise，
+      // 成功与失败都共享结果（失败时不自动重试；显式的新请求才走下一次尝试）。
+      const inFlight = inFlightActivations.get(pluginId);
+      if (inFlight) return inFlight;
+
+      const batch = serializeLifecycle<PluginRecord | undefined>(pluginId, async () => {
         const record = records.get(pluginId);
         if (!record) return undefined;
         if (record.status === 'ACTIVE') return record;
@@ -359,12 +371,23 @@ export function createPluginRuntime(options: PluginRuntimeOptions = {}): PluginR
         }
         return record;
       });
+
+      inFlightActivations.set(pluginId, batch);
+      try {
+        return await batch;
+      } finally {
+        // 只清理自己这一批：期间若 deactivate 作废批次并开了新批，不能误删
+        if (inFlightActivations.get(pluginId) === batch) inFlightActivations.delete(pluginId);
+      }
     },
 
     async deactivate(pluginId: string, opts: { force?: boolean } = {}) {
       if (!records.has(pluginId)) {
         return { ok: false, errorCode: 'ERR_PLUGIN_NOT_REGISTERED' } as DeactivateResult;
       }
+      // 作废当前激活批次：此后到达的 activate 不得并入"停用之前"的初始化，
+      // 否则"停用 → 再启用"会被合并吞掉（R02-D）。
+      inFlightActivations.delete(pluginId);
       // 与 activate 共用同一条链：仍在 ACTIVATING 时发来的停用会等初始化结束，
       // 然后按真实状态处理；停用期间再次 activate 也会排在它之后（不会被覆盖）。
       return serializeLifecycle<DeactivateResult>(pluginId, async () => {

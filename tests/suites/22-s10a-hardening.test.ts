@@ -206,6 +206,99 @@ test('R02-B [运行时] activate 期间的 deactivate 必须排队等待，不�
 });
 
 // ---------------------------------------------------------------------------
+// R02-C：同一批并发激活失败时，只能初始化一次，后续请求共享该次失败
+// ---------------------------------------------------------------------------
+test('R02-C [运行时] 并发激活失败：钩子只跑一次，两个请求共享失败结果', async () => {
+  const runtime = createPluginRuntime();
+  const gate = deferred<void>();
+  let inits = 0;
+
+  runtime.register(manifestOf(), {
+    async activate() {
+      inits += 1;
+      await gate.promise; // 由测试主动 reject
+    },
+    capabilities: { 'file.viewer': viewer },
+  });
+
+  const first = runtime.activate('test.r1');
+  const second = runtime.activate('test.r1');
+
+  gate.reject(new Error('init boom'));
+
+  const [firstRecord, secondRecord] = await withDeadline(
+    Promise.all([first, second]),
+    '并发 activate 失败',
+  );
+
+  assert.equal(inits, 1, `同一批次只能初始化一次，实际 ${inits} 次`);
+  assert.equal(firstRecord?.status, 'QUARANTINED');
+  assert.equal(secondRecord?.status, 'QUARANTINED', '第二个请求必须共享同一次失败，而不是自行重试');
+  assert.equal(firstRecord?.lastErrorCode, 'ERR_PLUGIN_CRASHED');
+  assert.equal(runtime.status('test.r1')?.status, 'QUARANTINED');
+
+  // 批次结束后由调用方**显式**发起的新请求：按既有重试策略允许再次尝试
+  const retried = await withDeadline(runtime.activate('test.r1'), '显式重试');
+  assert.equal(inits, 2, '显式新请求可以重试一次（不是自动重试）');
+  assert.equal(retried?.status, 'QUARANTINED');
+});
+
+// ---------------------------------------------------------------------------
+// R02-D：activate → deactivate → activate 不得跨停用合并
+// ---------------------------------------------------------------------------
+test('R02-D [运行时] activate → deactivate → activate：停用后的再激活不得被合并掉', async () => {
+  const runtime = createPluginRuntime();
+  const gate = deferred<void>();
+  const order: string[] = [];
+  let inits = 0;
+  let deinits = 0;
+
+  runtime.register(manifestOf(), {
+    async activate() {
+      inits += 1;
+      order.push('init:start');
+      await gate.promise;
+      order.push('init:end');
+    },
+    async deactivate() {
+      deinits += 1;
+      order.push('deinit');
+    },
+    capabilities: { 'file.viewer': viewer },
+  });
+
+  const first = runtime.activate('test.r1');
+  const off = runtime.deactivate('test.r1');
+  const again = runtime.activate('test.r1');
+
+  gate.resolve();
+
+  const [, offResult] = await withDeadline(
+    Promise.all([first, off, again]),
+    'activate → deactivate → activate',
+  );
+
+  const snapshot = {
+    order: order.join(','),
+    inits,
+    deinits,
+    offOk: offResult.ok,
+    finalStatus: runtime.status('test.r1')?.status,
+  };
+  assert.deepEqual(
+    snapshot,
+    {
+      order: 'init:start,init:end,deinit,init:start,init:end',
+      inits: 2,
+      deinits: 1,
+      offOk: true,
+      finalStatus: 'ACTIVE',
+    },
+    `生命周期顺序/次数/终态不符合预期：${JSON.stringify(snapshot)}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
 // R03：注册表创建无启动副作用；StrictMode effect replay 不重复激活
 // ---------------------------------------------------------------------------
 test('R03a [运行时] 注册与构造不产生激活副作用', async () => {
