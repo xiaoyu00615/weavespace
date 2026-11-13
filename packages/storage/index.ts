@@ -18,7 +18,9 @@ export {
   type PathCheck,
   // 根目录连续性（S11-A1-G0）：身份令牌、连续性断言与分阶段检查点类型
   assertRootContinuity,
+  assertRootStillAbsent,
   buildRootToken,
+  claimRootDirectory,
   rootTokenOf,
   rootChangedError,
   isPathInsideRoot,

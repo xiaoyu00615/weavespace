@@ -537,6 +537,147 @@ test('G0-15b [INJECT] C3 失败后不残留临时文件', async () => {
 });
 
 // ---------------------------------------------------------------------------
+// G0-17 [FS] 受控初始化不得认领外部创建的根（G0-R1 缺口 1）
+// ---------------------------------------------------------------------------
+test('G0-17 根在受控初始化前被外部创建：读/首次创建/覆盖都必须拒绝', async () => {
+  await withBase(async ({ root }) => {
+    assert.equal(exists(root), false);
+    const provider = createLocalProvider({ rootDir: root });
+
+    // 外部程序抢先创建根并写入文件
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'a.md'), '# EXTERNAL\n', 'utf8');
+
+    assert.equal(
+      await errorCodeOf(() => provider.read('a.md')),
+      'ERR_ROOT_CHANGED',
+      '不得读取未经本 Provider 认领的根',
+    );
+    assert.equal(await errorCodeOf(() => provider.stat('a.md')), 'ERR_ROOT_CHANGED');
+    assert.equal(await errorCodeOf(() => provider.list()), 'ERR_ROOT_CHANGED');
+
+    const created = await provider.writeConditional('b.md', '# B\n', null);
+    assert.equal(created.status, 'FAILED', '不得把外部根当作自己的根写入');
+    assert.equal(created.errorCode, 'ERR_ROOT_CHANGED');
+    assert.equal(exists(join(root, 'b.md')), false);
+
+    const overwrite = await provider.writeConditional('a.md', '# OVERWRITE\n', sha256('# EXTERNAL\n'));
+    assert.notEqual(overwrite.status, 'COMMITTED');
+    assert.equal(overwrite.errorCode, 'ERR_ROOT_CHANGED');
+    assert.equal(await readFile(join(root, 'a.md'), 'utf8'), '# EXTERNAL\n', '外部内容不得被覆盖');
+  });
+});
+
+test('G0-17b 另一个 Provider 已认领的根：后续 Provider 不得再认领', async () => {
+  await withBase(async ({ root }) => {
+    const first = createLocalProvider({ rootDir: root });
+    const second = createLocalProvider({ rootDir: root });
+    assert.equal((await first.writeConditional('a.md', 'A\n', null)).status, 'COMMITTED');
+
+    assert.equal(await errorCodeOf(() => second.read('a.md')), 'ERR_ROOT_CHANGED');
+    const secondWrite = await second.writeConditional('b.md', 'B\n', null);
+    assert.equal(secondWrite.status, 'FAILED');
+    assert.equal(secondWrite.errorCode, 'ERR_ROOT_CHANGED');
+    assert.equal(exists(join(root, 'b.md')), false);
+  });
+});
+
+test('G0-17c [INJECT] C1 之后根被外部创建：首次初始化必须 fail-closed', async () => {
+  await withBase(async ({ root }) => {
+    assert.equal(exists(root), false);
+    const provider = createLocalProvider({
+      rootDir: root,
+      faults: {
+        atCheckpoint: (id) => {
+          // 在"检查通过、尚未创建"的窗口内由外部抢先创建根
+          if (id === 'C1') mkdirSync(root);
+        },
+      },
+    });
+    const result = await provider.writeConditional('a.md', 'A\n', null);
+    assert.equal(result.status, 'FAILED');
+    assert.equal(result.errorCode, 'ERR_ROOT_CHANGED');
+    assert.equal(exists(join(root, 'a.md')), false, '竞争失败时不得写入');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G0-18 [INJECT] 版本读取期间根失效：优先返回根错误（G0-R1 缺口 2）
+// ---------------------------------------------------------------------------
+test('G0-18 版本读取期间根被删除：必须优先返回根错误而不是 CONFLICT', async () => {
+  await withBase(async ({ root }) => {
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'a.md'), '# A\n', 'utf8');
+    const provider = createLocalProvider({
+      rootDir: root,
+      faults: {
+        afterVersionRead: () => rmSync(root, { recursive: true, force: true }),
+      },
+    });
+
+    const result = await provider.writeConditional('a.md', '# B\n', sha256('# A\n'));
+    assert.equal(result.status, 'FAILED', '根失效不得被报成版本冲突');
+    assert.notEqual(result.errorCode, 'ERR_DOCUMENT_VERSION_CONFLICT');
+    assert.equal(result.errorCode, 'ERR_ROOT_CHANGED');
+    assert.equal(exists(root), false, '不得重建根');
+    assert.deepEqual(tempFilesIn(root), [], '不得产生临时文件');
+  });
+});
+
+test('G0-18b 未失效时版本冲突语义保持不变', async () => {
+  await withBase(async ({ root }) => {
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'a.md'), '# A v2\n', 'utf8');
+    const provider = createLocalProvider({ rootDir: root });
+    const stale = await provider.writeConditional('a.md', '# B\n', sha256('# A\n'));
+    assert.equal(stale.status, 'CONFLICT');
+    assert.equal(stale.errorCode, 'ERR_DOCUMENT_VERSION_CONFLICT');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G0-19/G0-20 [FS] 首次初始化后的状态不得倒退（G0-R1 缺口 4）
+// ---------------------------------------------------------------------------
+test('G0-19 受控初始化成功后根被替换：仍保持已建立，不得退回可初始化重新认领', async () => {
+  await withBase(async ({ base, root }) => {
+    const provider = createLocalProvider({ rootDir: root });
+    assert.equal((await provider.writeConditional('notes/a.md', 'A\n', null)).status, 'COMMITTED');
+
+    const moved = join(base, 'moved-root');
+    await rename(root, moved);
+    await mkdir(root, { recursive: true }); // 同名空目录
+
+    const second = await provider.writeConditional('notes/b.md', 'B\n', null);
+    assert.equal(second.status, 'FAILED');
+    assert.equal(second.errorCode, 'ERR_ROOT_CHANGED');
+    assert.equal(exists(join(root, 'notes', 'b.md')), false, '不得认领替换后的根');
+
+    const third = await provider.writeConditional('notes/c.md', 'C\n', null);
+    assert.equal(third.status, 'FAILED', '后续请求仍必须失败（状态未回退）');
+    assert.equal(exists(join(root, 'notes')), false, '不得在新根里创建任何目录');
+  });
+});
+
+test('G0-20 根变为普通文件后：拒绝写入且不重置身份', async () => {
+  await withBase(async ({ root }) => {
+    await mkdir(root, { recursive: true });
+    const provider = createLocalProvider({ rootDir: root });
+    assert.equal((await provider.writeConditional('a.md', 'A\n', null)).status, 'COMMITTED');
+
+    await rm(root, { recursive: true, force: true });
+    await writeFile(root, 'not-a-directory', 'utf8');
+
+    const result = await provider.writeConditional('b.md', 'B\n', null);
+    assert.equal(result.status, 'FAILED');
+    assert.equal(result.errorCode, 'ERR_ROOT_CHANGED');
+    assert.equal(await readFile(root, 'utf8'), 'not-a-directory', '不得改动替换后的对象');
+
+    const again = await provider.writeConditional('c.md', 'C\n', null);
+    assert.equal(again.status, 'FAILED', '不得自动重置身份后继续写入');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // G0-16 [UNIT] 新错误码进入注册表且映射不被折叠
 // ---------------------------------------------------------------------------
 test('G0-16 根连续性错误码必须注册，并在映射中保持原样', () => {

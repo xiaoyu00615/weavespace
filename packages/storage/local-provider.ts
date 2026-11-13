@@ -25,6 +25,7 @@ import { dirname, join } from 'node:path';
 import type { SaveResult } from '../contracts/types.ts';
 import {
   assertRootContinuity,
+  claimRootDirectory,
   createRootBoundary,
   isPathInsideRoot,
   isUntrustedResolution,
@@ -61,6 +62,11 @@ export interface StorageFaultHooks {
    * 抛错即视为该检查点失败（C0–C3 → FAILED，C4 → UNKNOWN）。
    */
   atCheckpoint?: (checkpoint: RootCheckpoint) => void;
+  /**
+   * 版本读取完成、尚未据此判定 CONFLICT/继续写入时执行（G0-R1）。
+   * 用于确定性注入"版本读取期间根失效"，验证根错误优先于版本冲突。
+   */
+  afterVersionRead?: () => void;
 }
 
 export interface LocalProviderOptions {
@@ -270,6 +276,16 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       return { status: 'FAILED', errorCode: mapStorageError(err) };
     }
 
+    // 版本读取是异步的，期间根可能失效（G0-R1 缺口 2）。
+    // 根错误必须**优先于**版本冲突：否则会把"项目根没了"报成 CONFLICT，
+    // 引导用户去做一次注定失败的"用磁盘覆盖草稿"。
+    try {
+      faults.afterVersionRead?.();
+      assertRootContinuity(boundary, establishedToken);
+    } catch (err) {
+      return { status: 'FAILED', errorCode: mapStorageError(err) };
+    }
+
     // S5-02：已识别的非文本目标一律拒绝覆盖（不得用文本 API 改写二进制/非 UTF-8 文件）
     if (target.exists && target.textFailure) {
       return { status: 'FAILED', errorCode: target.textFailure.errorCode };
@@ -301,18 +317,18 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       checkpoint('C1');
       assertRootContinuity(boundary, establishedToken);
 
+      // 受控初始化（G0-R1 缺口 1）：必须由本 Provider 逐级非递归创建并当场认领，
+      // 绝不能用 recursive mkdir 把"别人已经建好的根"当成自己的。竞争失败即 fail-closed。
+      if (establishedToken === null) {
+        establishedToken = claimRootDirectory(boundary);
+      }
+
       await mkdir(dirname(check.absolutePath), { recursive: true });
 
       // mkdir 之后重新解析：新建的目录本身也要逐级校验，且落盘必须用这次的结果
       const afterMkdir = resolveInBoundary(boundary, path);
       if (!afterMkdir.ok) {
         return { status: 'FAILED', errorCode: afterMkdir.errorCode };
-      }
-
-      // 首次初始化：根由本次写入创建，立即认领身份并转为 ESTABLISHED（G0-02.2）。
-      // 失败路径不会来到这里，因此"首次初始化失败"不会留下错误的已建立状态。
-      if (establishedToken === null) {
-        establishedToken = rootTokenOf(boundary.canonicalRoot);
       }
 
       // C2：mkdir 之后、写临时文件之前

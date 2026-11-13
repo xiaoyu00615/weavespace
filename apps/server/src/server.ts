@@ -496,7 +496,17 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
                 ? 'UNKNOWN'
                 : 'FAILED';
 
-        const httpStatus = status === 'COMMITTED' ? 200 : status === 'CONFLICT' ? 409 : status === 'UNKNOWN' ? 202 : 422;
+        const httpStatus =
+          status === 'COMMITTED'
+            ? 200
+            : status === 'CONFLICT'
+              ? 409
+              : status === 'UNKNOWN'
+                ? 202
+                : outcome.errorCode === 'ERR_ROOT_CHANGED' ||
+                    outcome.errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED'
+                  ? 503
+                  : 422;
         sendJson(res, httpStatus, {
           status,
           errorCode: outcome.errorCode,
@@ -595,11 +605,13 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         ? 409
         : errorCode === 'ERR_PERMISSION_DENIED' || errorCode === 'ERR_RESOURCE_IDENTITY_CONFLICT'
           ? 403
-          : errorCode === 'ERR_RESOURCE_NOT_FOUND' || errorCode === 'ERR_DOCUMENT_NOT_FOUND'
-            ? 404
-            : status === 'UNKNOWN'
-              ? 202
-              : 422;
+          : errorCode === 'ERR_ROOT_CHANGED' || errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED'
+            ? 503
+            : errorCode === 'ERR_RESOURCE_NOT_FOUND' || errorCode === 'ERR_DOCUMENT_NOT_FOUND'
+              ? 404
+              : status === 'UNKNOWN'
+                ? 202
+                : 422;
     sendJson(res, httpStatus, { status: 'REJECTED', errorCode, message: '命令被拒绝' });
   }
 

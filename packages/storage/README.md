@@ -120,17 +120,28 @@
 | 令牌 | `dev:ino:birthtimeNs`，全部来自 `statSync(path, { bigint: true })`，只做字符串拼接 |
 | INITIALIZABLE | Provider 构造时根不存在（`boundary.verified === false`）：允许**首次**合法写入创建根 |
 | ESTABLISHED | 已捕获根身份；根消失/被同名目录替换后**一律拒绝**，绝不重建 |
+| 受控初始化 | 首次创建必须由本 Provider **逐级非递归** `mkdir` 完成并当场认领，竞争失败即 fail-closed |
 | C0 | 目标路径解析后、版本读取前 |
 | C1 | `mkdir` 之前（ESTABLISHED 根失效时必须在此拦截，否则就是重建） |
 | C2 | `mkdir` 之后、写临时文件之前（含"目标父目录仍在授权根内"复核） |
 | C3 | 最终 `rename` 之前 |
 | C4 | `rename` 之后、确认提交结果之前（失败只能报 `UNKNOWN`） |
 
+`INITIALIZABLE` **不等于**"根可以被别人创建"：只要根出现在 Provider 构造之后，就说明它不是
+本次受控初始化的产物，`read`/`stat`/`list`/`writeConditional` 一律 `ERR_ROOT_CHANGED`。
+因此 `recursive mkdir` 不能用于首次创建——它对"已存在"静默成功，无法区分"我刚建"与
+"别人早建"。`claimRootDirectory` 逐级 `mkdirSync`，`EEXIST` 即判定为竞争失败并回滚本次
+已创建的空目录。
+
 首次初始化在进程内**串行**（`serializeFirstInit`），并发首写不会各自认领根身份；
-初始化失败不会残留"已建立"状态。首次写入创建根成功后立即捕获令牌并转为 ESTABLISHED。
+初始化失败不会残留"已建立"状态，但**一旦根由本 Provider 创建并认领，后续写入失败也不会
+退回 INITIALIZABLE**（否则等于允许重新认领另一个根）。
 
 `read`/`stat`/`list` 同样先做连续性断言：已建立根消失时抛 `ERR_ROOT_CHANGED`，
 **不得**伪装成"文件不存在"或"空目录"。
+
+版本读取（`inspectExisting`）是异步的，期间根可能失效：完成后会**再断一次连续性**，
+且该判定优先于 `CONFLICT` 返回。
 
 ## 失败路径
 | 情形 | 返回 |
@@ -141,6 +152,8 @@
 | **根目录身份漂移**（父级 junction 改写目标） | `FAILED / ERR_PATH_OUTSIDE_ROOT`；`beforeCommit` 注入的交错下两侧均无对象（窗口内竞争见限制 4） |
 | **已建立的根目录被删除/移动/被同名目录替换**（G0） | `FAILED / ERR_ROOT_CHANGED`（`read`/`stat`/`list` 抛错，`writeConditional` 返回 `FAILED`）；根不被重建 |
 | 根身份无法建立（`ino === 0`、根不是目录，G0） | 构造即拒绝：`ERR_ROOT_IDENTITY_UNSUPPORTED` / `ERR_PATH_OUTSIDE_ROOT` |
+| **受控初始化前根已被外部创建**（G0-R1） | `read`/`stat`/`list` 抛 `ERR_ROOT_CHANGED`；`writeConditional` 返回 `FAILED / ERR_ROOT_CHANGED`，不写入、不认领 |
+| **版本读取期间根失效**（G0-R1） | `FAILED / ERR_ROOT_CHANGED`（优先于 `CONFLICT`） |
 | `rename` 之后根身份发生变化（C4，G0） | `UNKNOWN / ERR_OUTCOME_UNKNOWN`（副作用可能已发生，不得报 `COMMITTED`） |
 | 期望版本与磁盘不一致 | `CONFLICT / ERR_DOCUMENT_VERSION_CONFLICT` |
 | 创建时目标已存在（`expectedVersion=null`） | `CONFLICT` |
@@ -205,6 +218,12 @@
     被移走目录中可能留下一个 `.ws-tmp-*`，属已知残余。
 19. **每次操作多一次 bigint `stat`**（G0）：`read`/`stat`/`list`/写入各检查点都要读根令牌。
     对万级文件遍历与慢盘的 p95 延迟尚未测量。
+20. **INITIALIZABLE 不能跟随外部创建的根**（G0-R1）：若项目根由用户/外部程序先创建，
+    Provider 不会认领它，会持续以 `ERR_ROOT_CHANGED` 拒绝，直到重新创建 Provider。
+    这是刻意的 fail-closed：无法证明该根属于本次受控初始化时不得使用。
+21. **受控初始化按"从锚点逐级非递归创建"实现**（G0-R1）：若中间某级在创建瞬间被外部
+    同时创建，`EEXIST` 会判定为竞争失败并回滚本次已建的空目录（回滚是 best effort，
+    目录非空时保留现场）。跨进程竞争不做重试，直接失败。
 16. **文本接口只支持 UTF-8**：GBK/Big5/Latin-1 等编码的文件当前只能被拒绝（只读）。
     支持其他编码需要插件声明 + 受控转码，而不是放宽核心门禁。
 17. **写入侧同样拒绝已识别签名**（F03）：以 `GIF8`/`%PDF-`/`PK\x03\x04` 等魔数开头的文本

@@ -26,7 +26,7 @@
  *
  * 已知平台限制见 storage/README.md「路径安全」章节。
  */
-import { lstatSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, mkdirSync, realpathSync, rmdirSync, statSync } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 
@@ -274,8 +274,9 @@ export function rootTokenOf(absolutePath: string): string {
 /**
  * 根连续性断言（C0–C4 与读链路共用）。
  *
- * - `establishedToken === null`：根尚未建立（Provider 构造时根不存在），
- *   只做既有的边界漂移检查，保留"首次写入可初始化"的既有行为；
+ * - `establishedToken === null`：根尚未建立（Provider 构造时根不存在）。
+ *   除既有的边界漂移检查外，**必须仍然不存在**：一旦出现，说明有外部程序抢先创建，
+ *   本 Provider 不得读取、也不得在写入时把别人的根认领成自己的受控初始化结果。
  * - 已建立：先确认根仍存在且令牌一致，再做边界漂移检查。
  *   顺序不可颠倒 —— 根缺失时 `assertBoundaryStable` 会"锚定祖先"而误判通过。
  */
@@ -285,6 +286,7 @@ export function assertRootContinuity(
 ): void {
   if (establishedToken === null) {
     assertBoundaryStable(boundary);
+    assertRootStillAbsent(boundary);
     return;
   }
   const current = rootTokenOf(boundary.canonicalRoot);
@@ -294,6 +296,73 @@ export function assertRootContinuity(
     );
   }
   assertBoundaryStable(boundary);
+}
+
+/** 条目是否存在；除 ENOENT 外无法判定时按 I/O 错误上抛（fail closed）。 */
+function entryExists(absPath: string): boolean {
+  try {
+    lstatSync(absPath);
+    return true;
+  } catch (err) {
+    if (codeOf(err) === 'ENOENT') return false;
+    throw toStorageError(err);
+  }
+}
+
+/** INITIALIZABLE 的前提：根确实还不存在（外部创建即视为不可认领）。 */
+export function assertRootStillAbsent(boundary: RootBoundary): void {
+  if (entryExists(boundary.literalRoot)) {
+    throw rootChangedError(
+      `根目录在受控初始化之前已存在（外部创建），拒绝认领: ${boundary.literalRoot}`,
+    );
+  }
+}
+
+/**
+ * 受控初始化：由本 Provider 逐级、**非递归**地创建根目录，成功后返回根身份令牌。
+ *
+ * 为什么不能只用 `mkdir(..., { recursive: true })`：recursive mkdir 对"已存在"是静默成功的，
+ * 无法区分"我刚创建"与"别人早已创建"，于是会把外部根认领成自己的根。
+ * 逐级非递归 `mkdirSync` 在已存在时抛 EEXIST，天然具备认领语义；任何一级竞争失败都
+ * fail-closed（无法安全判定归属时不得继续）。
+ *
+ * 失败时回滚本函数自己创建的空目录（best effort），不留半成品结构。
+ */
+export function claimRootDirectory(boundary: RootBoundary): string {
+  if (boundary.verified) {
+    throw rootChangedError('根已确证存在，不应走受控初始化');
+  }
+  assertRootStillAbsent(boundary);
+
+  const relativePath = relative(boundary.anchor, boundary.canonicalRoot);
+  const segments = relativePath.split(sep).filter((segment) => segment.length > 0 && segment !== '.');
+  if (segments.length === 0) {
+    throw rootChangedError('根锚点与根路径相同，无法进行受控初始化');
+  }
+
+  const created: string[] = [];
+  let current = boundary.anchor;
+  try {
+    for (const segment of segments) {
+      current = join(current, segment);
+      mkdirSync(current); // 非递归：仅在不存在时成功
+      created.push(current);
+    }
+    return rootTokenOf(boundary.canonicalRoot);
+  } catch (err) {
+    for (const dir of created.reverse()) {
+      try {
+        rmdirSync(dir);
+      } catch {
+        // 非空或已被占用：保留现场，不掩盖原始错误
+      }
+    }
+    if (codeOf(err) === 'EEXIST') {
+      throw rootChangedError(`根目录初始化竞争：${current} 已被其他进程创建，拒绝认领`);
+    }
+    if ((err as { errorCode?: string }).errorCode) throw err;
+    throw toStorageError(err);
+  }
 }
 
 /** 供写入链路校验「临时文件/目标」仍在授权根内（重解析点改向后不得写出）。 */
