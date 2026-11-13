@@ -8,6 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -194,4 +195,49 @@ test('H-06 根正常时保存仍为 200 / COMMITTED', async () => {
     assert.equal(await (await import('node:fs/promises')).readFile(join(root, 'a.md'), 'utf8'), '# ok\n');
     assert.equal(sha('# ok\n').length, saved.body.contentVersion.length);
   });
+});
+
+// ---------------------------------------------------------------------------
+// H-07 /api/resources：根失效 → 503，且不泄露本机绝对路径（G0-R2）
+// ---------------------------------------------------------------------------
+test('H-07 /api/resources 在根失效后返回 503，不泄露路径也不重建根', async () => {
+  await withServer(async ({ api, root, removeRoot }) => {
+    const before = await api('/api/resources');
+    assert.equal(before.status, 200, '前置：根正常时资源树必须可用');
+
+    await removeRoot();
+
+    const res = await api('/api/resources');
+    assert.equal(res.status, 503, '根不可用时资源树必须是 503，而不是 500');
+    assert.equal(res.body.errorCode, 'ERR_ROOT_CHANGED', '必须保留可识别的根错误码');
+
+    // 不得返回任何本机绝对路径（含盘符路径、真实根目录、其父目录）
+    const text = JSON.stringify(res.body);
+    assert.equal(text.includes(root), false, `响应不得包含真实根目录: ${text}`);
+    assert.doesNotMatch(text, /[A-Za-z]:[\\/]/, `响应不得出现盘符路径: ${text}`);
+    const message = typeof res.body.message === 'string' ? res.body.message : '';
+    assert.doesNotMatch(message, /[A-Za-z]:[\\/]/, `错误消息不得包含路径: ${message}`);
+
+    assert.equal(existsSync(root), false, '不得因资源树请求而重建根目录');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H-08 /api/resources：根正常 → 200 + 正确文件树（回归护栏）
+// ---------------------------------------------------------------------------
+test('H-08 /api/resources 根正常时返回 200 与文件树', async () => {
+  await withServer(
+    async ({ api }) => {
+      const res = await api('/api/resources');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.status, 'APPLIED');
+      assert.ok(Array.isArray(res.body.nodes));
+      const flat = JSON.stringify(res.body.nodes);
+      assert.match(flat, /a\.md/);
+      assert.match(flat, /b\.md/);
+      // 二进制/非文本不进树（沿用既有规则）
+      assert.doesNotMatch(flat, /c\.png/);
+    },
+    { files: { 'a.md': '# A\n', 'docs/b.md': '# B\n', 'bin/c.png': 'not-listed' } },
+  );
 });

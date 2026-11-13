@@ -39,8 +39,15 @@ node apps/server/src/main.ts <项目根目录> [端口]     # 或 npm run start:
 | 关闭被未保存内容阻止 | 409 | `REJECTED` + `ERR_DOCUMENT_DIRTY` |
 | 未经确认的重载 | 409 | `REJECTED` + `ERR_DOCUMENT_DIRTY` |
 | 重载时磁盘不可读/已删除 | 404 | `REJECTED`（草稿保持） |
+| **项目根已失效/被替换**（G0-R2） | 503 | `FAILED` / `REJECTED` + `ERR_ROOT_CHANGED` |
 
 `UNKNOWN` 既不是成功也不是失败：不写收据、不自动重试，需人工核对磁盘。
+
+**根连续性错误统一为 503**（`ERR_ROOT_CHANGED` / `ERR_ROOT_IDENTITY_UNSUPPORTED`），
+覆盖 `/api/open`、`/api/save`、`/api/resources`、`/api/document/disk`、`/api/reload`。
+未预期异常不再回传原始 `message`（Storage 的根错误消息含本机绝对路径）：
+已知领域错误码按语义映射状态并使用固定文案，未知异常收敛为 `500 / ERR_COMMAND_INTERNAL / 内部错误`。
+因此响应体中不会出现 `rootDir`、`canonicalRoot` 或任何盘符路径。
 
 ## 安全边界
 

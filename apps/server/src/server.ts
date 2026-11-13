@@ -28,6 +28,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createCommandBus, type CommandBus } from '../../../packages/command/index.ts';
+import { ERROR_CODES, type ErrorCode } from '../../../packages/contracts/index.ts';
 import { createDocumentService, type DocumentService } from '../../../packages/document/index.ts';
 import { createPermissionService, type PermissionService } from '../../../packages/permission/index.ts';
 import {
@@ -112,6 +113,49 @@ class HttpError extends Error {
     this.statusCode = statusCode;
     this.errorCode = errorCode;
   }
+}
+
+/**
+ * 对外错误文案（G0-R2）。
+ *
+ * 未预期异常一律不得把原始 message 回给浏览器：Storage 的根错误消息里带有本机绝对路径
+ * （例如 `根目录已不存在，无法确认根身份: C:\Users\...\project`）。这里用固定文案替代，
+ * 错误码保持可识别，便于调用方与 UI 分流。
+ */
+const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
+  ERR_ROOT_CHANGED: '项目根目录不可用（已失效或被替换）',
+  ERR_ROOT_IDENTITY_UNSUPPORTED: '项目根目录身份无法确认',
+  ERR_PATH_OUTSIDE_ROOT: '路径不在允许范围内',
+  ERR_PERMISSION_DENIED: '权限不足',
+  ERR_RESOURCE_NOT_FOUND: '资源不存在',
+  ERR_DOCUMENT_NOT_FOUND: '文档会话不存在',
+  ERR_STORAGE_IO: '存储访问失败',
+  ERR_RESOURCE_NOT_TEXT: '资源不是可编辑文本',
+  ERR_ENCODING_UNSUPPORTED: '资源编码不受支持',
+  ERR_SAVE_FAILED: '保存失败',
+  ERR_DOCUMENT_DIRTY: '存在未保存修改',
+  ERR_DOCUMENT_VERSION_CONFLICT: '内容版本冲突',
+  ERR_OUTCOME_UNKNOWN: '保存结果未确认',
+};
+
+function publicMessageOf(errorCode: ErrorCode): string {
+  return PUBLIC_ERROR_MESSAGES[errorCode] ?? '请求处理失败';
+}
+
+/**
+ * 未预期异常的统一安全出口（G0-R2）。
+ *
+ * - 已知领域错误码：按语义映射 HTTP 状态（根连续性 → 503），错误码原样保留；
+ * - 未知异常：500 + 通用文案，绝不回传原始 message（可能含本机绝对路径）。
+ */
+function toPublicHttpError(err: unknown): HttpError {
+  if (err instanceof HttpError) return err;
+  const raw = (err as { errorCode?: string } | undefined)?.errorCode;
+  if (typeof raw === 'string' && raw in ERROR_CODES) {
+    const code = raw as ErrorCode;
+    return new HttpError(httpStatusOfDomainError(code), code, publicMessageOf(code));
+  }
+  return new HttpError(500, 'ERR_COMMAND_INTERNAL', '内部错误');
 }
 
 const DEFAULT_PORT = 5177;
@@ -343,8 +387,19 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     }
 
     if (method === 'GET' && pathname === '/api/resources') {
-      const paths = await provider.list();
-      sendJson(res, 200, { status: 'APPLIED', nodes: buildResourceTree(paths) as ResourceNodeDto[] });
+      try {
+        const paths = await provider.list();
+        sendJson(res, 200, { status: 'APPLIED', nodes: buildResourceTree(paths) as ResourceNodeDto[] });
+      } catch (err) {
+        // 根连续性失败必须按"项目根不可用"返回 503，且不得回传原始 message（含绝对路径）
+        const code = (err as { errorCode?: string }).errorCode;
+        const known = typeof code === 'string' && code in ERROR_CODES ? (code as ErrorCode) : undefined;
+        throw new HttpError(
+          known ? httpStatusOfDomainError(known) : 422,
+          known ?? 'ERR_STORAGE_IO',
+          known ? publicMessageOf(known) : '资源列表读取失败',
+        );
+      }
       return;
     }
 
@@ -617,10 +672,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
 
   const server = createServer((req, res) => {
     handle(req, res).catch((err: unknown) => {
-      const httpErr =
-        err instanceof HttpError
-          ? err
-          : new HttpError(500, 'ERR_COMMAND_INTERNAL', err instanceof Error ? err.message : '内部错误');
+      const httpErr = toPublicHttpError(err);
       if (!res.headersSent) {
         sendJson(res, httpErr.statusCode, {
           status: 'REJECTED',
