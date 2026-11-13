@@ -43,6 +43,14 @@ export interface CommandDispatchOutcome extends CommandResult {
   violations?: EnvelopeViolation[];
 }
 
+/**
+ * 项目门禁（G1-08）。Host 用它把 Registry 的可用性判定接进命令链路；
+ * Core 不依赖 Registry 实现，只依赖这个最小契约。
+ */
+export interface ProjectGate {
+  assertUsable(projectId: string): unknown;
+}
+
 export interface CommandBusOptions {
   document: DocumentService;
   permission: PermissionService;
@@ -50,6 +58,13 @@ export interface CommandBusOptions {
   resolveSerializer?: (serializerId: string) => Serializer | undefined;
   logger?: Logger;
   clock?: () => Date;
+  /**
+   * Multi 模式（G1-04）：open 必须显式声明 `projectId`，且不得回落 `'local'`；
+   * providerId 只能由 Host 从 Registry 派生后写入 payload。
+   */
+  requireProjectId?: boolean;
+  /** 统一项目门禁；配置后在每次解析目标后、授权前执行（含会话绑定的读写）。 */
+  gate?: ProjectGate;
 }
 
 interface HandlerOutcome {
@@ -69,6 +84,8 @@ interface ResolvedTarget {
   providerId: string;
   provider: StorageProvider;
   sessionId?: string;
+  /** 所属项目（G1）：由 Host 从可信项目配置解析，缺省为 Legacy。 */
+  projectId?: string;
 }
 
 interface ReceiptEntry {
@@ -95,6 +112,18 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
   const clock = options.clock ?? (() => new Date());
   const receipts = new Map<string, ReceiptEntry>();
   const seenCommandIds = new Set<string>();
+
+  /** 门禁失败 → 归一为可返回的错误码，不抛穿（保持 CommandBus 的 REJECTED 语义）。 */
+  function gateErrorOf(projectId: string): CommandResult['errorCode'] | undefined {
+    if (!options.gate) return undefined;
+    try {
+      options.gate.assertUsable(projectId);
+      return undefined;
+    } catch (err) {
+      const code = (err as { errorCode?: string } | undefined)?.errorCode;
+      return (code ?? 'ERR_PROJECT_UNAVAILABLE') as CommandResult['errorCode'];
+    }
+  }
 
   function audit(entry: {
     actorId: string;
@@ -126,6 +155,7 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
           resourceId: target.resourceId,
           path: target.path,
           provider: target.provider,
+          ...(target.projectId ? { projectId: target.projectId } : {}),
         });
         return { status: 'APPLIED', result: handle };
       }
@@ -298,6 +328,8 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
       const payload = (envelope.payload ?? {}) as Record<string, unknown>;
       const payloadResourceId = typeof payload.resourceId === 'string' ? payload.resourceId : undefined;
       const payloadProviderId = typeof payload.providerId === 'string' ? payload.providerId : undefined;
+      const payloadProjectId =
+        typeof payload.projectId === 'string' && payload.projectId !== '' ? payload.projectId : undefined;
       const payloadPath = typeof payload.path === 'string' && payload.path !== '' ? payload.path : undefined;
 
       // S8-02：target 与 payload 的资源声明不能互相矛盾
@@ -324,7 +356,31 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
               { field: 'path', reason: '打开资源必须声明 path（禁止回退到根范围授权）' },
             ]);
           }
-          const providerId = claimedProviderId ?? 'local';
+          // G1-06：Multi 必须先有可信 projectId 且项目 READY，再解析任何 Provider
+          if (options.requireProjectId && !payloadProjectId) {
+            return reject('ERR_PROJECT_REQUIRED', [
+              { field: 'projectId', reason: 'Multi 模式必须声明 projectId（不得回落默认项目）' },
+            ]);
+          }
+          if (payloadProjectId) {
+            const gateCode = gateErrorOf(payloadProjectId);
+            if (gateCode) {
+              return reject(gateCode, undefined, {
+                projectId: payloadProjectId,
+                claimedResourceId,
+                claimedPath: payloadPath,
+              });
+            }
+          }
+          const providerId = claimedProviderId ?? (options.requireProjectId ? '' : 'local');
+          if (!providerId) {
+            return reject('ERR_PROJECT_REQUIRED', [
+              {
+                field: 'providerId',
+                reason: 'Multi 模式的 providerId 必须由 Host 从 Registry 派生',
+              },
+            ]);
+          }
           // resourceId 缺省时按「Provider + 声明路径」派生一个稳定标识，
           // 避免用空串做键（空串会让不同资源共用同一会话槽位）。
           const resourceId = claimedResourceId ?? `derived:${providerId}:${payloadPath}`;
@@ -351,14 +407,37 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
                   providerId: probe.identity.providerId,
                   provider,
                   sessionId: probe.identity.sessionId,
+                  projectId: probe.identity.projectId ?? payloadProjectId,
                 }
-              : { resourceId, path: payloadPath, providerId, provider };
+              : { resourceId, path: payloadPath, providerId, provider, projectId: payloadProjectId };
         } else {
           const sessionId = String(payload.sessionId ?? '');
           if (!sessionId) {
             return reject('ERR_COMMAND_INVALID', [{ field: 'sessionId', reason: '必须声明 sessionId' }]);
           }
           const identity: SessionIdentity | undefined = document.inspectSession(sessionId);
+          if (identity) {
+            // G1-06：会话归属由服务端身份决定；客户端 projectId 只能作为一致性断言
+            if (payloadProjectId && identity.projectId && payloadProjectId !== identity.projectId) {
+              return reject('ERR_COMMAND_INVALID', [
+                { field: 'projectId', reason: '声明的 projectId 与会话归属的项目不一致' },
+              ]);
+            }
+            if (identity.projectId) {
+              const gateCode = gateErrorOf(identity.projectId);
+              if (gateCode) {
+                return reject(gateCode, undefined, {
+                  projectId: identity.projectId,
+                  sessionId,
+                  reason: '会话所属项目已不可用',
+                });
+              }
+            } else if (options.requireProjectId) {
+              return reject('ERR_PROJECT_REQUIRED', [
+                { field: 'projectId', reason: 'Multi 模式下会话必须绑定项目' },
+              ]);
+            }
+          }
           if (!identity) {
             // 既有契约（CONTRACT-06/07）对「目标会话不存在」的状态码并不一致：
             // save 视为请求拒绝（REJECTED），applyEdit 视为执行失败（FAILED）。
@@ -407,6 +486,7 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
             providerId: identity.providerId,
             provider,
             sessionId,
+            projectId: identity.projectId,
           };
         }
       } catch (err) {

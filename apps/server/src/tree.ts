@@ -40,7 +40,17 @@ function sortNodes(nodes: ResourceNodeDto[]): ResourceNodeDto[] {
   });
 }
 
-export function buildResourceTree(relativePaths: readonly string[]): ResourceNodeDto[] {
+export interface BuildResourceTreeOptions {
+  /** Multi：节点 id 带上项目命名空间（`doc:<projectId>/<rel>`），避免跨项目撞 id。 */
+  projectId?: string;
+}
+
+export function buildResourceTree(
+  relativePaths: readonly string[],
+  options: BuildResourceTreeOptions = {},
+): ResourceNodeDto[] {
+  const idFor = (kind: 'doc' | 'dir', relativePath: string): string =>
+    options.projectId ? `${kind}:${options.projectId}/${relativePath}` : `${kind}:${relativePath}`;
   const rootChildren = new Map<string, Entry>();
 
   for (const relativePath of relativePaths) {
@@ -66,7 +76,7 @@ export function buildResourceTree(relativePaths: readonly string[]): ResourceNod
     cursor.set(fileName, {
       type: 'file',
       node: {
-        id: `doc:${relativePath}`,
+        id: idFor('doc', relativePath),
         name: fileName,
         kind: kindOf(relativePath),
         path: relativePath,
@@ -79,7 +89,7 @@ export function buildResourceTree(relativePaths: readonly string[]): ResourceNod
     for (const entry of children.values()) {
       if (entry.type === 'folder') {
         out.push({
-          id: `dir:${entry.path}`,
+          id: idFor('dir', entry.path),
           name: entry.name,
           kind: 'folder',
           children: materialize(entry.children),

@@ -1,16 +1,25 @@
-# apps/server — localhost Client API（S9-B）
+# apps/server — localhost Client API（S9-B / G1）
 
 浏览器与 Core 之间的**唯一**本机通道。浏览器不接触文件系统，也不能选择磁盘目录。
 
 ## 启动
 
 ```bash
-# 仓库根
-node apps/server/src/main.ts <项目根目录> [端口]     # 或 npm run start:server -- <项目根目录>
+# 仓库根 —— 两种互斥模式
+node apps/server/src/main.ts <项目根目录> [端口]                    # Legacy 单项目
+node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi 多项目
 ```
 
 - 只绑定 `127.0.0.1`；端口默认 `5177`。
-- 项目根**只能**来自启动参数 / `WS_PROJECT_ROOT`，请求无法指定。
+- 项目根 / 工作区配置**只能**来自启动参数，请求无法指定；同时给出两者直接拒绝
+  （`ERR_PROJECT_CONFIG_INVALID`）。
+- **Multi 模式的身份命名空间**（G1-04）：
+  `providerId = local:<projectId>`、`resourceId = doc:<projectId>/<relativePath>`；
+  Legacy 保持 `local` / `doc:<relativePath>` 不变。
+- Multi 的 `projectId` 必须由客户端在 `/api/resources`、`/api/open` 显式提供；
+  其余接口一律按**服务端会话身份**解析项目，客户端给的 `projectId` 只作一致性断言。
+- 只有 Registry 判定为 `READY` 的项目才有 Provider；`UNAVAILABLE`（根缺失/非目录/
+  重解析点/身份不可确认/UNC）不会被自动创建或自动接管。
 - 页面通过 Vite 同源代理访问：`apps/shell` 的 dev server 把 `/api` 转发到本服务，
   因此浏览器侧始终同源，不需要任何 CORS 头。
 
@@ -18,9 +27,10 @@ node apps/server/src/main.ts <项目根目录> [端口]     # 或 npm run start:
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/health` | 健康检查，返回当前服务根（仅本机可见） |
-| GET | `/api/resources` | 授权范围内的可编辑文本文件树（`md/markdown/txt`） |
-| POST | `/api/open` | `{path}` → 经 CommandBus `document.open` 建立会话，返回正文与版本 |
+| GET | `/api/health` | 健康检查：`{status,mode,workspaceMode}`；**不返回任何本机绝对路径** |
+| GET | `/api/projects` | Multi：`{projects:[{projectId,name,status,reason?}]}`；Legacy：404 |
+| GET | `/api/resources` | 授权范围内的可编辑文本文件树；Legacy 无需参数，Multi 必须 `?projectId=` |
+| POST | `/api/open` | Legacy `{path}` / Multi `{projectId,path}` → 经 CommandBus 建立会话 |
 | GET | `/api/document` | `?sessionId&viewId` → 按会话实际资源重新授权后读取正文 |
 | POST | `/api/edit` | `{sessionId, buffer, expectedVersion?}` → `document.applyEdit` |
 | POST | `/api/save` | `{sessionId, expectedVersion}` → `document.save` 条件保存 |
@@ -40,6 +50,11 @@ node apps/server/src/main.ts <项目根目录> [端口]     # 或 npm run start:
 | 未经确认的重载 | 409 | `REJECTED` + `ERR_DOCUMENT_DIRTY` |
 | 重载时磁盘不可读/已删除 | 404 | `REJECTED`（草稿保持） |
 | **项目根已失效/被替换**（G0-R2） | 503 | `FAILED` / `REJECTED` + `ERR_ROOT_CHANGED` |
+| **项目不可用**（G1，Multi） | 503 | `FAILED` / `REJECTED` + `ERR_PROJECT_UNAVAILABLE` |
+| **Multi 缺 `projectId`** | 400 | `REJECTED` + `ERR_PROJECT_REQUIRED` |
+| **未知 `projectId`** | 404 | `REJECTED` + `ERR_PROJECT_NOT_FOUND` |
+| **未获授权的项目** | 403 | `REJECTED` + `ERR_PERMISSION_DENIED` |
+| **会话已失效且项目仍不可用** | 409 / 503 | `REJECTED` + `ERR_SESSION_STALE` / `ERR_PROJECT_UNAVAILABLE` |
 
 `UNKNOWN` 既不是成功也不是失败：不写收据、不自动重试，需人工核对磁盘。
 

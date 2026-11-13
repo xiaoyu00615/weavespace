@@ -122,9 +122,17 @@ test('S9B-02 不接受客户端指定项目根，越界路径被拒绝', async (
     assert.equal(await readFile(outside, 'utf8'), 'SECRET-OUTSIDE\n');
     assert.deepEqual((await readdir(base)).sort(), ['outside.md', 'project']);
     assert.ok(root.endsWith('project'));
-    // 健康检查仍只暴露自己的根
+    // G1-12（已批准的安全强化）：健康检查**不得**再返回本机绝对路径。
+    // 原断言为 `assert.equal(health.body.root, root)`（要求必须泄露）——改为否定式，
+    // 覆盖面更大：任何字段都不得出现盘符路径、UNC 或常见的用户目录前缀。
     const health = await api('/api/health');
-    assert.equal(health.body.root, root);
+    assert.equal('root' in health.body, false, '健康检查不得再返回 root');
+    assert.doesNotMatch(
+      JSON.stringify(health.body),
+      /[A-Za-z]:[\\/]|\\\\|\/Users\/|\/home\//,
+      '健康检查响应不得包含任何本机绝对路径',
+    );
+    assert.equal(health.body.workspaceMode, 'legacy');
   });
 });
 

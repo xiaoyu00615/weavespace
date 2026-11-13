@@ -42,6 +42,14 @@ export interface DocumentStateView {
   dirty: boolean;
   state: DocumentState;
   views: number;
+  /**
+   * 会话失效标记（G1）。与六态状态机**正交**：不改变 `state`，只表示"所属项目根
+   * 已不可用，磁盘访问被拒绝"。草稿与 revision/baseVersion 一律保持原值。
+   */
+  stale?: {
+    reason: string;
+    since: string;
+  };
 }
 
 export interface CommandEnvelope<T = unknown> {

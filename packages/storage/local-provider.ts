@@ -71,6 +71,11 @@ export interface StorageFaultHooks {
 
 export interface LocalProviderOptions {
   rootDir: string;
+  /**
+   * Provider 身份（G1-04）。Legacy 缺省 `local`；Multi 由 Host 从 Registry 派生
+   * `local:<projectId>`。身份只影响命名空间，不改变任何存储语义——不得为此复制第二套 Provider。
+   */
+  providerId?: string;
   faults?: StorageFaultHooks;
 }
 
@@ -379,7 +384,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
   }
 
   return {
-    providerId: 'local',
+    providerId: options.providerId ?? 'local',
     rootDir,
 
     async stat(path: string): Promise<FileStat> {

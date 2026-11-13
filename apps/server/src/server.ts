@@ -36,6 +36,12 @@ import {
   type StorageFaultHooks,
   type StorageProvider,
 } from '../../../packages/storage/index.ts';
+import {
+  createProjectRegistry,
+  loadWorkspaceConfig,
+  type ProjectRegistry,
+  type WorkspaceConfig,
+} from '../../../packages/project-registry/index.ts';
 import { buildResourceTree, type ResourceNodeDto } from './tree.ts';
 
 export type SaveOutcomeStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN';
@@ -50,11 +56,24 @@ export interface DocumentDto {
   revision: number;
   dirty: boolean;
   documentState: string;
+  /** 会话所属项目（Multi）；Legacy 不返回该字段。 */
+  projectId?: string;
+  /** 失效标记（G1）：与 documentState 正交，表示磁盘访问已被拒绝。 */
+  stale?: { reason: string; since: string };
 }
 
 export interface ShellServerOptions {
-  /** 受信任的项目根：只能来自启动配置，不能来自请求。 */
-  rootDir: string;
+  /** Legacy：受信任的项目根，只能来自启动配置，不能来自请求。 */
+  rootDir?: string;
+  /** Multi：已校验的工作区配置（与 workspacePath 二选一）。 */
+  workspace?: WorkspaceConfig;
+  /** Multi：工作区配置文件路径；启动时读取一次。 */
+  workspacePath?: string;
+  /**
+   * 已获授权的项目（G1-05）。缺省 = 配置内的全部项目。
+   * 仅这些项目会建立 `local:<projectId>` 授权记录；未列出的项目一律 403。
+   */
+  grantedProjects?: readonly string[];
   /** 0 表示由系统分配（测试用）。默认 5177。 */
   port?: number;
   /** 默认 127.0.0.1；只允许回环地址。 */
@@ -68,11 +87,15 @@ export interface ShellServerOptions {
   providerFaults?: StorageFaultHooks;
 }
 
+export type ShellServerMode = 'legacy' | 'multi';
+
 export interface ShellServer {
   readonly url: string;
   readonly port: number;
   readonly actorId: string;
+  /** Legacy 为项目根；Multi 为空串（不向外部暴露任何本机路径）。 */
   readonly rootDir: string;
+  readonly mode: ShellServerMode;
   close(): Promise<void>;
 }
 
@@ -98,7 +121,17 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     // 用 503 表达"暂时不可用，需重新建立 provider/重启"，避免误报 404/409/500。
     case 'ERR_ROOT_CHANGED':
     case 'ERR_ROOT_IDENTITY_UNSUPPORTED':
+    case 'ERR_PROJECT_UNAVAILABLE':
       return 503;
+    case 'ERR_PROJECT_REQUIRED':
+    case 'ERR_PROJECT_CONFIG_INVALID':
+    case 'ERR_PROJECT_DUPLICATE_ROOT':
+    case 'ERR_PROJECT_NESTED_ROOT':
+      return 400;
+    case 'ERR_PROJECT_NOT_FOUND':
+      return 404;
+    case 'ERR_SESSION_STALE':
+      return 409;
     default:
       return 500;
   }
@@ -136,6 +169,13 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_DOCUMENT_DIRTY: '存在未保存修改',
   ERR_DOCUMENT_VERSION_CONFLICT: '内容版本冲突',
   ERR_OUTCOME_UNKNOWN: '保存结果未确认',
+  ERR_PROJECT_REQUIRED: '必须声明 projectId',
+  ERR_PROJECT_NOT_FOUND: '项目不存在',
+  ERR_PROJECT_UNAVAILABLE: '项目当前不可用（根目录缺失、被替换或不可读）',
+  ERR_PROJECT_CONFIG_INVALID: '工作区配置不合法',
+  ERR_PROJECT_DUPLICATE_ROOT: '工作区配置中存在重复的项目根',
+  ERR_PROJECT_NESTED_ROOT: '工作区配置中存在嵌套的项目根',
+  ERR_SESSION_STALE: '会话已失效（项目不可用），草稿仍保留',
 };
 
 function publicMessageOf(errorCode: ErrorCode): string {
@@ -245,14 +285,18 @@ async function readJsonBody(
  * 拒绝客户端自述的可信字段：actorId / rootDir / 任意 providerId。
  * 这些值只能来自服务端配置，出现即视为越权尝试。
  */
-function rejectTrustedFields(body: Record<string, unknown>): void {
+function rejectTrustedFields(body: Record<string, unknown>, mode: ShellServerMode): void {
   if ('actorId' in body) {
     throw new HttpError(400, 'ERR_COMMAND_INVALID', '不接受客户端提供的 actorId');
   }
   if ('rootDir' in body || 'root' in body) {
     throw new HttpError(400, 'ERR_COMMAND_INVALID', '项目根由启动配置决定，不接受客户端指定');
   }
-  if ('providerId' in body && body.providerId !== 'local') {
+  // Multi：providerId 只能由 Host 从 Registry 派生，出现即视为越权尝试
+  if (mode === 'multi' && 'providerId' in body) {
+    throw new HttpError(403, 'ERR_PERMISSION_DENIED', 'providerId 由服务端从项目派生，不接受客户端指定');
+  }
+  if (mode === 'legacy' && 'providerId' in body && body.providerId !== 'local') {
     throw new HttpError(403, 'ERR_PERMISSION_DENIED', '本项目只允许本地 Provider');
   }
 }
@@ -261,6 +305,8 @@ interface ViewRecord {
   sessionId: string;
   resourceId: string;
   path: string;
+  /** 创建该视图的服务端 actor（G1-09）：草稿门禁据此拒绝跨主体猜读。 */
+  actorId: string;
 }
 
 export async function createShellServer(options: ShellServerOptions): Promise<ShellServer> {
@@ -276,19 +322,72 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     );
   }
 
-  const provider: StorageProvider = createLocalProvider({
-    rootDir: options.rootDir,
-    faults: options.providerFaults,
-  });
+  // ---- 模式判定（G1-03）：Legacy 单根 / Multi 工作区，二者互斥 ----
+  const wantsMulti = options.workspace !== undefined || options.workspacePath !== undefined;
+  if (wantsMulti && options.rootDir !== undefined) {
+    throw Object.assign(
+      new Error('启动参数冲突：不能同时指定项目根与工作区配置（Legacy 与 Multi 不得混用身份）'),
+      { errorCode: 'ERR_PROJECT_CONFIG_INVALID' as const },
+    );
+  }
+  if (!wantsMulti && (options.rootDir === undefined || options.rootDir === '')) {
+    throw Object.assign(new Error('缺少项目根（Legacy）或工作区配置（Multi）'), {
+      errorCode: 'ERR_PROJECT_CONFIG_INVALID' as const,
+    });
+  }
+
+  const mode: ShellServerMode = wantsMulti ? 'multi' : 'legacy';
+  const workspace: WorkspaceConfig | undefined = wantsMulti
+    ? (options.workspace ??
+      (await loadWorkspaceConfig(options.workspacePath as string /* 已由 wantsMulti 保证 */)))
+    : undefined;
+
+  // Multi：Registry 是项目身份唯一权威；只有 READY 项目才有 Provider
+  const registry: ProjectRegistry | undefined = workspace
+    ? createProjectRegistry({ config: workspace })
+    : undefined;
+
+  // Legacy：保持原有单 Provider 行为与 providerId `local`
+  const legacyProvider: StorageProvider | undefined =
+    mode === 'legacy'
+      ? createLocalProvider({ rootDir: options.rootDir as string, faults: options.providerFaults })
+      : undefined;
+
+  /** providerId → Provider。Multi 由 Registry 派生，客户端无法指定。 */
+  const providers = new Map<string, StorageProvider>();
+  if (legacyProvider) providers.set(legacyProvider.providerId, legacyProvider);
+  if (registry) {
+    for (const summary of registry.list()) {
+      const handle = registry.get(summary.projectId);
+      if (handle) providers.set(handle.providerId, handle.provider);
+    }
+  }
+
+  /**
+   * 授权（G1-05）：Legacy 沿用全项目单一授权；Multi 逐项目按 `local:<pid>` 维度发放，
+   * 项目 A 的授权不会自动覆盖项目 B。
+   */
+  const configuredProjectIds = (workspace?.projects ?? []).map((project) => project.projectId);
+  const grantedProjectIds = new Set<string>(options.grantedProjects ?? configuredProjectIds);
+  const permission: PermissionService =
+    mode === 'legacy'
+      ? createPermissionService([
+          { actorId, action: 'read', scope: '' },
+          { actorId, action: 'write', scope: '' },
+        ])
+      : createPermissionService(
+          [...grantedProjectIds].flatMap((projectId) => [
+            { actorId, action: 'read' as const, scope: '', providerId: `local:${projectId}` },
+            { actorId, action: 'write' as const, scope: '', providerId: `local:${projectId}` },
+          ]),
+        );
+
   const document: DocumentService = createDocumentService();
-  const permission: PermissionService = createPermissionService([
-    { actorId, action: 'read', scope: '' },
-    { actorId, action: 'write', scope: '' },
-  ]);
   const bus: CommandBus = createCommandBus({
     document,
     permission,
-    resolveProvider: (providerId) => (providerId === provider.providerId ? provider : undefined),
+    resolveProvider: (providerId) => providers.get(providerId),
+    ...(mode === 'multi' ? { requireProjectId: true, gate: registry } : {}),
   });
 
   /** viewId → 会话；仅用于「这个 viewId 是否属于该会话」的校验，不作授权凭据。 */
@@ -315,6 +414,8 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       revision: view.revision,
       dirty: view.dirty,
       documentState: view.state,
+      ...(identity.projectId ? { projectId: identity.projectId } : {}),
+      ...(view.stale ? { stale: view.stale } : {}),
     };
   }
 
@@ -323,6 +424,90 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     const record = views.get(viewId);
     if (!record || record.sessionId !== sessionId) {
       throw new HttpError(403, 'ERR_PERMISSION_DENIED', 'viewId 与 sessionId 不匹配');
+    }
+    // G1-09：视图必须属于当前 actor，凭猜测的 sessionId/viewId 不得读取草稿
+    if (record.actorId !== actorId) {
+      throw new HttpError(403, 'ERR_PERMISSION_DENIED', 'viewId 不属于当前 actor');
+    }
+  }
+
+  /** 取项目句柄并做 G-DISK 门禁；失败时把该项目全部会话标记为 STALE（草稿保留）。 */
+  function requireProjectHandle(projectId: string) {
+    if (!registry) {
+      throw new HttpError(404, 'ERR_PROJECT_NOT_FOUND', '当前未启用多项目模式');
+    }
+    try {
+      return registry.assertUsable(projectId);
+    } catch (err) {
+      const code = (err as { errorCode?: string }).errorCode;
+      const reason = (err as { reason?: string }).reason;
+      if (code === 'ERR_PROJECT_UNAVAILABLE') {
+        document.markProjectStale(projectId, reason ?? 'PROJECT_UNAVAILABLE');
+      }
+      const known = typeof code === 'string' && code in ERROR_CODES ? (code as ErrorCode) : undefined;
+      throw new HttpError(
+        known ? httpStatusOfDomainError(known) : 503,
+        known ?? 'ERR_PROJECT_UNAVAILABLE',
+        known ? publicMessageOf(known) : PUBLIC_ERROR_MESSAGES.ERR_PROJECT_UNAVAILABLE ?? '项目不可用',
+      );
+    }
+  }
+
+  /**
+   * G-DISK 门禁（G1-08）：会话所属项目必须仍属于 Registry 且 READY，根身份不变。
+   * 与 CommandBus 内的 gate 是同一条判定，绕过 CommandBus 的直连入口也必须调用它。
+   */
+  function assertSessionDiskUsable(sessionId: string): void {
+    const identity = identityOf(sessionId);
+    if (!identity) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
+    if (mode !== 'multi') return;
+
+    if (!identity.projectId) {
+      throw new HttpError(409, 'ERR_SESSION_STALE', '会话缺少项目归属');
+    }
+    // 先判项目可用性（项目不可用 → 503），再判会话标记（会话失效 → 409）：
+    // 项目级原因更能解释"为什么磁盘访问被拒绝"，也避免把根失效误报成会话问题。
+    requireProjectHandle(identity.projectId);
+    if (document.getSession(sessionId)?.stale) {
+      throw new HttpError(
+        409,
+        'ERR_SESSION_STALE',
+        PUBLIC_ERROR_MESSAGES.ERR_SESSION_STALE ?? '会话已失效',
+      );
+    }
+  }
+
+  /** 会话绑定的 Provider（G1-11）：绝不使用全局单例，也不接受请求指定。 */
+  function providerForSession(sessionId: string): StorageProvider {
+    const identity = identityOf(sessionId);
+    if (!identity) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
+    const provider = providers.get(identity.providerId);
+    if (!provider) {
+      throw new HttpError(
+        503,
+        'ERR_PROJECT_UNAVAILABLE',
+        PUBLIC_ERROR_MESSAGES.ERR_PROJECT_UNAVAILABLE ?? '项目不可用',
+      );
+    }
+    return provider;
+  }
+
+  /** Legacy 分支使用的单 Provider；Multi 下不存在。 */
+  function legacyOnlyProvider(): StorageProvider {
+    if (!legacyProvider) {
+      throw new HttpError(404, 'ERR_PROJECT_NOT_FOUND', '当前运行在 Multi 模式，请指定 projectId');
+    }
+    return legacyProvider;
+  }
+
+  /**
+   * 客户端声明的 projectId 只能作为**一致性断言**（G1-06）：
+   * 会话归属由服务端身份决定，声明不一致一律拒绝，绝不允许借此切到别的项目。
+   */
+  function assertProjectAssertion(identity: { projectId?: string } | undefined, declared: unknown): void {
+    if (!identity || typeof declared !== 'string' || declared === '') return;
+    if (identity.projectId !== declared) {
+      throw new HttpError(400, 'ERR_COMMAND_INVALID', '声明的 projectId 与会话归属的项目不一致');
     }
   }
 
@@ -382,15 +567,54 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     }
 
     if (method === 'GET' && pathname === '/api/health') {
-      sendJson(res, 200, { status: 'APPLIED', mode: 'live', root: options.rootDir });
+      // G1-12：不再返回本机绝对根目录（Legacy / Multi 一致）；只暴露运行模式
+      sendJson(res, 200, { status: 'APPLIED', mode: 'live', workspaceMode: mode });
+      return;
+    }
+
+    // Multi 专用：项目列表只给 Summary（不含 rootDir / canonicalRoot / rootToken）
+    if (method === 'GET' && pathname === '/api/projects') {
+      if (!registry) {
+        sendJson(res, 404, {
+          status: 'REJECTED',
+          errorCode: 'ERR_COMMAND_UNSUPPORTED',
+          message: 'Legacy 模式不提供项目列表',
+        });
+        return;
+      }
+      sendJson(res, 200, { status: 'APPLIED', projects: registry.list() });
       return;
     }
 
     if (method === 'GET' && pathname === '/api/resources') {
+      const projectId = url.searchParams.get('projectId') ?? '';
+      // Multi：projectId 必填，且必须先过 G-DISK 门禁；Legacy 保持原行为
+      if (mode === 'multi' && !projectId) {
+        throw new HttpError(400, 'ERR_PROJECT_REQUIRED', PUBLIC_ERROR_MESSAGES.ERR_PROJECT_REQUIRED ?? '必须声明 projectId');
+      }
+      if (mode === 'multi') {
+        // 项目级读授权（G1-05）：A 项目的授权不覆盖 B 项目
+        const decision = permission.authorize({
+          actorId,
+          action: 'read',
+          resourcePath: '',
+          providerId: `local:${projectId}`,
+        });
+        if (!decision.allowed) {
+          throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+        }
+      }
+
       try {
-        const paths = await provider.list();
-        sendJson(res, 200, { status: 'APPLIED', nodes: buildResourceTree(paths) as ResourceNodeDto[] });
+        const source =
+          mode === 'multi' ? requireProjectHandle(projectId).provider : legacyOnlyProvider();
+        const paths = await source.list();
+        sendJson(res, 200, {
+          status: 'APPLIED',
+          nodes: buildResourceTree(paths, mode === 'multi' ? { projectId } : undefined) as ResourceNodeDto[],
+        });
       } catch (err) {
+        if (err instanceof HttpError) throw err;
         // 根连续性失败必须按"项目根不可用"返回 503，且不得回传原始 message（含绝对路径）
         const code = (err as { errorCode?: string }).errorCode;
         const known = typeof code === 'string' && code in ERROR_CODES ? (code as ErrorCode) : undefined;
@@ -409,11 +633,15 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       if (!sessionId) throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 sessionId');
       if (!identityOf(sessionId)) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
       requireView(sessionId, viewId);
+      assertProjectAssertion(identityOf(sessionId), url.searchParams.get('projectId'));
       authorizeRead(sessionId);
+      // G1-11：先过 G-DISK 门禁，再用**会话绑定项目**的 Provider 读取
+      assertSessionDiskUsable(sessionId);
       const identity = identityOf(sessionId)!;
+      const sessionProvider = providerForSession(sessionId);
       try {
         // 只读查看：用会话绑定的路径读写，客户端无法指定其它位置
-        const disk = await provider.read(identity.path);
+        const disk = await sessionProvider.read(identity.path);
         sendJson(res, 200, {
           status: 'APPLIED',
           content: disk.content,
@@ -433,6 +661,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       // 先判会话是否存在（404），再判 viewId 归属（403）：错误语义更精确
       if (!identityOf(sessionId)) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
       requireView(sessionId, viewId);
+      assertProjectAssertion(identityOf(sessionId), url.searchParams.get('projectId'));
       authorizeRead(sessionId);
       sendJson(res, 200, { status: 'APPLIED', document: documentDto(sessionId, viewId ?? null) });
       return;
@@ -440,24 +669,53 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
 
     if (method === 'POST') {
       const body = await readJsonBody(req, maxBodyBytes);
-      rejectTrustedFields(body);
+      rejectTrustedFields(body, mode);
 
       if (pathname === '/api/open') {
         const projectPath = normalizeProjectPath(body.path);
         if (!projectPath) {
           throw new HttpError(400, 'ERR_COMMAND_INVALID', '非法路径（越界/绝对路径/空）');
         }
-        // resourceId 由服务端按「Provider + 规范化路径」派生，客户端不能自带
-        const resourceId = `doc:${projectPath}`;
-        if ('resourceId' in body && body.resourceId !== resourceId) {
-          throw new HttpError(400, 'ERR_COMMAND_INVALID', 'resourceId 由服务端派生，不接受客户端指定');
+
+        // resourceId / providerId 一律由服务端派生（G1-04），客户端只能断言不能指定
+        let resourceId: string;
+        let targetPayload: Record<string, unknown>;
+        if (mode === 'multi') {
+          const projectId = typeof body.projectId === 'string' ? body.projectId : '';
+          if (!projectId) {
+            throw new HttpError(
+              400,
+              'ERR_PROJECT_REQUIRED',
+              PUBLIC_ERROR_MESSAGES.ERR_PROJECT_REQUIRED ?? '必须声明 projectId',
+            );
+          }
+          const handle = requireProjectHandle(projectId);
+          resourceId = `doc:${projectId}/${projectPath}`;
+          if ('resourceId' in body && body.resourceId !== resourceId) {
+            throw new HttpError(400, 'ERR_COMMAND_INVALID', 'resourceId 由服务端派生，不接受客户端指定');
+          }
+          targetPayload = {
+            path: projectPath,
+            resourceId,
+            projectId,
+            providerId: handle.providerId,
+          };
+        } else {
+          resourceId = `doc:${projectPath}`;
+          if ('resourceId' in body && body.resourceId !== resourceId) {
+            throw new HttpError(400, 'ERR_COMMAND_INVALID', 'resourceId 由服务端派生，不接受客户端指定');
+          }
+          if ('projectId' in body) {
+            throw new HttpError(400, 'ERR_COMMAND_INVALID', 'Legacy 模式不接受 projectId');
+          }
+          targetPayload = { path: projectPath, resourceId };
         }
 
         const outcome = await bus.dispatch(
           {
             commandId: nextCommandId(),
             type: 'document.open',
-            payload: { path: projectPath, resourceId },
+            payload: targetPayload,
           },
           { actorId },
         );
@@ -477,6 +735,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           sessionId: handle.sessionId,
           resourceId: identity.resourceId,
           path: identity.path,
+          actorId,
         });
         // open 的 CommandBus 已按实际资源授权；正文读取再按会话实际资源授权一次
         authorizeRead(handle.sessionId);
@@ -497,6 +756,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         requireView(sessionId, typeof body.viewId === 'string' ? body.viewId : undefined);
         const identity = identityOf(sessionId);
         if (!identity) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
+        assertProjectAssertion(identity, body.projectId);
 
         const expectedVersion =
           typeof body.expectedVersion === 'string' && body.expectedVersion !== ''
@@ -508,7 +768,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             commandId: nextCommandId(),
             type: 'document.applyEdit',
             expectedVersion: expectedVersion === '' ? 'unversioned' : expectedVersion,
-            payload: { sessionId, buffer: body.buffer },
+            payload: {
+              sessionId,
+              buffer: body.buffer,
+              ...(typeof body.projectId === 'string' ? { projectId: body.projectId } : {}),
+            },
           },
           { actorId },
         );
@@ -531,16 +795,28 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           throw new HttpError(400, 'ERR_COMMAND_INVALID', '写命令必须携带 expectedVersion');
         }
         requireView(sessionId, typeof body.viewId === 'string' ? body.viewId : undefined);
+        const saveIdentity = identityOf(sessionId);
+        assertProjectAssertion(saveIdentity, body.projectId);
 
         const outcome = await bus.dispatch(
           {
             commandId: nextCommandId(),
             type: 'document.save',
             expectedVersion,
-            payload: { sessionId },
+            payload: {
+              sessionId,
+              ...(typeof body.projectId === 'string' ? { projectId: body.projectId } : {}),
+            },
           },
           { actorId },
         );
+        // 项目不可用 → 立刻把该项目会话标记为 STALE，阻止后续磁盘访问（草稿保留）
+        if (
+          saveIdentity?.projectId &&
+          (outcome.errorCode === 'ERR_PROJECT_UNAVAILABLE' || outcome.errorCode === 'ERR_PROJECT_NOT_FOUND')
+        ) {
+          document.markProjectStale(saveIdentity.projectId, outcome.errorCode);
+        }
 
         const status: SaveOutcomeStatus =
           outcome.status === 'APPLIED'
@@ -551,6 +827,12 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
                 ? 'UNKNOWN'
                 : 'FAILED';
 
+        const projectLevel =
+          outcome.errorCode === 'ERR_PROJECT_UNAVAILABLE' ||
+          outcome.errorCode === 'ERR_PROJECT_NOT_FOUND' ||
+          outcome.errorCode === 'ERR_SESSION_STALE' ||
+          outcome.errorCode === 'ERR_ROOT_CHANGED' ||
+          outcome.errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED';
         const httpStatus =
           status === 'COMMITTED'
             ? 200
@@ -558,9 +840,8 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
               ? 409
               : status === 'UNKNOWN'
                 ? 202
-                : outcome.errorCode === 'ERR_ROOT_CHANGED' ||
-                    outcome.errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED'
-                  ? 503
+                : projectLevel
+                  ? httpStatusOfDomainError(outcome.errorCode)
                   : 422;
         sendJson(res, httpStatus, {
           status,
@@ -584,6 +865,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         requireView(sessionId, viewId);
         const identity = identityOf(sessionId);
         if (!identity) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
+        assertProjectAssertion(identity, body.projectId);
+        // 重载会覆盖草稿并读盘：必须先过 G-DISK 门禁
+        assertSessionDiskUsable(sessionId);
         for (const action of ['read', 'write'] as const) {
           const decision = permission.authorize({
             actorId,
@@ -620,6 +904,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         requireView(sessionId, viewId);
         const identity = identityOf(sessionId);
         if (!identity) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
+        assertProjectAssertion(identity, body.projectId);
         const decision = permission.authorize({
           actorId,
           action: 'read',
@@ -697,7 +982,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     url: `http://${host}:${address.port}`,
     port: address.port,
     actorId,
-    rootDir: options.rootDir,
+    // Multi 不向外部暴露任何本机路径
+    rootDir: mode === 'legacy' ? (options.rootDir as string) : '',
+    mode,
     async close() {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

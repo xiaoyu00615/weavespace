@@ -56,6 +56,8 @@ export interface SessionIdentity {
   readonly path: string;
   readonly providerId: string;
   readonly providerScope: string;
+  /** 所属项目（G1）；Legacy 为 undefined。磁盘门禁据此解析 Registry 状态。 */
+  readonly projectId?: string;
 }
 
 /** 身份探测结果：供 CommandBus 在**授权之前**判断是否会发生会话复用冲突（S8-02）。 */
@@ -85,6 +87,11 @@ export interface OpenSessionInput {
   resourceId: string;
   path: string;
   provider: StorageProvider;
+  /**
+   * 所属项目（G1）。Legacy 缺省 undefined（仍用 providerId `local`）；
+   * Multi 必填，且与 `provider.providerId` 一起决定会话身份。
+   */
+  projectId?: string;
 }
 
 export interface ViewHandle {
@@ -123,6 +130,13 @@ interface Session {
   resourceId: string;
   path: string;
   provider: StorageProvider;
+  /** 所属项目（G1）；Legacy 为 undefined。 */
+  projectId?: string;
+  /**
+   * 失效标记（G1-07）：与六态状态机正交。置位后禁止磁盘访问，但缓冲 / revision /
+   * baseVersion / dirty 一律保持原值，不做自动迁移或丢弃。
+   */
+  stale?: { reason: string; since: string };
   /** 创建时固定的 Provider 身份与规范资源键，用于拒绝隐式复用（S8-01）。 */
   providerScope: string;
   resourceKey: string;
@@ -165,10 +179,18 @@ export interface DocumentService {
   inspectSession(sessionId: string): SessionIdentity | undefined;
   /** 判断候选路径是否与会话绑定的规范路径一致（S8-02，path 的存在性校验）。 */
   matchesSessionPath(sessionId: string, candidatePath: string): boolean;
+  /**
+   * 把某项目的全部会话标记为失效（G1-07）。
+   * 仅置标记：缓冲、revision、baseVersion、dirty 与六态 state 全部保持不变。
+   * 返回被标记的会话数。
+   */
+  markProjectStale(projectId: string, reason: string): number;
+  /** 标记单个会话失效；仅用于 Host 已经判定该会话的磁盘门禁失败时。 */
+  markSessionStale(sessionId: string, reason: string): boolean;
 }
 
 export interface DocumentEvent {
-  type: 'SESSION_OPENED' | 'DOCUMENT_RELOADED' | 'EDIT_APPLIED' | 'SAVE_STARTED' | 'SAVE_COMMITTED' | 'SAVE_CONFLICT' | 'SAVE_FAILED' | 'SAVE_UNKNOWN' | 'VIEW_CLOSED' | 'CLOSE_BLOCKED_DIRTY';
+  type: 'SESSION_OPENED' | 'SESSION_STALE' | 'DOCUMENT_RELOADED' | 'EDIT_APPLIED' | 'SAVE_STARTED' | 'SAVE_COMMITTED' | 'SAVE_CONFLICT' | 'SAVE_FAILED' | 'SAVE_UNKNOWN' | 'VIEW_CLOSED' | 'CLOSE_BLOCKED_DIRTY';
   sessionId: string;
   resourceId: string;
   occurredAt: string;
@@ -221,6 +243,7 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
       dirty: session.dirty,
       state: session.state,
       views: session.views.size,
+      ...(session.stale ? { stale: { ...session.stale } } : {}),
     };
   }
 
@@ -241,6 +264,7 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
       path: session.path,
       providerId: session.provider.providerId,
       providerScope: session.providerScope,
+      ...(session.projectId ? { projectId: session.projectId } : {}),
     });
   }
 
@@ -275,6 +299,28 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
       let sessionId = sessionsByResource.get(input.resourceId);
       let session = sessionId ? sessions.get(sessionId) : undefined;
       let reloaded = false;
+
+      /**
+       * G1-07：失效会话不得被静默复用。
+       * - 有未保存草稿 → 拒绝（`ERR_SESSION_STALE`），绝不覆盖；
+       * - 无草稿 → 丢弃该会话并按磁盘重建（磁盘是唯一权威，不存在草稿损失）。
+       * 两种情况都不做 Provider 重绑定、不迁移到其他根。
+       */
+      if (session?.stale) {
+        if (session.dirty) {
+          throw Object.assign(
+            new Error(
+              `会话已失效（${session.stale.reason}）且存在未保存修改，拒绝覆盖草稿: ${session.path}`,
+            ),
+            { errorCode: 'ERR_SESSION_STALE' as const, staleReason: session.stale.reason },
+          );
+        }
+        for (const viewId of session.views) views.delete(viewId);
+        sessions.delete(session.sessionId);
+        sessionsByResource.delete(input.resourceId);
+        sessionId = undefined;
+        session = undefined;
+      }
 
       /**
        * S9B-A：会话在「全部视图已关闭且没有未保存修改」时被复用时，磁盘可能已被外部编辑器改动。
@@ -341,6 +387,7 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
           resourceId: input.resourceId,
           path: input.path,
           provider: input.provider,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
           providerScope: providerScopeOf(input.provider),
           resourceKey: resourceKeyOf(input.provider, input.path),
           buffer: read?.content ?? '',
@@ -689,6 +736,36 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
       } catch {
         return false;
       }
+    },
+
+    markProjectStale(projectId: string, reason: string) {
+      const since = clock().toISOString();
+      let marked = 0;
+      for (const session of sessions.values()) {
+        if (session.projectId !== projectId) continue;
+        session.stale = { reason, since };
+        marked += 1;
+        emit({
+          type: 'SESSION_STALE',
+          sessionId: session.sessionId,
+          resourceId: session.resourceId,
+          detail: { reason, projectId, dirty: session.dirty, revision: session.revision },
+        });
+      }
+      return marked;
+    },
+
+    markSessionStale(sessionId: string, reason: string) {
+      const session = sessions.get(sessionId);
+      if (!session) return false;
+      session.stale = { reason, since: clock().toISOString() };
+      emit({
+        type: 'SESSION_STALE',
+        sessionId,
+        resourceId: session.resourceId,
+        detail: { reason, projectId: session.projectId, dirty: session.dirty, revision: session.revision },
+      });
+      return true;
     },
 
     drainEvents() {

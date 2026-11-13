@@ -41,6 +41,26 @@ export const ERROR_CODES = {
    * 必须 fail-closed 拒绝，而不是退化为仅按路径比较。
    */
   ERR_ROOT_IDENTITY_UNSUPPORTED: 'ERR_ROOT_IDENTITY_UNSUPPORTED',
+  /**
+   * 多项目（G1）：请求未声明 `projectId`。
+   * Multi 模式不得回落默认项目，否则等于隐式选择磁盘根。
+   */
+  ERR_PROJECT_REQUIRED: 'ERR_PROJECT_REQUIRED',
+  /** 多项目（G1）：`projectId` 不在可信配置中。 */
+  ERR_PROJECT_NOT_FOUND: 'ERR_PROJECT_NOT_FOUND',
+  /** 多项目（G1）：项目存在但当前不可用（根缺失/被替换/不可读等）。 */
+  ERR_PROJECT_UNAVAILABLE: 'ERR_PROJECT_UNAVAILABLE',
+  /** 多项目（G1）：工作区配置本身非法（版本/字段/路径形态）。 */
+  ERR_PROJECT_CONFIG_INVALID: 'ERR_PROJECT_CONFIG_INVALID',
+  /** 多项目（G1）：两个项目指向同一根目录（含 Windows 大小写等价）。 */
+  ERR_PROJECT_DUPLICATE_ROOT: 'ERR_PROJECT_DUPLICATE_ROOT',
+  /** 多项目（G1）：项目根互相嵌套。 */
+  ERR_PROJECT_NESTED_ROOT: 'ERR_PROJECT_NESTED_ROOT',
+  /**
+   * 多项目（G1）：会话已失效（所属项目根不可用），磁盘访问被拒绝。
+   * 草稿仍保留，可经授权读取；不得自动迁移或丢弃。
+   */
+  ERR_SESSION_STALE: 'ERR_SESSION_STALE',
   ERR_PLUGIN_INVALID_MANIFEST: 'ERR_PLUGIN_INVALID_MANIFEST',
   ERR_PLUGIN_DUPLICATE_ID: 'ERR_PLUGIN_DUPLICATE_ID',
   ERR_PLUGIN_NOT_REGISTERED: 'ERR_PLUGIN_NOT_REGISTERED',
