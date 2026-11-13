@@ -972,3 +972,234 @@ button {
   color: var(--muted);
   border: 1px solid var(--border);
 }
+
+/* ---- S11-B：左列上下两段（项目/插件 + Quick File） ---- */
+.side {
+  grid-row: 1;
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.side__tree {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 外框已经画了右边框，内部的 .tree 不再重复 */
+.side .tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-right: 0;
+}
+
+.quick {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 55%;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  min-height: 0;
+}
+
+.quick__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quick__caret {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--muted);
+  width: 16px;
+  padding: 0;
+}
+
+.quick__title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
+  flex: 1;
+}
+
+.quick__badge {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--muted);
+}
+
+.quick__body {
+  overflow: auto;
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quick__drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 10px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.quick__drop:hover,
+.quick__drop:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.quick__drop--active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.quick__drop-hint {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.quick__actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.quick__actions .chip {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.quick__input {
+  display: none;
+}
+
+.quick__meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick__file {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.quick__file-name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick__error {
+  padding: 8px 10px;
+  border: 1px solid #f0c9a8;
+  border-radius: 6px;
+  background: #fff8f1;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.quick__error-code {
+  margin-top: 2px;
+  font: 11px/1.4 var(--mono);
+  color: var(--muted);
+}
+
+.quick__hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* ---- S11-B：Quick File 只读预览（占用工作区，不参与标签/会话） ---- */
+.quick-preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.quick-preview__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.quick-preview__badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #b9cdfb;
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.quick-preview__name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-preview__meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-preview__body {
+  flex: 1;
+  min-height: 0;
+}
+
+.quick-preview__footer {
+  padding: 4px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}

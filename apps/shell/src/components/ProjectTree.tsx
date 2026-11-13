@@ -1,5 +1,6 @@
 import { DEMO_NODES, DEMO_PROJECT_NAME } from '../data/demo-project';
 import { useDocumentActions } from '../state/DocumentActionsContext';
+import { useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 import type { ResourceNodeState } from '../state/types';
 
@@ -7,6 +8,7 @@ import type { ResourceNodeState } from '../state/types';
 function FileRow({ node, depth }: { node: ResourceNodeState; depth: number }) {
   const { state } = useWorkspace();
   const actions = useDocumentActions();
+  const quick = useQuickFile();
   const docId = node.path ?? node.id;
   const selected = state.selectedPath === docId;
   const activeDoc = state.tabs.some((tab) => tab.docId === docId);
@@ -25,7 +27,11 @@ function FileRow({ node, depth }: { node: ResourceNodeState; depth: number }) {
           .filter(Boolean)
           .join(' ')}
         style={{ paddingLeft: 12 + depth * 14 }}
-        onClick={() => void actions.openNode(node)}
+        onClick={() => {
+          // 打开项目文件即离开 Quick File 预览（Quick File 本身不被清除）
+          quick.deactivate();
+          void actions.openNode(node);
+        }}
       >
         <span className="tree__glyph" aria-hidden="true">
           ¶

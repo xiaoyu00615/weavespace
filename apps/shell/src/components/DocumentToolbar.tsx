@@ -1,4 +1,5 @@
 import { useDocumentActions } from '../state/DocumentActionsContext';
+import { isQuickFileVisible, useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 import { DEMO_PROJECT_NAME } from '../data/demo-project';
 
@@ -6,6 +7,9 @@ import { DEMO_PROJECT_NAME } from '../data/demo-project';
 export function DocumentToolbar() {
   const { state, dispatch } = useWorkspace();
   const actions = useDocumentActions();
+  const quick = useQuickFile();
+  // Quick File 预览期间不提供任何保存入口：它不是可保存的文档
+  const quickVisible = isQuickFileVisible(quick.state);
   const activeDocId =
     state.focusedPane === 'secondary' ? state.panes.secondary.docId : state.panes.primary.docId;
   const activeTab = state.tabs.find((tab) => tab.docId === activeDocId) ?? null;
@@ -79,15 +83,24 @@ export function DocumentToolbar() {
       </div>
 
       <div className="toolbar__right">
-        <button
-          type="button"
-          className={live ? 'chip chip--primary' : 'chip'}
-          disabled={!activeTab || activeTab.saving}
-          title={live ? '经 Core 条件保存到磁盘（需要版本基线）' : '演示保存：只清除未保存标记，不写磁盘'}
-          onClick={() => activeTab && void actions.saveTab(activeTab.docId)}
-        >
-          {activeTab?.saving ? '保存中…' : live ? '保存' : '保存（演示）'}
-        </button>
+        {quickVisible ? (
+          <span
+            className="chip chip--active"
+            title="Quick File 只读预览：内容来自本机临时选择的文件，不写盘、不可保存"
+          >
+            Quick File · 只读
+          </span>
+        ) : (
+          <button
+            type="button"
+            className={live ? 'chip chip--primary' : 'chip'}
+            disabled={!activeTab || activeTab.saving}
+            title={live ? '经 Core 条件保存到磁盘（需要版本基线）' : '演示保存：只清除未保存标记，不写磁盘'}
+            onClick={() => activeTab && void actions.saveTab(activeTab.docId)}
+          >
+            {activeTab?.saving ? '保存中…' : live ? '保存' : '保存（演示）'}
+          </button>
+        )}
         <button
           type="button"
           className={state.auxCollapsed ? 'chip' : 'chip chip--active'}

@@ -5,9 +5,12 @@ import { GlobalNav } from '../components/GlobalNav';
 import { PluginPanel } from '../components/PluginPanel';
 import { ProjectList } from '../components/ProjectList';
 import { ProjectTree } from '../components/ProjectTree';
+import { QuickFilePanel } from '../components/QuickFilePanel';
+import { QuickFilePreview } from '../components/QuickFilePreview';
 import { SplitWorkspace } from '../components/SplitWorkspace';
 import { StatusBar } from '../components/StatusBar';
 import { TabStrip } from '../components/TabStrip';
+import { isQuickFileVisible, useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 
 /**
@@ -16,6 +19,9 @@ import { useWorkspace } from '../state/WorkspaceContext';
  */
 export function ShellLayout() {
   const { state } = useWorkspace();
+  const quick = useQuickFile();
+  // Quick File 只接管工作区那一块；标签、队列、草稿与项目树都不受影响
+  const quickVisible = isQuickFileVisible(quick.state);
 
   const columns = [
     state.navCollapsed ? '56px' : '176px',
@@ -31,19 +37,28 @@ export function ShellLayout() {
         第二列按导航切换：插件面板 / 多项目列表（Multi） / 单项目资源树（Legacy、Demo）。
         Multi 与 Legacy 共用同一列，但树的结构与展开状态完全独立。
       */}
-      {state.navKey === 'plugins' ? (
-        <PluginPanel />
-      ) : state.workspaceMode === 'multi' && state.mode === 'live' ? (
-        <ProjectList />
-      ) : (
-        <ProjectTree />
-      )}
+      {/*
+        第二列上下两段：上方是项目/插件面板，下方是独立的 Quick File。
+        两段的展开状态互不影响；项目树折叠时整列只有 36px，Quick File 随之隐藏。
+      */}
+      <div className="side">
+        <div className="side__tree">
+          {state.navKey === 'plugins' ? (
+            <PluginPanel />
+          ) : state.workspaceMode === 'multi' && state.mode === 'live' ? (
+            <ProjectList />
+          ) : (
+            <ProjectTree />
+          )}
+        </div>
+        {!state.treeCollapsed && <QuickFilePanel />}
+      </div>
 
       <main className="main">
         <DocumentToolbar />
         <TabStrip />
         <ConflictBanner />
-        <SplitWorkspace />
+        {quickVisible ? <QuickFilePreview /> : <SplitWorkspace />}
       </main>
 
       <AuxPanel />

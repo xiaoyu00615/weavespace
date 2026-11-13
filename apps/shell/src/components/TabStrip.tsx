@@ -1,11 +1,13 @@
 import { useDocumentActions } from '../state/DocumentActionsContext';
 import { projectLabelOf } from '../state/doc-identity';
+import { useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 
 /** 文件标签：切换活动文档、关闭标签（关闭规则由动作层按模式判定）。 */
 export function TabStrip() {
   const { state, dispatch } = useWorkspace();
   const actions = useDocumentActions();
+  const quick = useQuickFile();
   const activeDocId =
     state.focusedPane === 'secondary' ? state.panes.secondary.docId : state.panes.primary.docId;
 
@@ -31,7 +33,11 @@ export function TabStrip() {
               role="tab"
               aria-selected={active}
               className="tab__label"
-              onClick={() => dispatch({ type: 'ACTIVATE_TAB', docId: tab.docId })}
+              onClick={() => {
+                // 切到文档标签 = 离开 Quick File 预览（文件本身仍保留在左列）
+                quick.deactivate();
+                dispatch({ type: 'ACTIVATE_TAB', docId: tab.docId });
+              }}
             >
               {projectLabel && <span className="tab__project">{projectLabel}</span>}
               {tab.title}

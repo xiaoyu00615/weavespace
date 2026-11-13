@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ProjectSummary } from '../client/client-api';
 import { makeDocId } from '../state/doc-identity';
 import { useDocumentActions } from '../state/DocumentActionsContext';
+import { useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 import type { ResourceNodeState } from '../state/types';
 
@@ -70,6 +71,7 @@ function FileNode({
 }) {
   const { state } = useWorkspace();
   const actions = useDocumentActions();
+  const quick = useQuickFile();
   const docId = makeDocId(projectId, node.path ?? node.id);
   const selected = state.selectedByProject[projectId] === docId;
   const tab = state.tabs.find((item) => item.docId === docId);
@@ -87,7 +89,11 @@ function FileNode({
           .filter(Boolean)
           .join(' ')}
         style={{ paddingLeft: 12 + depth * 14 }}
-        onClick={() => void actions.openNode(node, projectId)}
+        onClick={() => {
+          // 打开项目文件即离开 Quick File 预览（Quick File 本身不被清除）
+          quick.deactivate();
+          void actions.openNode(node, projectId);
+        }}
       >
         <span className="tree__glyph" aria-hidden="true">
           ¶

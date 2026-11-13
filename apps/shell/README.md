@@ -127,6 +127,27 @@ Shell 不再 import 任何格式实现；预览按**扩展名**向能力注册�
 - 草稿备份键为 `ws:draft-backup:<projectId|local>:<path>`，A/a.md 与 B/a.md 不会互相覆盖。
 - 本阶段**不做**：Quick File、工作区持久化、Registry 动态刷新/重绑定、自动会话恢复。
 
+## Quick File（S11-B）
+
+左列项目树**下方**的独立区域，用于临时查看一个本机文件。它和项目文档是两类东西：
+
+| | Project Document | Quick File |
+|---|---|---|
+| 身份 | `projectId` + `resourceId` + Core Session | 无项目身份、无 `resourceId`、无 Session |
+| 数据来源 | Host → Registry → Provider → 磁盘 | 用户选择的 `File`（浏览器内存） |
+| 能力 | 可编辑、可条件保存 | **只读**预览，无保存入口 |
+| 生命周期 | 标签 + 草稿 + 冲突恢复 | 单个当前文件，刷新页面即消失 |
+
+- 入口只有两个：拖入单个文件、点击「选择文件」。不扫描目录、不自动加载、不接受文件夹。
+- 格式与大小门禁在 `state/quick-file.ts`：仅 `.md` / `.markdown` / `.txt`，单文件 ≤ 2 MiB，
+  读取前先判大小；严格 UTF-8 解码 + 二进制签名/控制字节筛查，乱码与二进制直接拒绝。
+- 预览**复用 S10-A 能力注册表**：`useViewer(extension)` → `renderViewerSafely` → `ViewerBoundary`，
+  没有第二套格式路由；查看器被停用时显示明确降级提示，不影响项目标签与草稿。
+- 全程不发 HTTP、不写盘、不改原文件、不进入项目树；`/api/save`、`/api/edit`、`/api/reload`
+  与它无关。
+- 迟到的读取用代次丢弃：读 A 期间又选了 B，A 的结果整份丢弃，绝不覆盖 B。
+- 打开项目文件或点击标签会离开 Quick File 预览（文件仍保留在左列），Quick File 从不关闭任何文档视图。
+
 ## 与 Core 的边界
 
 - 浏览器**不访问**文件系统或 SQLite；真实读写必须经 Core 的 CommandBus + PermissionService。
