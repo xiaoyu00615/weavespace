@@ -29,9 +29,15 @@ import { DEMO_CONTENTS, DEMO_NODES } from '../data/demo-project';
 import { installBeforeUnloadGuard, needsLeaveGuard } from './beforeunload-guard';
 import { draftBackupKey, hasUnsavedDrafts, isResponseOwnerCurrent } from './doc-identity';
 import { createDocumentOpener, createEditEpochs, type DocumentOpener } from './open-document';
-import { createWorkspaceAutosave, createWorkspaceStore, serializeWorkspace } from './workspace-persistence';
+import {
+  createWorkspaceAutosave,
+  createWorkspaceStore,
+  serializeWorkspace,
+  type Autosave,
+} from './workspace-persistence';
 import { countFiles, loadProjectResources, loadWorkspace } from './workspace-load';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
+import { createWorkspaceWriteGate } from './workspace-write-gate';
 import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
 
@@ -159,29 +165,56 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
    */
   const store = useMemo(() => createWorkspaceStore(safeLocalStorage()), []);
 
-  /** 进入 live 并加载工作区；失败（Host 不在线）返回 null，由调用方决定如何降级。 */
-  const connectWorkspace = useCallback(async () => {
-    // 先探测 Host：连不上就**不要**把界面切进 live（否则会显示"真实文件"却空空如也）
-    const probe = await liveClient.workspaceIdentity().catch(() => null);
-    if (!probe) {
-      dispatch({
-        type: 'NOTICE',
-        message: '无法连接本地服务：请先启动 apps/server（npm run start:server）',
+  /**
+   * 写入门禁（S11-C-R1）。
+   *
+   * 恢复期间 `WorkspaceState` 是"残缺"的：阶段 C 一个一个后台登记标签，
+   * 每登记一个都会触发一次状态变化。若此时允许自动保存，就会用"刚恢复了 2 个"
+   * 的状态覆盖"上次离开时有 8 个"的记录。门禁在恢复的第一个 await 之前合上，
+   * 恢复到达终态才放开；调大节流延迟只是缩小窗口，不是修复。
+   */
+  const gate = useMemo(() => createWorkspaceWriteGate(), []);
+
+  /**
+   * `autosave` 在 `restorer` 之后构造（它要读恢复流程的结转列表），
+   * 而 `restorer` 的终态回调又要请求一次提交，因此用一个 ref 打通这两个方向。
+   */
+  const autosaveRef = useRef<Autosave | null>(null);
+
+  /**
+   * 进入 live 并加载工作区；失败（Host 不在线）返回 null，由调用方决定如何降级。
+   *
+   * `isCancelled()`：恢复流程用它在**每次 await 之后**自检。用户已经切走时，
+   * 这里绝不能把界面切进 live——否则会出现"用户切到 Demo 却又冒出真实文件"。
+   */
+  const connectWorkspace = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      // 先探测 Host：连不上就**不要**把界面切进 live（否则会显示"真实文件"却空空如也）
+      const probe = await liveClient.workspaceIdentity().catch(() => null);
+      if (!probe) {
+        dispatch({
+          type: 'NOTICE',
+          message: '无法连接本地服务：请先启动 apps/server（npm run start:server）',
+        });
+        return null;
+      }
+      if (isCancelled()) return null;
+      if (modeRef.current !== 'live') {
+        // 与 switchMode 一致：先同步模式，再派发，避免在途响应读到旧模式
+        modeRef.current = 'live';
+        dispatch({ type: 'SET_MODE', mode: 'live' });
+      }
+      const loaded = await loadWorkspace({
+        getState: () => stateRef.current,
+        dispatch,
+        clientFor: (mode) => (mode === 'live' ? liveClient : demoClient),
       });
-      return null;
-    }
-    if (modeRef.current !== 'live') {
-      // 与 switchMode 一致：先同步模式，再派发，避免在途响应读到旧模式
-      modeRef.current = 'live';
-      dispatch({ type: 'SET_MODE', mode: 'live' });
-    }
-    const loaded = await loadWorkspace({
-      getState: () => stateRef.current,
-      dispatch,
-      clientFor: (mode) => (mode === 'live' ? liveClient : demoClient),
-    });
-    return loaded ? { workspaceKey: loaded.workspaceKey, workspaceMode: loaded.workspaceMode } : null;
-  }, [dispatch, demoClient, liveClient]);
+      // 加载期间用户接管了：结果不属于当前工作区，交出 null 让恢复流程收手
+      if (isCancelled()) return null;
+      return loaded ? { workspaceKey: loaded.workspaceKey, workspaceMode: loaded.workspaceMode } : null;
+    },
+    [dispatch, demoClient, liveClient],
+  );
 
   const restorer = useMemo(
     () =>
@@ -190,23 +223,33 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         getMode: () => modeRef.current,
         dispatch,
         store,
+        gate,
         connectLive: connectWorkspace,
         openInBackground: (node, projectId) =>
           opener.openNode(node, projectId, { background: true }),
+        // 终态后再排一次写入：此时标签已经全部登记完，写下去的是完整状态（AS-04）
+        onSettled: () => autosaveRef.current?.schedule(),
       }),
-    [connectWorkspace, dispatch, opener, store],
+    [connectWorkspace, dispatch, gate, opener, store],
   );
 
   const autosave = useMemo(
     () =>
       createWorkspaceAutosave({
         store,
+        gate,
         // 只在"已连接工作区"时才产出快照（serialize 自己也会拒绝 demo / 无摘要）
         snapshot: () =>
-          serializeWorkspace(stateRef.current, { workspaceKey: stateRef.current.workspaceKey }),
+          serializeWorkspace(stateRef.current, {
+            workspaceKey: stateRef.current.workspaceKey,
+            // 结转：未处理的未确认内容提示 + 恢复被中断时还没重建的标签。
+            // 少了这一步，下一次自动保存就会把它们静默抹掉（DR-03 / AS-05）。
+            carryOver: [...restorer.unsavedHints(), ...restorer.pendingTabs()],
+          }),
       }),
-    [store],
+    [gate, restorer, store],
   );
+  autosaveRef.current = autosave;
 
   /**
    * 启动恢复：只有存在本地记录时才尝试连 Host。
@@ -335,6 +378,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       async openNode(node: ResourceNodeState, projectId?: string | null) {
         // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）
         restorer.noteInteraction();
+        // 结构化操作 = 接管恢复（AS-05）：此后当前界面才是权威，提交时合并结转标签
+        gate.adopt();
         // 打开/刷新/并发/模式切换的全部时序处理都在 open-document.ts：
         // 这里只转发，避免把异步归属判定散落在组件里（G2-R1）。
         await opener.openNode(node, projectId);
@@ -354,6 +399,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         // 本地编辑代次（G2-R1）：任何在途的磁盘读取都在此作废，避免旧内容覆盖草稿
         opener.noteLocalEdit(docId);
         restorer.noteInteraction();
+        // 改动正文同样属于"用户已经接管"：提交时不得丢掉还没重建的旧标签
+        gate.adopt();
         dispatch({ type: 'EDIT_DOC', docId, text });
         if (tab.mode !== 'live' || !tab.sessionId) return;
         queueFor(docId, tab.sessionId, tab.projectId, tab.viewId).schedule(text);
@@ -482,6 +529,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         queues.current.delete(docId);
         opener.forget(docId);
         restorer.noteInteraction();
+        gate.adopt();
         dispatch({ type: 'CLOSE_TAB', docId });
       },
 
@@ -504,6 +552,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         modeRef.current = mode;
         opener.reset();
         restorer.noteInteraction();
+        gate.adopt();
         dispatch({ type: 'SET_MODE', mode });
         if (mode === 'live') {
           await loadWorkspace({
@@ -688,7 +737,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         }
       },
     };
-  }, [dispatch, demoClient, liveClient, opener, restorer, store]);
+  }, [dispatch, demoClient, gate, liveClient, opener, restorer, store]);
 
   return (
     <DocumentActionsContext.Provider value={actions}>{children}</DocumentActionsContext.Provider>

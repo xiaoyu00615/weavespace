@@ -24,10 +24,12 @@ import {
   serializeWorkspace,
   storageKeyFor,
   validateSnapshot,
+  type PersistedTab,
   type PersistedWorkspaceV1,
   type StorageLike,
   type WorkspaceStore,
 } from '../../apps/shell/src/state/workspace-persistence.ts';
+import { createWorkspaceWriteGate } from '../../apps/shell/src/state/workspace-write-gate.ts';
 
 const KEY = 'a'.repeat(16) + '0123456789abcdef';
 
@@ -512,4 +514,145 @@ test('PC-09b 记录按工作区摘要隔离，读不到别的摘要的记录', (
   assert.equal(store.read(other), null, '不同工作区不得读到彼此记录');
   assert.equal(store.read(KEY)?.workspaceKey, KEY);
   assert.equal(storage.map.has(storageKeyFor(other)), false);
+});
+
+// ---------------------------------------------------------------------------
+// PC-06d 写入闸门（S11-C-R1 / AS-01…AS-03 的契约层）
+// ---------------------------------------------------------------------------
+test('PC-06d 门禁持有时自动保存一个字节都不写；放开后恢复写入', () => {
+  const storage = new MemoryStorage();
+  const store = createWorkspaceStore(storage);
+  const snapshot = serializeWorkspace(baseState(), { workspaceKey: KEY }) as PersistedWorkspaceV1;
+  const gate = createWorkspaceWriteGate();
+  const timers = new Map<number, () => void>();
+  let next = 1;
+
+  const autosave = createWorkspaceAutosave({
+    store,
+    gate,
+    snapshot: () => snapshot,
+    setTimer: (fn) => {
+      const handle = next++;
+      timers.set(handle, fn);
+      return handle;
+    },
+    clearTimer: (handle) => {
+      timers.delete(handle as number);
+    },
+  });
+
+  gate.hold();
+  autosave.schedule();
+  assert.equal(timers.size, 0, '恢复期间连定时器都不排');
+  assert.equal(autosave.flush(), 'held');
+  assert.equal(storage.map.size, 0, '门禁持有时不得写入任何键');
+
+  gate.release();
+  autosave.schedule();
+  assert.equal(timers.size, 1);
+  for (const fn of [...timers.values()]) fn();
+  timers.clear();
+  assert.equal(storage.map.size, 2, '放开后正常写记录 + 指针');
+
+  // 中断（sealed）同样拦住；只有显式提交点才放开
+  gate.hold();
+  gate.seal();
+  storage.map.clear();
+  assert.equal(autosave.flush(), 'held');
+  assert.equal(storage.map.size, 0);
+  gate.adopt();
+  assert.equal(autosave.flush(), 'written');
+  assert.equal(storage.map.size, 2);
+  autosave.dispose();
+});
+
+// ---------------------------------------------------------------------------
+// PC-01c 结转标签（S11-C-R1 / AS-05 的合并提交）
+// ---------------------------------------------------------------------------
+test('PC-01c 结转标签会被合并写入，但不重复、不越权、不影响窗格下标', () => {
+  const state = makeState({
+    tabs: [
+      tab({ docId: 'doc:project-a/a.md', projectId: 'project-a', path: 'a.md' }),
+      tab({ docId: 'doc:project-b/a.md', projectId: 'project-b', path: 'a.md' }),
+    ],
+    panes: {
+      primary: { docId: 'doc:project-a/a.md', mode: 'editor' },
+      secondary: { docId: 'doc:project-b/a.md', mode: 'preview' },
+    },
+  });
+
+  const carryOver = [
+    // 与当前标签同源：不得重复
+    { projectId: 'project-a', path: 'a.md', mode: 'live' as const, hadUnsavedChanges: false },
+    // 恢复还没处理完的旧标签
+    { projectId: 'project-a', path: 'n1.md', mode: 'live' as const, hadUnsavedChanges: false },
+    { projectId: 'project-b', path: 'x/deep.md', mode: 'live' as const, hadUnsavedChanges: false },
+    // 未确认内容提示
+    { projectId: 'project-a', path: 'draft.md', mode: 'live' as const, hadUnsavedChanges: true },
+    // 非法条目：越界路径、绝对路径、未知项目格式
+    { projectId: 'project-a', path: '../escape.md', mode: 'live' as const, hadUnsavedChanges: false },
+    { projectId: 'project-a', path: '/abs.md', mode: 'live' as const, hadUnsavedChanges: false },
+    { projectId: 'bad/id', path: 'x.md', mode: 'live' as const, hadUnsavedChanges: false },
+  ];
+
+  const snapshot = serializeWorkspace(state, { workspaceKey: KEY, carryOver });
+  assert.ok(snapshot);
+  assert.equal(snapshot.tabs.length, 5, '2 个当前标签 + 3 个合法结转（重复与非法被丢弃）');
+  assert.deepEqual(
+    snapshot.tabs.map((item) => `${item.projectId}/${item.path}`),
+    ['project-a/a.md', 'project-b/a.md', 'project-a/n1.md', 'project-b/x/deep.md', 'project-a/draft.md'],
+  );
+  assert.equal(snapshot.tabs[4].hadUnsavedChanges, true, '未确认内容提示必须原样保留');
+  // 窗格下标仍只指向"真正恢复出来的"标签
+  assert.deepEqual(snapshot.panes.primary, { tabIndex: 0, mode: 'editor' });
+  assert.deepEqual(snapshot.panes.secondary, { tabIndex: 1, mode: 'preview' });
+
+  // 只有 1 个当前标签时：结转的 3 条合法标签全部进来（共 4 条）
+  const one = serializeWorkspace(
+    makeState({ tabs: [tab({ docId: 'doc:project-a/a.md', projectId: 'project-a', path: 'a.md' })] }),
+    { workspaceKey: KEY, carryOver },
+  );
+  assert.ok(one);
+  assert.equal(one.tabs.length, 4);
+
+  // 上限仍然生效
+  const many = Array.from({ length: MAX_TABS + 10 }, (_, index) => ({
+    projectId: 'project-a',
+    path: `f${index}.md`,
+    mode: 'live' as const,
+    hadUnsavedChanges: false,
+  }));
+  const capped = serializeWorkspace(makeState({ tabs: [] }), { workspaceKey: KEY, carryOver: many });
+  assert.equal(capped?.tabs.length, MAX_TABS);
+});
+
+test('PC-02b 结转条目同样走白名单：不带任何运行期身份', () => {
+  const state = makeState({
+    tabs: [tab({ docId: 'doc:project-a/a.md', projectId: 'project-a', path: 'a.md' })],
+  });
+  const snapshot = serializeWorkspace(state, {
+    workspaceKey: KEY,
+    carryOver: [
+      {
+        projectId: 'project-a',
+        path: 'pending.md',
+        mode: 'live',
+        hadUnsavedChanges: true,
+        // 手工塞进来的运行期字段必须被剥离
+        sessionId: 'leaked-session',
+        viewId: 'leaked-view',
+        buffer: 'leaked-body',
+      } as unknown as PersistedTab,
+    ],
+  });
+  const json = encodeSnapshot(snapshot as PersistedWorkspaceV1);
+  assert.equal(json.includes('leaked-session'), false);
+  assert.equal(json.includes('leaked-view'), false);
+  assert.equal(json.includes('leaked-body'), false);
+  assert.deepEqual(Object.keys(snapshot?.tabs[1] ?? {}).sort(), [
+    'hadUnsavedChanges',
+    'mode',
+    'path',
+    'projectId',
+  ]);
 });

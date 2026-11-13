@@ -86,7 +86,13 @@ export interface StorageLike {
   removeItem(key: string): void;
 }
 
-export type WriteOutcome = 'written' | 'skipped' | 'unavailable' | 'quota';
+/**
+ * 写入结果。
+ *
+ * `held` / `sealed`（S11-C-R1）表示"被恢复门禁拦住，**没有触碰存储**"：
+ * 这不是失败，更不是成功——调用方不得据此宣称记录已保存。
+ */
+export type WriteOutcome = 'written' | 'skipped' | 'unavailable' | 'quota' | 'held';
 
 // ---------------------------------------------------------------------------
 // 路径 / 标识校验
@@ -147,6 +153,17 @@ function isBoolean(value: unknown): value is boolean {
 export interface SerializeOptions {
   /** 当前 Host 的工作区摘要；为 null（demo / 未连接）时不写记录。 */
   workspaceKey: string | null;
+  /**
+   * 结转的标签（S11-C-R1）。
+   *
+   * 两个来源，都不属于"当前界面"，但都**不能被这次写入抹掉**：
+   * - 未自动重开的未确认内容标签（DR-03）：在用户明确处理前保留提示；
+   * - 恢复被中断时还没处理完的标签（AS-05）：接管后的提交必须合并而不是替换。
+   *
+   * 已经以"当前标签"形式存在的（同一项目 + 同一路径）会被跳过——用户自己打开了它，
+   * 提示就已经被处理掉了。
+   */
+  carryOver?: readonly PersistedTab[];
   now?: () => Date;
 }
 
@@ -170,6 +187,11 @@ function expandedWhitelist(state: WorkspaceState): Record<string, Record<string,
     out[projectId] = picked;
   }
   return out;
+}
+
+/** 标签身份：项目 + 相对路径（docId 属于运行期，不进存储）。 */
+function tabKeyOf(tab: { projectId: string | null; path: string }): string {
+  return `${tab.projectId ?? ''}\u0000${tab.path}`;
 }
 
 /**
@@ -202,6 +224,32 @@ export function serializeWorkspace(
       path: tab.path,
       mode: 'live',
       hadUnsavedChanges: hasUnconfirmedEdits(tab),
+    });
+  }
+
+  /**
+   * 结转：把"当前界面里还没有、但记录里不该丢"的标签补回来（S11-C-R1）。
+   *
+   * 必须在窗格下标计算**之前**结束，但**不能**影响下标语义：窗格只指向
+   * 真正恢复出来的标签，结转条目永远不参与 `tabIndex`（否则下次启动会把窗格
+   * 指到一个"上次压根没打开"的文件上）。
+   */
+  const seen = new Set(tabs.map(tabKeyOf));
+  for (const carried of options.carryOver ?? []) {
+    if (tabs.length >= MAX_TABS) break;
+    if (!carried || !isSafeRelativePath(carried.path)) continue;
+    if (carried.projectId !== null && !isProjectId(carried.projectId)) continue;
+    // 没有项目身份只可能是 Legacy（与上面"当前标签"的规则保持一致）
+    if (carried.projectId === null && state.workspaceMode !== 'legacy') continue;
+    const carriedKey = tabKeyOf(carried);
+    // 与当前标签同源（同项目同路径）→ 用户自己已经打开过它，提示到此结束
+    if (seen.has(carriedKey)) continue;
+    seen.add(carriedKey);
+    tabs.push({
+      projectId: carried.projectId,
+      path: carried.path,
+      mode: 'live',
+      hadUnsavedChanges: carried.hadUnsavedChanges === true,
     });
   }
 
@@ -530,6 +578,11 @@ export interface AutosaveOptions {
   store: WorkspaceStore;
   /** 取当前快照；返回 null 表示"此刻不该写"（如未连接工作区）。 */
   snapshot(): PersistedWorkspaceV1 | null;
+  /**
+   * 恢复期间的写入门禁（S11-C-R1）。存在且不允许写入时，`schedule()` 不排定时器、
+   * `flush()` 直接返回 `held`——**存储一个字节都不会被改**。
+   */
+  gate?: { allowsWrite(): boolean; state(): string };
   delayMs?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
@@ -558,6 +611,8 @@ export function createWorkspaceAutosave(options: AutosaveOptions): Autosave {
   };
 
   const write = (): WriteOutcome => {
+    // 门禁优先于一切：恢复期间连"读取当前状态做快照"都不必要，直接拦住
+    if (options.gate && !options.gate.allowsWrite()) return 'held';
     const snapshot = options.snapshot();
     if (!snapshot) return 'skipped';
     return options.store.write(snapshot);
@@ -566,6 +621,8 @@ export function createWorkspaceAutosave(options: AutosaveOptions): Autosave {
   return {
     schedule() {
       if (disposed) return;
+      // 被门禁拦住时不排定时器：避免恢复期间反复空转，也避免"排了队再被拦"的歧义
+      if (options.gate && !options.gate.allowsWrite()) return;
       cancel();
       handle = setTimer(() => {
         handle = null;

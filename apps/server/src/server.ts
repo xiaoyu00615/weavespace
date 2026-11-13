@@ -357,14 +357,21 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       : undefined;
 
   /**
-   * 工作区身份（S11-C）：**只用于恢复记录匹配**，不能当作读写授权凭据。
+   * 工作区身份（S11-C / S11-C-R1）：**只用于恢复记录匹配**，不能当作读写授权凭据。
    *
-   * 组成 = 项目 id + 规范根 + 根身份令牌（Multi）/ 规范根 + 根身份令牌（Legacy），
+   * 组成 = 每个**已配置**项目的 id + （READY 时）规范根 + 根身份令牌，
    * 排序后做 SHA-256，只暴露摘要。因此：
    * - Host 重启、根未变 → 摘要不变（可匹配）；
    * - 换根 / 根被同名目录替换 / 项目组合变化 → 摘要变化（拒绝恢复文件标签）；
    * - 浏览器只拿到摘要，看不到任何路径、令牌或授权信息。
-   * 无法可靠确认（根缺失、身份不可用）时不提供该字段 → 客户端 fail-closed（仅恢复界面）。
+   *
+   * 关键：**不可用的项目也必须参与身份**。只把 READY 项目算进去，会让
+   * "只配置 A" 与 "配置 A + B（B 的根缺失）" 得到同一个摘要——那是一个错误的匹配：
+   * 两个工作区的项目组合不同，恢复时却会互相认领对方的标签。不可用项目以固定的
+   * `unavailable` 标记参与（不写原因，保证同一份坏配置重启后摘要稳定），
+   * 这样项目从 READY 变成不可用、或从不可用恢复成 READY，摘要都会变（fail-closed）。
+   *
+   * 无法可靠确认（一个项目都没有、根不可读）时不提供该字段 → 客户端 fail-closed。
    */
   function computeWorkspaceKey(): string | undefined {
     try {
@@ -372,8 +379,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       if (registry) {
         for (const summary of registry.list()) {
           const handle = registry.get(summary.projectId);
-          if (!handle) continue; // 非 READY：不参与身份，摘要随之变化
-          lines.push(`multi\u0000${handle.projectId}\u0000${handle.canonicalRoot}\u0000${handle.rootToken}`);
+          lines.push(
+            handle
+              ? `multi\u0000${summary.projectId}\u0000${handle.canonicalRoot}\u0000${handle.rootToken}`
+              : `multi\u0000${summary.projectId}\u0000unavailable`,
+          );
         }
         if (lines.length === 0) return undefined;
       } else if (legacyProvider) {

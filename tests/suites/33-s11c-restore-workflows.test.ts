@@ -709,7 +709,7 @@ test('PC-15/16 文件不存在只跳过它，其他文件照常恢复且不新�
 });
 
 // ---------------------------------------------------------------------------
-// PC-17 dirty 元数据不被当作已保存草稿
+// PC-17 dirty 元数据不被当作已保存草稿（S11-C-R1 修正为 DR 契约）
 // ---------------------------------------------------------------------------
 test('PC-17 只有 hadUnsavedChanges 标记时不得宣称草稿已恢复', async () => {
   const roots = await makeRoots('ws-s11c-17-');
@@ -731,13 +731,19 @@ test('PC-17 只有 hadUnsavedChanges 标记时不得宣称草稿已恢复', asyn
     try {
       const second = makeHarness(restarted.url, storage);
       const report = await second.restore();
-      const tab = second.state.tabs[0];
-      assert.equal(tab.buffer, '# A\n', '只能拿到磁盘内容');
-      assert.equal(tab.dirty, false, '不得凭空变成 dirty');
-      assert.equal(report.draftsLost, 1, '必须如实报告未恢复的内容');
-      assert.equal(report.draftsRecovered, 0);
-      assert.match(report.notice, /未保存内容未自动恢复/);
+      // S11-C-R1 / DR-01：脏标签不自动重开，否则只能拿到磁盘内容却显示成干净标签
+      assert.equal(second.state.tabs.length, 0, '不得自动重开有未确认内容的标签');
+      assert.equal(report.tabsRestored, 0);
+      assert.equal(report.draftsPending, 1, '必须如实报告还有未处理的内容');
+      assert.match(report.notice, /未保存内容/);
+      assert.match(report.notice, /未自动恢复/);
       assert.equal(report.notice.includes('草稿已恢复'), false);
+      // 提示必须留在记录里，下一次启动仍然能看到（结转由套件 35 覆盖）
+      assert.equal(
+        createWorkspaceStore(storage).readLast()?.tabs[0].hadUnsavedChanges,
+        true,
+        '提示不得被恢复流程自己抹掉',
+      );
     } finally {
       await restarted.close();
     }
@@ -746,7 +752,7 @@ test('PC-17 只有 hadUnsavedChanges 标记时不得宣称草稿已恢复', asyn
   }
 });
 
-test('PC-17b Core 仍持有草稿时如实报告"由服务端会话重新取得"', async () => {
+test('PC-17b Core 仍持有草稿时也不自动重开；用户手动打开才拿到草稿', async () => {
   const roots = await makeRoots('ws-s11c-17b-');
   const host = await startHost(roots, 'multi');
   try {
@@ -769,12 +775,21 @@ test('PC-17b Core 仍持有草稿时如实报告"由服务端会话重新取得"
     // 刷新浏览器：Host 进程没变，会话与草稿都还在
     const second = makeHarness(host.url, storage);
     const report = await second.restore();
+    // 不自动重开：恢复不能替用户判断"这份内容还要不要"
+    assert.equal(second.state.tabs.length, 0);
+    assert.equal(report.draftsPending, 1);
+    assert.equal(
+      second.calls.some((call) => call.name === 'applyEdit' || call.name === 'closeDocument'),
+      false,
+      '恢复阶段不得改写或关闭任何会话',
+    );
+
+    // 用户自己打开：内容来自服务端会话（不是存储），且如实是 dirty
+    const reopened = await second.opener.openNode(nodeOf('a.md', 'project-a'), 'project-a');
+    assert.equal(reopened.ok, true);
     const restored = second.state.tabs[0];
     assert.equal(restored.buffer, '# 保存在 Core 里的草稿\n', '内容来自服务端会话，不是存储');
     assert.equal(restored.dirty, true);
-    assert.equal(report.draftsRecovered, 1);
-    assert.equal(report.draftsLost, 0);
-    assert.match(report.notice, /由服务端会话重新取得/);
     assert.equal(JSON.stringify(storage.map.get(storageKeyFor(second.state.workspaceKey as string))).includes('核心草稿'), false);
   } finally {
     await host.close();
