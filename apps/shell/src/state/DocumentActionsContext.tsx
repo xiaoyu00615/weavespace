@@ -35,7 +35,7 @@ import {
   serializeWorkspace,
   type Autosave,
 } from './workspace-persistence';
-import { countFiles, loadProjectResources, loadWorkspace } from './workspace-load';
+import { countFiles, createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
 import { useWorkspace } from './WorkspaceContext';
@@ -139,6 +139,15 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   const edits = useRef(createEditEpochs());
 
   /**
+   * 工作区加载代次（S11-C-R2）。
+   *
+   * 恢复连接和手动切模式都会各占一代；用户一旦切走，上一代的所有在途响应立即作废。
+   * 不能只比较 `modeRef`：切到 Demo 再切回 Live 之后模式又变回 `live`，迟到结果会
+   * 被误认成本代结果重新写进界面。
+   */
+  const loadEpoch = useRef(createLoadEpoch());
+
+  /**
    * 打开流程的编排器（G2-R1）：真实实现放在 `open-document.ts`，
    * 这里只注入宿主依赖，便于在 Node 里用真实 Host + reducer 验证时序。
    */
@@ -189,8 +198,13 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
    */
   const connectWorkspace = useCallback(
     async (isCancelled: () => boolean = () => false) => {
+      // 本次连接独占一代；恢复流程自带的代次与加载代次任一过期都算取消
+      const cancelledByEpoch = loadEpoch.current.start();
+      const cancelled = () => isCancelled() || cancelledByEpoch();
       // 先探测 Host：连不上就**不要**把界面切进 live（否则会显示"真实文件"却空空如也）
       const probe = await liveClient.workspaceIdentity().catch(() => null);
+      // 探测结果也是会迟到的：已取消时连"连不上"的提示都属于上一个工作区
+      if (cancelled()) return null;
       if (!probe) {
         dispatch({
           type: 'NOTICE',
@@ -198,7 +212,6 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         });
         return null;
       }
-      if (isCancelled()) return null;
       if (modeRef.current !== 'live') {
         // 与 switchMode 一致：先同步模式，再派发，避免在途响应读到旧模式
         modeRef.current = 'live';
@@ -208,9 +221,10 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         getState: () => stateRef.current,
         dispatch,
         clientFor: (mode) => (mode === 'live' ? liveClient : demoClient),
+        isCancelled: cancelled,
       });
       // 加载期间用户接管了：结果不属于当前工作区，交出 null 让恢复流程收手
-      if (isCancelled()) return null;
+      if (cancelled()) return null;
       return loaded ? { workspaceKey: loaded.workspaceKey, workspaceMode: loaded.workspaceMode } : null;
     },
     [dispatch, demoClient, liveClient],
@@ -540,6 +554,9 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'NOTICE', message: '有未保存修改，已阻止切换模式（请先保存）' });
           return;
         }
+        // 用户一旦要求切换，所有在途加载立即失效：连"收回服务端视图"的等待期间
+        // 回来的结果也不属于新工作区（S11-C-R2）
+        loadEpoch.current.cancel();
         // 尽量收回服务端视图，避免 live 会话在后台悬挂
         for (const tab of stateRef.current.tabs) {
           if (tab.mode === 'live' && tab.sessionId && tab.viewId) {
@@ -554,11 +571,16 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         restorer.noteInteraction();
         gate.adopt();
         dispatch({ type: 'SET_MODE', mode });
+        // 旧工作区的"加载中"标记不属于新工作区，在切换点收掉（加载链因取消不会
+        // 再在 finally 里派发它）
+        if (mode !== 'live') dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
         if (mode === 'live') {
+          const cancelled = loadEpoch.current.start();
           await loadWorkspace({
             getState: () => stateRef.current,
             dispatch,
             clientFor: (target) => (target === 'live' ? liveClient : demoClient),
+            isCancelled: cancelled,
           });
         }
       },

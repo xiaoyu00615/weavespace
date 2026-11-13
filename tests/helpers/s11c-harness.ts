@@ -15,10 +15,10 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createShellServer } from '../../apps/server/src/server.ts';
-import { createLiveClient, type WeaveSpaceClient } from '../../apps/shell/src/client/client-api.ts';
+import { createLiveClient, type WeaveSpaceClient, type WorkspaceMode } from '../../apps/shell/src/client/client-api.ts';
 import { createDocumentOpener, createEditEpochs } from '../../apps/shell/src/state/open-document.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
-import { loadWorkspace } from '../../apps/shell/src/state/workspace-load.ts';
+import { createLoadEpoch, loadWorkspace, type LoadEpoch } from '../../apps/shell/src/state/workspace-load.ts';
 import {
   createWorkspaceRestorer,
   type RestoreReport,
@@ -162,6 +162,9 @@ export interface Call {
   projectId?: string;
 }
 
+/** 可以被"挂起"的请求种类（S11-C-R2）：用可控 Promise 制造迟到的响应。 */
+export type HoldableRequest = 'identity' | 'projects' | 'resources';
+
 export interface Harness {
   readonly state: WorkspaceState;
   readonly opener: ReturnType<typeof createDocumentOpener>;
@@ -172,10 +175,22 @@ export interface Harness {
   readonly inner: WeaveSpaceClient;
   readonly calls: Call[];
   readonly views: SeenView[];
+  /** 加载代次（与 Provider 同一份实例）。 */
+  readonly epoch: LoadEpoch;
   mode(): ClientMode;
   dispatch(action: WorkspaceAction): void;
   /** 模拟"上一轮会话"：连接 Host 并加载项目/资源（不触发恢复）。 */
   bootLive(): Promise<void>;
+  /** 与 Provider 的 `connectWorkspace` 同构：探测 Host → 切 live → 加载工作区。 */
+  connectLive(isCancelled?: () => boolean): Promise<{ workspaceKey: string | null; workspaceMode: WorkspaceMode } | null>;
+  /** 与 Provider 的 `switchMode` 同构：作废旧代次 → 派发模式 → （live 时）加载。 */
+  manualSwitch(mode: ClientMode): Promise<void>;
+  /** 挂起第 `at` 次某类请求（1 起数）；返回放行函数。 */
+  hold(kind: HoldableRequest, at: number): () => void;
+  /** 挂起下一次某类请求。 */
+  holdNext(kind: HoldableRequest): () => void;
+  /** 该类请求已发出的次数。 */
+  callCount(kind: string): number;
   /** 把当前状态写成存储记录（= 离开页面前的那次 flush）。 */
   saveSnapshot(): PersistedWorkspaceV1;
   /** 挂起第 n 次 openDocument 的响应；返回放行函数。 */
@@ -224,10 +239,44 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
   let connectGate: Promise<void> | null = null;
   let releaseConnectGate: (() => void) | null = null;
 
+  /**
+   * 迟到响应夹具（S11-C-R2）：把第 n 次请求钉在网络上，等测试放行。
+   * 取消语义必须有"响应确实晚到"这个前提才测得到，用 sleep 制造时序不算证据。
+   */
+  const holds: Record<HoldableRequest, { count: number; pending: Map<number, { promise: Promise<void>; release: () => void }> }> = {
+    identity: { count: 0, pending: new Map() },
+    projects: { count: 0, pending: new Map() },
+    resources: { count: 0, pending: new Map() },
+  };
+
+  async function passHold(kind: HoldableRequest): Promise<void> {
+    const slot = holds[kind];
+    slot.count += 1;
+    const held = slot.pending.get(slot.count);
+    if (!held) return;
+    slot.pending.delete(slot.count);
+    await held.promise;
+  }
+
+  function holdRequestAt(kind: HoldableRequest, at: number): () => void {
+    let release: () => void = () => undefined;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    holds[kind].pending.set(at, { promise, release });
+    return () => {
+      holds[kind].pending.delete(at);
+      release();
+    };
+  }
+
+  const epoch = createLoadEpoch();
+
   const client: WeaveSpaceClient = {
     ...inner,
     async workspaceIdentity() {
       calls.push({ name: 'workspaceIdentity' });
+      await passHold('identity');
       const held = connectGate;
       if (held) {
         connectGate = null;
@@ -241,10 +290,12 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
     },
     async listProjects() {
       calls.push({ name: 'listProjects' });
+      await passHold('projects');
       return inner.listProjects();
     },
     async listResources(projectId?: string) {
       calls.push(projectId ? { name: 'listResources', projectId } : { name: 'listResources' });
+      await passHold('resources');
       return inner.listResources(projectId);
     },
     async openDocument(path: string, projectId?: string) {
@@ -335,29 +386,69 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
     },
   });
 
+  /**
+   * 与 Provider 的 `connectWorkspace` 同构（S11-C-R2）：
+   * 每次连接独占一个加载代次，任何一次主动切换都会让本代结果作废。
+   */
+  async function connectLive(
+    isCancelled: () => boolean = () => false,
+  ): Promise<{ workspaceKey: string | null; workspaceMode: WorkspaceMode } | null> {
+    const cancelledByEpoch = epoch.start();
+    const cancelled = () => isCancelled() || cancelledByEpoch();
+    // 先探测 Host：连不上就**不要**把界面切进 live
+    const probe = await client.workspaceIdentity().catch(() => null);
+    if (cancelled()) return null;
+    if (!probe) return null;
+    if (mode !== 'live') {
+      // 与 Provider 的 switchMode 顺序一致：先同步模式，再派发
+      mode = 'live';
+      dispatch({ type: 'SET_MODE', mode: 'live' });
+    }
+    const loaded = await loadWorkspace({
+      getState: () => state,
+      dispatch,
+      clientFor,
+      isCancelled: cancelled,
+    });
+    // 加载期间用户接管了：结果不属于当前工作区，交出 null 让恢复流程收手
+    if (cancelled()) return null;
+    return loaded ? { workspaceKey: loaded.workspaceKey, workspaceMode: loaded.workspaceMode } : null;
+  }
+
   const restorer = createWorkspaceRestorer({
     getState: () => state,
     getMode: () => mode,
     dispatch,
     store,
     gate,
-    async connectLive(isCancelled) {
-      // 与 Provider 完全一致：先探测 Host，连不上就不切进 live
-      const probe = await client.workspaceIdentity().catch(() => null);
-      if (!probe) return null;
-      if (isCancelled()) return null;
-      if (mode !== 'live') {
-        // 与 Provider 的 switchMode 顺序一致：先同步模式，再派发
-        mode = 'live';
-        dispatch({ type: 'SET_MODE', mode: 'live' });
-      }
-      const loaded = await loadWorkspace({ getState: () => state, dispatch, clientFor });
-      if (isCancelled()) return null;
-      return loaded ? { workspaceKey: loaded.workspaceKey, workspaceMode: loaded.workspaceMode } : null;
-    },
+    connectLive,
     openInBackground: (node, projectId) => opener.openNode(node, projectId, { background: true }),
     onSettled: () => autosave.schedule(),
   });
+
+  /** 与 Provider 的 `switchMode` 的派发部分同构。 */
+  function applyModeChange(next: ClientMode): void {
+    mode = next;
+    restorer.noteInteraction();
+    gate.adopt();
+    dispatch({ type: 'SET_MODE', mode: next });
+    // 上一个工作区的"加载中"标记不属于新工作区：切走时在这里收掉
+    if (next !== 'live') dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
+  }
+
+  /**
+   * 用户主动切换模式（与 Provider 的 `switchMode` 同构）：
+   * 先作废上一代加载，再派发模式；切到 live 时用新代次加载。
+   */
+  async function manualSwitch(next: ClientMode): Promise<void> {
+    if (next === mode) return;
+    // 用户一旦要求切换，所有在途加载立即失效（包括正在等待响应的那些）
+    epoch.cancel();
+    applyModeChange(next);
+    if (next !== 'live') return;
+    const cancelled = epoch.start();
+    await loadWorkspace({ getState: () => state, dispatch, clientFor, isCancelled: cancelled });
+  }
 
   const holdOpenAt = (n: number): (() => void) => {
     holdAt = n;
@@ -384,8 +475,14 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
     inner,
     calls,
     views,
+    epoch,
     mode: () => mode,
     dispatch,
+    connectLive,
+    manualSwitch,
+    hold: holdRequestAt,
+    holdNext: (kind: HoldableRequest) => holdRequestAt(kind, holds[kind].count + 1),
+    callCount: (kind: string) => calls.filter((call) => call.name === kind).length,
     async bootLive() {
       mode = 'live';
       dispatch({ type: 'SET_MODE', mode: 'live' });
@@ -419,11 +516,9 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
       };
     },
     setMode(next) {
-      // 与 Provider 的 switchMode 一致：同步模式镜像 + 派发 + 接管恢复
-      mode = next;
-      restorer.noteInteraction();
-      gate.adopt();
-      dispatch({ type: 'SET_MODE', mode: next });
+      // 与 Provider 的 switchMode 一致：作废旧代次 + 同步模式镜像 + 派发 + 接管恢复
+      epoch.cancel();
+      applyModeChange(next);
     },
     restore() {
       return restorer.restore().then((value) => {
