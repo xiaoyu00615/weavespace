@@ -77,6 +77,9 @@ Shell 不再 import 任何格式实现；预览按**扩展名**向能力注册�
 
 - `capabilities/registry.ts` 是唯一 import 插件的地方（组合根），内置注册
   `weavespace.markdown` 与 `weavespace.plaintext`；注册顺序即优先级。
+- **构造只登记、启动是显式步骤**：`createShellCapabilityRegistry()` 不激活任何插件，
+  `registry.start()` 由 `CapabilityProvider` 在 effect 中调用一次；`start()` 缓存 Promise，
+  StrictMode 重放 effect 不会重复初始化插件。
 - 停用 Markdown → `.md` 自动回退到通用文本查看器；文件树、会话、草稿、保存链路均不受影响。
 - 两种故障都只影响预览窗格：`renderViewerSafely`（兜同步抛错）+ `ViewerBoundary`（兜渲染期错误）。
 - 仍存在的边界：**同进程，无沙箱**；错误边界不等于隔离。

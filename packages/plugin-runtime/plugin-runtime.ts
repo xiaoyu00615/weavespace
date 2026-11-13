@@ -134,6 +134,15 @@ export function createPluginRuntime(options: PluginRuntimeOptions = {}): PluginR
   const manifests = new Map<string, PluginManifest>();
   /** 能力名 → pluginId（按注册顺序）。 */
   const capabilityProviders = new Map<string, string[]>();
+  /**
+   * 每个插件一条生命周期串行链（S10-A-R2）。
+   *
+   * - 并发的 activate 排队执行：第二个进入时状态已是 ACTIVE，直接返回，
+   *   插件初始化钩子只被执行一次；
+   * - deactivate 排在同一条链上，因此不会与正在进行的初始化交叉；
+   * - 链按 pluginId 分开，不同插件之间没有全局锁，互不阻塞。
+   */
+  const lifecycleChains = new Map<string, Promise<unknown>>();
 
   function log(event: string, record: Partial<PluginRecord>, extra: Record<string, unknown> = {}) {
     logger?.log({
@@ -157,6 +166,23 @@ export function createPluginRuntime(options: PluginRuntimeOptions = {}): PluginR
       capabilityProviders.set(name, list);
     }
     return names;
+  }
+
+  /**
+   * 把同一插件的生命周期操作串起来。链上只保存"已消化错误"的版本，
+   * 避免一次失败让后续 activate/deactivate 全部短路。
+   */
+  function serializeLifecycle<T>(pluginId: string, task: () => Promise<T>): Promise<T> {
+    const previous = lifecycleChains.get(pluginId) ?? Promise.resolve();
+    const next = previous.then(task);
+    lifecycleChains.set(
+      pluginId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
   }
 
   /** 依赖是否满足：Core 侧可信模块，或**已注册且已激活**的插件。 */
@@ -286,78 +312,90 @@ export function createPluginRuntime(options: PluginRuntimeOptions = {}): PluginR
     },
 
     async activate(pluginId: string) {
-      const record = records.get(pluginId);
-      if (!record) return undefined;
-      if (record.status === 'ACTIVE') return record;
+      if (!records.has(pluginId)) return undefined;
+      // 串行化：并发的第二次 activate 会排到第一次之后，届时状态已是 ACTIVE，
+      // 直接返回而不再调用插件钩子（见 serializeLifecycle 注释）。
+      return serializeLifecycle<PluginRecord | undefined>(pluginId, async () => {
+        const record = records.get(pluginId);
+        if (!record) return undefined;
+        if (record.status === 'ACTIVE') return record;
 
-      // 依赖缺失 → 明确失败，且**不调用** activate（避免「假启动」）
-      const manifest = manifests.get(pluginId);
-      const missing = manifest ? missingDependencies(manifest) : [];
-      if (missing.length > 0) {
-        record.status = 'BLOCKED_DEPENDENCY';
-        record.lastErrorCode = 'ERR_PLUGIN_DEPENDENCY_MISSING';
-        record.lastErrorAt = nowIso(clock);
-        record.lastErrorMessage = `缺少依赖: ${missing.join(', ')}`;
-        log('PLUGIN_BLOCKED', record, {
-          errorCode: 'ERR_PLUGIN_DEPENDENCY_MISSING',
-          missing,
-        });
+        // 依赖缺失 → 明确失败，且**不调用** activate（避免「假启动」）
+        const manifest = manifests.get(pluginId);
+        const missing = manifest ? missingDependencies(manifest) : [];
+        if (missing.length > 0) {
+          record.status = 'BLOCKED_DEPENDENCY';
+          record.lastErrorCode = 'ERR_PLUGIN_DEPENDENCY_MISSING';
+          record.lastErrorAt = nowIso(clock);
+          record.lastErrorMessage = `缺少依赖: ${missing.join(', ')}`;
+          log('PLUGIN_BLOCKED', record, {
+            errorCode: 'ERR_PLUGIN_DEPENDENCY_MISSING',
+            missing,
+          });
+          return record;
+        }
+
+        record.status = 'ACTIVATING';
+        const startedAt = Date.now();
+        try {
+          await modules.get(pluginId)?.activate?.();
+          record.status = 'ACTIVE';
+          record.activatedAt = nowIso(clock);
+          record.activationDurationMs = elapsedSince(startedAt);
+          delete record.lastErrorCode;
+          log('PLUGIN_ACTIVATED', record, { durationMs: record.activationDurationMs });
+        } catch (err) {
+          // 单插件故障：记录原因、隔离该插件，Core 与其他插件继续可用
+          record.status = 'QUARANTINED';
+          record.lastErrorCode = 'ERR_PLUGIN_CRASHED';
+          record.lastErrorAt = nowIso(clock);
+          record.lastErrorMessage = (err as Error).message;
+          record.activationDurationMs = elapsedSince(startedAt);
+          log('PLUGIN_FAILED', record, {
+            durationMs: record.activationDurationMs,
+            errorCode: 'ERR_PLUGIN_CRASHED',
+            message: record.lastErrorMessage,
+          });
+        }
         return record;
-      }
-
-      record.status = 'ACTIVATING';
-      const startedAt = Date.now();
-      try {
-        await modules.get(pluginId)?.activate?.();
-        record.status = 'ACTIVE';
-        record.activatedAt = nowIso(clock);
-        record.activationDurationMs = elapsedSince(startedAt);
-        delete record.lastErrorCode;
-        log('PLUGIN_ACTIVATED', record, { durationMs: record.activationDurationMs });
-      } catch (err) {
-        // 单插件故障：记录原因、隔离该插件，Core 与其他插件继续可用
-        record.status = 'QUARANTINED';
-        record.lastErrorCode = 'ERR_PLUGIN_CRASHED';
-        record.lastErrorAt = nowIso(clock);
-        record.lastErrorMessage = (err as Error).message;
-        record.activationDurationMs = elapsedSince(startedAt);
-        log('PLUGIN_FAILED', record, {
-          durationMs: record.activationDurationMs,
-          errorCode: 'ERR_PLUGIN_CRASHED',
-          message: record.lastErrorMessage,
-        });
-      }
-      return record;
+      });
     },
 
     async deactivate(pluginId: string, opts: { force?: boolean } = {}) {
-      const record = records.get(pluginId);
-      if (!record) return { ok: false, errorCode: 'ERR_PLUGIN_NOT_REGISTERED' };
-      if (record.status !== 'ACTIVE' && record.status !== 'QUARANTINED') {
-        return { ok: false, status: record.status, reason: '插件未处于活动状态' };
+      if (!records.has(pluginId)) {
+        return { ok: false, errorCode: 'ERR_PLUGIN_NOT_REGISTERED' } as DeactivateResult;
       }
-      if (!opts.force && options.hasDirtyState?.(pluginId)) {
-        log('PLUGIN_DEACTIVATE_BLOCKED', record, { errorCode: 'ERR_PLUGIN_DEACTIVATE_BLOCKED' });
-        return {
-          ok: false,
-          status: record.status,
-          errorCode: 'ERR_PLUGIN_DEACTIVATE_BLOCKED',
-          reason: '插件仍有未保存内容，拒绝卸载（docs/06）',
-        };
-      }
-      record.status = 'DEACTIVATING';
-      try {
-        await modules.get(pluginId)?.deactivate?.();
-        record.status = 'INACTIVE';
-        log('PLUGIN_DEACTIVATED', record);
-      } catch (err) {
-        record.status = 'FAILED';
-        record.lastErrorCode = 'ERR_PLUGIN_CRASHED';
-        record.lastErrorAt = nowIso(clock);
-        record.lastErrorMessage = (err as Error).message;
-        log('PLUGIN_DEACTIVATE_FAILED', record, { errorCode: 'ERR_PLUGIN_CRASHED' });
-      }
-      return { ok: record.status === 'INACTIVE', status: record.status };
+      // 与 activate 共用同一条链：仍在 ACTIVATING 时发来的停用会等初始化结束，
+      // 然后按真实状态处理；停用期间再次 activate 也会排在它之后（不会被覆盖）。
+      return serializeLifecycle<DeactivateResult>(pluginId, async () => {
+        const record = records.get(pluginId);
+        if (!record) return { ok: false, errorCode: 'ERR_PLUGIN_NOT_REGISTERED' };
+        if (record.status !== 'ACTIVE' && record.status !== 'QUARANTINED') {
+          return { ok: false, status: record.status, reason: '插件未处于活动状态' };
+        }
+        if (!opts.force && options.hasDirtyState?.(pluginId)) {
+          log('PLUGIN_DEACTIVATE_BLOCKED', record, { errorCode: 'ERR_PLUGIN_DEACTIVATE_BLOCKED' });
+          return {
+            ok: false,
+            status: record.status,
+            errorCode: 'ERR_PLUGIN_DEACTIVATE_BLOCKED',
+            reason: '插件仍有未保存内容，拒绝卸载（docs/06）',
+          };
+        }
+        record.status = 'DEACTIVATING';
+        try {
+          await modules.get(pluginId)?.deactivate?.();
+          record.status = 'INACTIVE';
+          log('PLUGIN_DEACTIVATED', record);
+        } catch (err) {
+          record.status = 'FAILED';
+          record.lastErrorCode = 'ERR_PLUGIN_CRASHED';
+          record.lastErrorAt = nowIso(clock);
+          record.lastErrorMessage = (err as Error).message;
+          log('PLUGIN_DEACTIVATE_FAILED', record, { errorCode: 'ERR_PLUGIN_CRASHED' });
+        }
+        return { ok: record.status === 'INACTIVE', status: record.status };
+      });
     },
 
     status(pluginId: string) {

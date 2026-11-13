@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "apiVersion": "0.1",
   "fileExtensions": [".md", ".markdown"],
-  "provides": ["file.parser", "file.editor", "file.viewer", "file.serializer"],
+  "provides": ["file.viewer"],
   "requires": ["weavespace.document", "weavespace.storage"],
   "requestedPermissions": ["workspace.read", "workspace.write", "workspace.ui"],
   "activationEvents": ["onFileExtension:.md", "onFileExtension:.markdown"],

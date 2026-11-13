@@ -22,6 +22,11 @@
 `DISCOVERED → VALIDATED → REGISTERED → ACTIVATING → ACTIVE → DEACTIVATING → INACTIVE`，
 失败为 `BLOCKED_DEPENDENCY`（apiVersion 不支持 / 依赖缺失）、`QUARANTINED`（激活抛错）、`FAILED`（停用抛错）。
 
+**生命周期串行化（S10-A-R2）**：每个插件一条串行链，同一插件的 `activate`/`deactivate`
+不会交叉——并发的第二次 `activate` 排到第一次之后，看到 `ACTIVE` 直接返回，钩子只执行一次；
+仍在 `ACTIVATING` 时发来的 `deactivate` 会等初始化结束再按真实状态处理。
+链按 `pluginId` 分开，**没有全局锁**，不同插件互不阻塞。
+
 | 情形 | 结果 |
 |---|---|
 | 清单非法 | `ERR_PLUGIN_INVALID_MANIFEST` + violations |

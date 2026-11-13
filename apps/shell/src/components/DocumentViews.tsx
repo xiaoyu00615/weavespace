@@ -87,7 +87,14 @@ export function PreviewPane({ docId }: { docId: string }) {
         </div>
       )}
       {viewer.ok && rendered?.ok && (
-        <ViewerBoundary providerId={viewer.providerId}>{rendered.node as ReactNode}</ViewerBoundary>
+        <ViewerBoundary
+          // 稳定身份 key：换文档或换查看器时必须重建边界。
+          // 否则 state.message 一旦置位，切换到另一篇文档仍会显示旧错误。
+          key={`${docId}:${viewer.providerId}`}
+          providerId={viewer.providerId}
+        >
+          {rendered.node as ReactNode}
+        </ViewerBoundary>
       )}
       <div className="preview__footer">
         {viewer.ok ? `查看器：${viewer.providerId}` : '查看器：无'}

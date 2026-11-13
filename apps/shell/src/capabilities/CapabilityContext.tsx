@@ -52,7 +52,9 @@ export function CapabilityProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true;
-    void registry.ready.then(() => {
+    // 显式启动（注册表构造阶段不激活任何插件）。start() 内部缓存 Promise，
+    // StrictMode 重放 effect 只会复用同一次启动，不会重复初始化插件。
+    void registry.start().then(() => {
       if (!alive) return;
       setReady(true);
       setRevision((value) => value + 1);

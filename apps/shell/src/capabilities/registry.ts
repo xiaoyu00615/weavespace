@@ -37,8 +37,13 @@ export type ViewerResolution =
 
 export interface ShellCapabilityRegistry {
   readonly runtime: PluginRuntime;
-  /** 初始激活完成的信号；宿主在 ready 之前不应假设查看器可用。 */
-  readonly ready: Promise<void>;
+  /**
+   * 显式启动已登记插件（S10-A-R2）。
+   *
+   * 构造注册表**只登记、不启动**；启动由宿主在受控时机调用一次。
+   * 重复调用返回同一个 Promise：StrictMode 重放 effect 不会重复激活插件。
+   */
+  start(): Promise<void>;
   list(): ShellPluginInfo[];
   isActive(pluginId: string): boolean;
   /** 启用/停用某个插件（停用只影响它提供的能力）。 */
@@ -91,7 +96,8 @@ export function createShellCapabilityRegistry(
   ];
 
   const disabled = new Set(options.disabled ?? []);
-  const pending: Promise<unknown>[] = [];
+  /** 需要自动启用的插件（构造阶段只登记名单，不触发任何插件代码）。 */
+  const autoStart: string[] = [];
 
   for (const plugin of plugins) {
     const registered = runtime.register(plugin.manifest, plugin.module);
@@ -101,15 +107,23 @@ export function createShellCapabilityRegistry(
       continue;
     }
     if (plugin.activate && !disabled.has(plugin.manifest.id)) {
-      // 激活本身是异步的；注册表必须能同步构造（组件首次渲染就要拿到），
-      // 因此把激活收集到 `ready` 上，宿主等 ready 之后才认为查看器可用。
-      pending.push(runtime.activate(plugin.manifest.id));
+      autoStart.push(plugin.manifest.id);
     }
   }
 
+  /** 启动结果只计算一次；StrictMode 重放时复用同一个 Promise。 */
+  let startPromise: Promise<void> | null = null;
+
   return {
     runtime,
-    ready: Promise.all(pending).then(() => undefined),
+    start() {
+      if (!startPromise) {
+        startPromise = Promise.all(autoStart.map((id) => runtime.activate(id))).then(
+          () => undefined,
+        );
+      }
+      return startPromise;
+    },
 
     list() {
       return runtime.list().map((record) => ({
