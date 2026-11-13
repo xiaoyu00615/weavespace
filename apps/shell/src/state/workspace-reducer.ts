@@ -32,6 +32,7 @@ export const INITIAL_STATE: WorkspaceState = {
   resources: [],
   loadingResources: false,
   workspaceMode: 'legacy',
+  workspaceKey: null,
   projects: [],
   activeProjectId: null,
   resourcesByProject: {},
@@ -107,6 +108,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         selectedByProject: {},
         loadingByProject: {},
         workspaceMode: 'legacy',
+        // 工作区身份属于"上一个工作区"：切模式后必须重新从 Host 取得
+        workspaceKey: null,
         panes: {
           primary: { docId: null, mode: 'editor' },
           secondary: { docId: null, mode: 'preview' },
@@ -264,6 +267,48 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return state.workspaceMode === action.workspaceMode
         ? state
         : { ...state, workspaceMode: action.workspaceMode };
+
+    case 'SET_WORKSPACE_KEY':
+      return state.workspaceKey === action.workspaceKey
+        ? state
+        : { ...state, workspaceKey: action.workspaceKey };
+
+    /**
+     * 只恢复界面局部（S11-C 阶段 A）。
+     * 刻意不触碰 tabs / panes / 会话 / 项目表：这些必须由 Host 的真实结果重建。
+     */
+    case 'HYDRATE_UI': {
+      const { ui } = action;
+      return {
+        ...state,
+        navCollapsed: ui.navCollapsed,
+        navKey: ui.navKey,
+        treeCollapsed: ui.treeCollapsed,
+        auxCollapsed: ui.auxCollapsed,
+        auxTab: ui.auxTab,
+        layout: ui.layout,
+        splitRatio: clampRatio(ui.splitRatio),
+        // 单视图只有主窗格：不接受"焦点在副窗格"这种不可见的组合
+        focusedPane: ui.layout === 'single' ? 'primary' : ui.focusedPane,
+        expandedByProject: action.expandedByProject ?? state.expandedByProject,
+      };
+    }
+
+    case 'SET_PANE_TAB': {
+      const pane = state.panes[action.pane];
+      if (!action.docId) {
+        return { ...state, panes: { ...state.panes, [action.pane]: { ...pane, docId: null } } };
+      }
+      // 只允许指向真实存在的标签：恢复不能让窗格指向一个不存在的文档
+      if (!state.tabs.some((tab) => tab.docId === action.docId)) return state;
+      return {
+        ...state,
+        panes: {
+          ...state.panes,
+          [action.pane]: { docId: action.docId, mode: action.mode ?? pane.mode },
+        },
+      };
+    }
 
     case 'SET_PROJECTS': {
       const projects = action.projects;

@@ -93,10 +93,25 @@ export interface CloseOutcome {
   message?: string;
 }
 
+/**
+ * Host 的工作区身份（S11-C）。
+ *
+ * `workspaceKey` 是 Host 对"项目组合 + 规范根 + 根身份令牌"做的摘要，
+ * **只用于判断本地恢复记录是否属于同一个工作区**，不能当作读写授权凭据：
+ * 真正的授权仍由每次请求的 G0/G1 检查完成。
+ */
+export interface WorkspaceIdentity {
+  workspaceMode: WorkspaceMode;
+  /** 摘要；Host 无法可靠确认身份（旧版服务端、根缺失）时为 `null`。 */
+  workspaceKey: string | null;
+}
+
 export interface WeaveSpaceClient {
   readonly mode: ClientMode;
   /** 服务端运行模式（`/api/health`）；demo 恒为 `legacy`。 */
   workspaceMode(): Promise<WorkspaceMode>;
+  /** 运行模式 + 工作区摘要（一次请求取回）；demo 的摘要恒为 `null`。 */
+  workspaceIdentity(): Promise<WorkspaceIdentity>;
   /** 仅 Multi 有项目列表；Legacy 返回 `[]`。 */
   listProjects(): Promise<ProjectSummary[]>;
   listResources(projectId?: string): Promise<ResourceNode[]>;
@@ -165,6 +180,26 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       const mode = (body as { workspaceMode?: string }).workspaceMode;
       // 旧版服务端没有该字段 → 只能是 legacy；不得假定 Multi
       return mode === 'multi' ? 'multi' : 'legacy';
+    },
+    async workspaceIdentity() {
+      const { httpStatus, body } = await request(baseUrl, '/api/health');
+      /**
+       * 必须是**成功的**健康响应才算"连上了 Host"。
+       *
+       * 开发代理在 Host 未启动时会返回 5xx/非 JSON，`request()` 会把它降级成空 body；
+       * 若在这里当成"旧版服务端（没有摘要）"继续走，就会出现"以为连上了、其实是空工作区"
+       * 的假象。因此这里直接抛错，由调用方按"Host 不可用"降级。
+       */
+      if (httpStatus !== 200) throw new Error(`health ${httpStatus}`);
+      const asHealth = body as { status?: string; workspaceMode?: string; workspaceKey?: unknown };
+      if (asHealth.status !== 'APPLIED') throw new Error('health not applied');
+      const mode: WorkspaceMode = asHealth.workspaceMode === 'multi' ? 'multi' : 'legacy';
+      // 只接受"像摘要"的字符串；其余一律视为"身份不可确认"
+      const key =
+        typeof asHealth.workspaceKey === 'string' && /^[0-9a-zA-Z_-]{16,128}$/.test(asHealth.workspaceKey)
+          ? asHealth.workspaceKey
+          : null;
+      return { workspaceMode: mode, workspaceKey: key };
     },
     async listProjects() {
       const { httpStatus, body } = await request(baseUrl, '/api/projects');
@@ -314,6 +349,10 @@ export function createDemoClient(
     // 演示模式不接触 Host：模式恒为 legacy，也没有项目列表
     async workspaceMode() {
       return 'legacy' as const;
+    },
+    // 演示模式没有工作区身份：不写恢复记录，也不参与身份比对
+    async workspaceIdentity() {
+      return { workspaceMode: 'legacy' as const, workspaceKey: null };
     },
     async listProjects() {
       return [];

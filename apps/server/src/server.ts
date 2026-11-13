@@ -24,15 +24,17 @@
  *   GET  /api/document/disk ?sessionId&viewId  只读查看磁盘上的当前版本（冲突恢复用）
  *   POST /api/reload    {sessionId, viewId, discardDraft:true}  用磁盘内容覆盖会话（需显式确认）
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createCommandBus, type CommandBus } from '../../../packages/command/index.ts';
 import { ERROR_CODES, type ErrorCode } from '../../../packages/contracts/index.ts';
 import { createDocumentService, type DocumentService } from '../../../packages/document/index.ts';
 import { createPermissionService, type PermissionService } from '../../../packages/permission/index.ts';
+import { realpathSync } from 'node:fs';
 import {
   createLocalProvider,
+  rootTokenOf,
   type StorageFaultHooks,
   type StorageProvider,
 } from '../../../packages/storage/index.ts';
@@ -354,6 +356,40 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       ? createLocalProvider({ rootDir: options.rootDir as string, faults: options.providerFaults })
       : undefined;
 
+  /**
+   * 工作区身份（S11-C）：**只用于恢复记录匹配**，不能当作读写授权凭据。
+   *
+   * 组成 = 项目 id + 规范根 + 根身份令牌（Multi）/ 规范根 + 根身份令牌（Legacy），
+   * 排序后做 SHA-256，只暴露摘要。因此：
+   * - Host 重启、根未变 → 摘要不变（可匹配）；
+   * - 换根 / 根被同名目录替换 / 项目组合变化 → 摘要变化（拒绝恢复文件标签）；
+   * - 浏览器只拿到摘要，看不到任何路径、令牌或授权信息。
+   * 无法可靠确认（根缺失、身份不可用）时不提供该字段 → 客户端 fail-closed（仅恢复界面）。
+   */
+  function computeWorkspaceKey(): string | undefined {
+    try {
+      const lines: string[] = [];
+      if (registry) {
+        for (const summary of registry.list()) {
+          const handle = registry.get(summary.projectId);
+          if (!handle) continue; // 非 READY：不参与身份，摘要随之变化
+          lines.push(`multi\u0000${handle.projectId}\u0000${handle.canonicalRoot}\u0000${handle.rootToken}`);
+        }
+        if (lines.length === 0) return undefined;
+      } else if (legacyProvider) {
+        const canonicalRoot = realpathSync.native(legacyProvider.rootDir);
+        lines.push(`legacy\u0000${canonicalRoot}\u0000${rootTokenOf(canonicalRoot)}`);
+      } else {
+        return undefined;
+      }
+      return createHash('sha256').update(lines.sort().join('\n')).digest('hex');
+    } catch {
+      return undefined;
+    }
+  }
+
+  const workspaceKey = computeWorkspaceKey();
+
   /** providerId → Provider。Multi 由 Registry 派生，客户端无法指定。 */
   const providers = new Map<string, StorageProvider>();
   if (legacyProvider) providers.set(legacyProvider.providerId, legacyProvider);
@@ -585,7 +621,13 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
 
     if (method === 'GET' && pathname === '/api/health') {
       // G1-12：不再返回本机绝对根目录（Legacy / Multi 一致）；只暴露运行模式
-      sendJson(res, 200, { status: 'APPLIED', mode: 'live', workspaceMode: mode });
+      // S11-C：workspaceKey 是工作区摘要（哈希），仅用于恢复记录匹配
+      sendJson(res, 200, {
+        status: 'APPLIED',
+        mode: 'live',
+        workspaceMode: mode,
+        ...(workspaceKey ? { workspaceKey } : {}),
+      });
       return;
     }
 

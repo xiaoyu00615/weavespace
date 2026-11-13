@@ -148,6 +148,33 @@ Shell 不再 import 任何格式实现；预览按**扩展名**向能力注册�
 - 迟到的读取用代次丢弃：读 A 期间又选了 B，A 的结果整份丢弃，绝不覆盖 B。
 - 打开项目文件或点击标签会离开 Quick File 预览（文件仍保留在左列），Quick File 从不关闭任何文档视图。
 
+## 工作区持久化与恢复（S11-C）
+
+刷新浏览器后恢复"界面 + 可验证的文件位置"，**不是**恢复运行期状态。
+
+| 存 | 不存 |
+|---|---|
+| 折叠状态、导航项、辅助面板、单/分屏、分屏比例、查看模式、焦点窗格 | `buffer` 正文、`sessionId` / `viewId`、`baseVersion` / `revision` |
+| 当前项目、各项目展开状态、标签顺序（`projectId` + 相对路径） | `rootDir` / `canonicalRoot` / `rootToken`、Provider、权限 |
+| "曾经有未确认内容"这一布尔提示（`hadUnsavedChanges`） | 草稿正文、编辑队列、保存锁、在途请求、Quick File |
+
+- **工作区身份**：Host 在 `/api/health` 返回 `workspaceKey`（项目组合 + 规范根 + 根身份令牌
+  的 SHA-256 摘要）。它**只用于匹配恢复记录**，不是授权凭据；浏览器拿不到任何路径或令牌。
+  摘要不一致（换根、根被同名目录替换、项目组合变化）→ 只恢复界面，绝不自动打开文件。
+  无法确认（Host 离线、旧版服务端）→ 同样 fail-closed。
+- **存储**：`ws:workspace:v1:record:<workspaceKey>` + `ws:workspace:v1:last`（指针）。
+  写入前走白名单序列化，读取时先判长度（≤64 KiB）再判 JSON 再判结构；版本/枚举/路径/
+  数量任何一项不合法就整体丢弃。Storage 不可用或 Quota 满只降级，不影响编辑与保存。
+- **恢复顺序**（`state/workspace-restore.ts`）：①连接 Host 并拿摘要 → ②套用界面局部 →
+  ③逐项核对（项目存在且 READY、相对路径合法、文件在当前树里）→ ④走 `openDocument` 取得
+  **新的** Session/View → ⑤全部完成且用户没动过焦点时才把窗格指回原位。
+  标签一律 `OPEN_TAB_BACKGROUND`：恢复不抢焦点（继承 G2-R2），单个文件失败只跳过它。
+- **草稿**：不写正文。上次有未确认内容时只记录布尔标记；恢复后如果 Core 里那份会话还在，
+  内容会**从服务端会话**取回并如实说"由服务端会话重新取得"，否则明确提示"未保存内容未自动恢复"。
+  另外挂 `beforeunload` 原生提醒（dirty / 保存中 / 结果未知），但崩溃或强制退出仍可能丢草稿。
+- **不做什么**：不写 `/api/edit`、`/api/save`、`/api/reload`；不重建 STALE 会话；不自动新建
+  缺失文件；不迁移根；不持久化 Quick File。恢复出来的标签走正常的编辑/保存链路。
+
 ## 与 Core 的边界
 
 - 浏览器**不访问**文件系统或 SQLite；真实读写必须经 Core 的 CommandBus + PermissionService。

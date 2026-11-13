@@ -41,8 +41,17 @@ export interface OpenDocumentDeps {
 }
 
 export interface DocumentOpener {
-  /** 打开（或激活并刷新）一个节点。 */
-  openNode(node: ResourceNodeState, projectId?: string | null): Promise<void>;
+  /**
+   * 打开（或激活并刷新）一个节点。
+   *
+   * `options.background`（S11-C）：只登记标签，**绝不**改动当前窗格与焦点，
+   * 也不去刷新一个已经存在的标签。启动恢复走的就是这条路——恢复不是用户点击。
+   */
+  openNode(
+    node: ResourceNodeState,
+    projectId?: string | null,
+    options?: OpenNodeOptions,
+  ): Promise<OpenNodeResult>;
   /** 本地编辑发生：推进代次，使在途的磁盘读取失效。 */
   noteLocalEdit(docId: string): void;
   /** 标签关闭：丢弃该文档的编辑代次。 */
@@ -52,6 +61,16 @@ export interface DocumentOpener {
   /** 当前在途打开数（诊断/测试用）。 */
   pendingOpens(): number;
 }
+
+export interface OpenNodeOptions {
+  /** true：只登记标签（后台），不激活、不刷新既有标签。 */
+  background?: boolean;
+}
+
+/** 打开结果：恢复流程需要"成功了没有、是哪个 docId"，普通调用方可以忽略。 */
+export type OpenNodeResult =
+  | { ok: true; docId: string; reopened: boolean; dirty: boolean }
+  | { ok: false; docId: string; errorCode: string | null };
 
 export function tabFromSnapshot(
   docId: string,
@@ -109,7 +128,7 @@ function canActivate(focus: FocusSnapshot, state: WorkspaceState): boolean {
 
 export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
   /** 同一 (模式, 文档) 的并发打开合并为一次请求：不会各自在服务端造一个 View。 */
-  const inFlight = new Map<string, Promise<void>>();
+  const inFlight = new Map<string, Promise<OpenNodeResult>>();
 
   const tabOf = (docId: string): DocTab | undefined =>
     deps.getState().tabs.find((tab) => tab.docId === docId);
@@ -231,7 +250,8 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
     projectId: string | null,
     path: string,
     mode: ClientMode,
-  ): Promise<void> {
+    background: boolean,
+  ): Promise<OpenNodeResult> {
     const client = deps.clientFor(mode);
     const before = deps.getState();
     const focus = captureFocus(before);
@@ -242,7 +262,7 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
       outcome = await client.openDocument(path, projectId ?? undefined);
     } catch {
       deps.dispatch({ type: 'NOTICE', message: `无法打开 ${node.name}：无法连接本地服务` });
-      return;
+      return { ok: false, docId, errorCode: 'ERR_STORAGE_IO' };
     }
 
     // 模式已切换（G2-R1）：这次结果属于上一个工作区，绝不能插进当前工作区。
@@ -253,7 +273,7 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         outcome.document?.sessionId ?? null,
         outcome.document?.viewId ?? null,
       );
-      return;
+      return { ok: false, docId, errorCode: 'ERR_MODE_CHANGED' };
     }
 
     if (outcome.status !== 'APPLIED' || !outcome.document) {
@@ -261,7 +281,7 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         type: 'NOTICE',
         message: `无法打开 ${node.name}：${outcome.errorCode ?? '未知错误'}`,
       });
-      return;
+      return { ok: false, docId, errorCode: outcome.errorCode ?? null };
     }
 
     // 打开期间标签已被别的入口创建：不新建标签，并释放本次多出来的 View
@@ -273,8 +293,9 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         outcome.document.viewId,
         raced.viewId,
       );
-      deps.dispatch({ type: 'ACTIVATE_TAB', docId });
-      return;
+      // 后台模式（恢复）不得因此把焦点拉过去
+      if (!background) deps.dispatch({ type: 'ACTIVATE_TAB', docId });
+      return { ok: true, docId, reopened: true, dirty: raced.dirty };
     }
 
     const tab = tabFromSnapshot(
@@ -288,7 +309,8 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
 
     // 用户在这期间换了项目 / 窗格 / 活动文档：只后台登记标签，绝不改动当前焦点
     // （G2-R2）。这同时覆盖"旧实现把焦点还原成发起时那个文档"的错误行为。
-    if (canActivate(focus, deps.getState())) {
+    // 恢复流程（S11-C）则无条件走后台：它不是用户点击，没有"期望激活"可言。
+    if (!background && canActivate(focus, deps.getState())) {
       deps.dispatch({ type: 'OPEN_TAB', tab });
     } else {
       deps.dispatch({ type: 'OPEN_TAB_BACKGROUND', tab });
@@ -303,17 +325,19 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         message: '检测到磁盘已被外部修改：已重新载入最新内容与版本',
       });
     }
+    return { ok: true, docId, reopened: false, dirty: tab.dirty };
   }
 
   return {
-    async openNode(node, projectId) {
+    async openNode(node, projectId, options) {
+      const background = options?.background === true;
       if (node.kind === 'folder') {
         if (projectId) {
           deps.dispatch({ type: 'TOGGLE_PROJECT_NODE', projectId, path: node.id });
         } else {
           deps.dispatch({ type: 'TOGGLE_NODE', path: node.id });
         }
-        return;
+        return { ok: false, docId: node.id, errorCode: 'ERR_RESOURCE_NOT_FOUND' };
       }
 
       const targetProject = projectId ?? null;
@@ -322,16 +346,21 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
           type: 'NOTICE',
           message: `项目${projectName(targetProject) ? ` ${projectName(targetProject)}` : ''}当前不可用：无法打开新的磁盘文件（既有标签与草稿仍保留）`,
         });
-        return;
+        return { ok: false, docId: '', errorCode: 'ERR_PROJECT_UNAVAILABLE' };
       }
 
       const path = node.path ?? node.id;
       const docId = makeDocId(targetProject, path);
 
       if (tabOf(docId)) {
+        const existing = tabOf(docId) as DocTab;
+        // 后台模式：既有标签不动（不刷新、不激活）——恢复不该打扰已经打开的东西
+        if (background) {
+          return { ok: true, docId, reopened: true, dirty: existing.dirty };
+        }
         deps.dispatch({ type: 'ACTIVATE_TAB', docId });
         await refreshCleanTab(docId);
-        return;
+        return { ok: true, docId, reopened: true, dirty: existing.dirty };
       }
 
       const mode = deps.getMode();
@@ -342,17 +371,20 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         // 等待期间用户可能已经切走，因此这里**同样**要按焦点快照判断（G2-R2）。
         const waitingFocus = captureFocus(deps.getState());
         await running.catch(() => undefined);
-        if (tabOf(docId) && canActivate(waitingFocus, deps.getState())) {
+        const merged = tabOf(docId);
+        if (merged && !background && canActivate(waitingFocus, deps.getState())) {
           deps.dispatch({ type: 'ACTIVATE_TAB', docId });
         }
-        return;
+        return merged
+          ? { ok: true, docId, reopened: true, dirty: merged.dirty }
+          : { ok: false, docId, errorCode: 'ERR_DOCUMENT_NOT_FOUND' };
       }
 
-      const task = createTab(node, docId, targetProject, path, mode).finally(() => {
+      const task = createTab(node, docId, targetProject, path, mode, background).finally(() => {
         if (inFlight.get(key) === task) inFlight.delete(key);
       });
       inFlight.set(key, task);
-      await task;
+      return await task;
     },
 
     noteLocalEdit(docId) {

@@ -65,6 +65,24 @@ export interface PaneState {
   mode: ViewMode;
 }
 
+/**
+ * 可恢复的界面局部（S11-C 阶段 A）。
+ *
+ * 全部字段都与"会话/文件"无关：即使没有连上 Host、或工作区身份不匹配，
+ * 套用这些字段也是安全的。定义放在这里（而不是持久化模块里），
+ * 是为了让 reducer 不依赖存储层，避免循环引用。
+ */
+export interface WorkspaceUiSnapshot {
+  navCollapsed: boolean;
+  navKey: NavKey;
+  treeCollapsed: boolean;
+  auxCollapsed: boolean;
+  auxTab: AuxTab;
+  layout: LayoutMode;
+  splitRatio: number;
+  focusedPane: PaneId;
+}
+
 export interface WorkspaceState {
   navCollapsed: boolean;
   navKey: NavKey;
@@ -90,6 +108,11 @@ export interface WorkspaceState {
   // ---- 多项目（G2-05）----
   /** 服务端运行模式；demo 恒为 legacy。仅 multi 使用下面的项目表。 */
   workspaceMode: WorkspaceMode;
+  /**
+   * Host 的工作区摘要（S11-C）。**只用于匹配本地恢复记录**，不是授权凭据；
+   * demo 模式或旧版服务端为 null（此时不写记录、不恢复文件标签）。
+   */
+  workspaceKey: string | null;
   /** 服务端返回的项目列表（含 UNAVAILABLE 与原因）；绝对不含本机路径。 */
   projects: ProjectSummary[];
   /** 当前操作焦点所在项目；切换它**不得**影响 tabs / 队列 / 草稿。 */
@@ -112,6 +135,17 @@ export type WorkspaceAction =
   | { type: 'SET_RESOURCES'; nodes: ResourceNodeState[] }
   | { type: 'SET_LOADING_RESOURCES'; loading: boolean }
   | { type: 'SET_WORKSPACE_MODE'; workspaceMode: WorkspaceMode }
+  | { type: 'SET_WORKSPACE_KEY'; workspaceKey: string | null }
+  /**
+   * 套用持久化的界面局部（S11-C 阶段 A）。**不碰 tabs / panes / 会话 / 项目表**，
+   * 因此可以在"只恢复界面"的降级路径里安全使用。
+   */
+  | { type: 'HYDRATE_UI'; ui: WorkspaceUiSnapshot; expandedByProject?: Record<string, Record<string, boolean>> }
+  /**
+   * 把某个窗格指向一个**已经存在**的标签（S11-C 恢复窗格用）。
+   * 与 ACTIVATE_TAB 的区别：可以指定非焦点窗格，且 docId 不存在时整体忽略。
+   */
+  | { type: 'SET_PANE_TAB'; pane: PaneId; docId: string | null; mode?: ViewMode }
   | { type: 'SET_PROJECTS'; projects: ProjectSummary[] }
   | { type: 'SET_ACTIVE_PROJECT'; projectId: string }
   | { type: 'SET_PROJECT_RESOURCES'; projectId: string; nodes: ResourceNodeState[] }

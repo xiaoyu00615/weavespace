@@ -15,21 +15,23 @@
  *   响应回来先比对归属，过期回填一律丢弃（G2-10）；
  * - 项目切换只改"当前项目"，不清标签、不清队列、不丢草稿。
  */
-import { createContext, useContext, useMemo, useRef } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import {
   createDemoClient,
   createLiveClient,
-  type ProjectSummary,
   type WeaveSpaceClient,
-  type WorkspaceMode,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
 import { backupDraftBeforeReload } from '../client/draft-backup';
 import { runSaveFlow } from '../client/save-flow';
 import { DEMO_CONTENTS, DEMO_NODES } from '../data/demo-project';
+import { installBeforeUnloadGuard, needsLeaveGuard } from './beforeunload-guard';
 import { draftBackupKey, hasUnsavedDrafts, isResponseOwnerCurrent } from './doc-identity';
 import { createDocumentOpener, createEditEpochs, type DocumentOpener } from './open-document';
+import { createWorkspaceAutosave, createWorkspaceStore, serializeWorkspace } from './workspace-persistence';
+import { countFiles, loadProjectResources, loadWorkspace } from './workspace-load';
+import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
 
@@ -52,6 +54,11 @@ export interface DocumentActions {
   fetchDiskVersion(docId: string): Promise<
     { ok: true; content: string; contentVersion: string } | { ok: false; errorCode: string | null; message?: string }
   >;
+  /**
+   * 启动恢复（S11-C）：幂等，重复调用不会再发一次请求。
+   * 没有本地记录时直接返回 null，不改变现有的 demo 启动行为。
+   */
+  restoreWorkspace(): Promise<RestoreReport | null>;
   /** 把当前草稿复制到剪贴板（尽力而为，失败返回 false）。 */
   copyDraft(docId: string): Promise<boolean>;
   /**
@@ -82,6 +89,20 @@ async function copyText(text: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * localStorage 的**安全包装**（S11-C）。
+ *
+ * 隐私模式/策略禁用时访问 `localStorage` 本身就会抛异常，因此在构造阶段就吞掉，
+ * 交给 `createWorkspaceStore` 统一降级：存储不可用只是不持久化，编辑与保存照常。
+ */
+function safeLocalStorage(): Storage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
   }
 }
 
@@ -127,7 +148,100 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
     [dispatch, demoClient, liveClient],
   );
 
+  /**
+   * 工作区持久化（S11-C）。
+   *
+   * 存储、恢复、节流写入都在纯 TS 模块里，这里只负责装配：
+   * - `store`：localStorage 的安全包装（不可用就整体降级）；
+   * - `connectLive`：连接 Host 并加载项目/资源，同时拿到工作区摘要；
+   * - `restorer`：分阶段恢复，标签一律后台登记；
+   * - `autosave`：界面变化合并写入，离开页面前同步 flush。
+   */
+  const store = useMemo(() => createWorkspaceStore(safeLocalStorage()), []);
+
+  /** 进入 live 并加载工作区；失败（Host 不在线）返回 null，由调用方决定如何降级。 */
+  const connectWorkspace = useCallback(async () => {
+    // 先探测 Host：连不上就**不要**把界面切进 live（否则会显示"真实文件"却空空如也）
+    const probe = await liveClient.workspaceIdentity().catch(() => null);
+    if (!probe) {
+      dispatch({
+        type: 'NOTICE',
+        message: '无法连接本地服务：请先启动 apps/server（npm run start:server）',
+      });
+      return null;
+    }
+    if (modeRef.current !== 'live') {
+      // 与 switchMode 一致：先同步模式，再派发，避免在途响应读到旧模式
+      modeRef.current = 'live';
+      dispatch({ type: 'SET_MODE', mode: 'live' });
+    }
+    const loaded = await loadWorkspace({
+      getState: () => stateRef.current,
+      dispatch,
+      clientFor: (mode) => (mode === 'live' ? liveClient : demoClient),
+    });
+    return loaded ? { workspaceKey: loaded.workspaceKey, workspaceMode: loaded.workspaceMode } : null;
+  }, [dispatch, demoClient, liveClient]);
+
+  const restorer = useMemo(
+    () =>
+      createWorkspaceRestorer({
+        getState: () => stateRef.current,
+        getMode: () => modeRef.current,
+        dispatch,
+        store,
+        connectLive: connectWorkspace,
+        openInBackground: (node, projectId) =>
+          opener.openNode(node, projectId, { background: true }),
+      }),
+    [connectWorkspace, dispatch, opener, store],
+  );
+
+  const autosave = useMemo(
+    () =>
+      createWorkspaceAutosave({
+        store,
+        // 只在"已连接工作区"时才产出快照（serialize 自己也会拒绝 demo / 无摘要）
+        snapshot: () =>
+          serializeWorkspace(stateRef.current, { workspaceKey: stateRef.current.workspaceKey }),
+      }),
+    [store],
+  );
+
+  /**
+   * 启动恢复：只有存在本地记录时才尝试连 Host。
+   *
+   * 没有记录 → 完全保持原来的 demo 启动路径（不自动连 Host、不改界面）。
+   * 用 ref 保证 StrictMode 的二次 effect 不会重复执行（重复也不会多建 View，见套件 33）。
+   */
+  const bootStarted = useRef(false);
+  useEffect(() => {
+    if (bootStarted.current) return;
+    bootStarted.current = true;
+    if (!store.readLast()) return;
+    void restorer.restore();
+  }, [restorer, store]);
+
+  // 界面变化 → 合并写入（拖动分屏等高频变化不会每次都写）
+  useEffect(() => {
+    autosave.schedule();
+  }, [state, autosave]);
+
+  // 离开页面前：同步落盘 + 有未确认内容时弹浏览器原生提醒
+  useEffect(() => {
+    const flush = (): void => {
+      autosave.flush();
+    };
+    const uninstall = installBeforeUnloadGuard(window, () => needsLeaveGuard(stateRef.current.tabs));
+    window.addEventListener('pagehide', flush);
+    return () => {
+      uninstall();
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [autosave]);
+
   const queues = useRef(new Map<string, EditQueue>());
+
   /**
    * 保存期间锁定的文档（F02）。用 ref 而不是 React 状态做判定：
    * `saving` 的渲染更新是异步的，不能作为「是否允许继续改 / 继续保存」的唯一依据。
@@ -143,6 +257,13 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   const actions = useMemo<DocumentActions>(() => {
     const tabOf = (docId: string): DocTab | undefined =>
       stateRef.current.tabs.find((tab) => tab.docId === docId);
+
+    /** 资源加载的依赖（与恢复流程共用同一份实现，避免两套加载逻辑）。 */
+    const loadDeps = {
+      getState: () => stateRef.current,
+      dispatch,
+      clientFor: (target: ClientMode) => (target === 'live' ? liveClient : demoClient),
+    };
 
     /** Multi：按项目取资源树（Legacy 用单树）。 */
     const projectName = (projectId: string | null): string | null => {
@@ -210,108 +331,19 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       return queue;
     };
 
-    /**
-     * 同步项目状态（G2-11）：根被删除/移走后服务端会返回 UNAVAILABLE。
-     * 与资源刷新一起做，避免界面仍显示 READY 而实际已不可用。
-     */
-    async function refreshProjectStatuses(): Promise<ProjectSummary[] | null> {
-      try {
-        const projects = await clientFor('live').listProjects();
-        dispatch({ type: 'SET_PROJECTS', projects });
-        return projects;
-      } catch {
-        return null;
-      }
-    }
-
-    async function loadProjectResources(projectId: string): Promise<boolean> {
-      dispatch({ type: 'SET_PROJECT_LOADING', projectId, loading: true });
-      try {
-        const nodes = await clientFor('live').listResources(projectId);
-        dispatch({ type: 'SET_PROJECT_RESOURCES', projectId, nodes });
-        // 资源树与项目状态一起刷新：项目可能刚刚失效
-        const projects = await refreshProjectStatuses();
-        const status = projects?.find((project) => project.projectId === projectId);
-        if (status?.status === 'UNAVAILABLE') {
-          dispatch({
-            type: 'NOTICE',
-            message: `项目 ${status.name} 已不可用${status.reason ? `（${status.reason}）` : ''}：既有标签与草稿仍保留`,
-          });
-          return false;
-        }
-        return true;
-      } catch {
-        dispatch({
-          type: 'NOTICE',
-          message: '无法连接本地服务：请先启动 apps/server（npm run start:server）',
-        });
-        return false;
-      } finally {
-        dispatch({ type: 'SET_PROJECT_LOADING', projectId, loading: false });
-      }
-    }
-
-    /** 进入 live：识别服务端模式（不得假定 Multi），再按模式加载资源。 */
-    async function loadWorkspace(): Promise<void> {
-      const client = clientFor('live');
-      let workspaceMode: WorkspaceMode = 'legacy';
-      try {
-        workspaceMode = await client.workspaceMode();
-      } catch {
-        dispatch({
-          type: 'NOTICE',
-          message: '无法连接本地服务：请先启动 apps/server（npm run start:server）',
-        });
-        return;
-      }
-      dispatch({ type: 'SET_WORKSPACE_MODE', workspaceMode });
-
-      if (workspaceMode !== 'multi') {
-        dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
-        try {
-          const nodes = await client.listResources();
-          dispatch({ type: 'SET_RESOURCES', nodes });
-          const files = countFiles(nodes);
-          dispatch({
-            type: 'NOTICE',
-            message: files > 0 ? `已加载 ${files} 个可编辑文件（真实文件模式）` : '未发现可编辑文件',
-          });
-        } catch {
-          dispatch({ type: 'NOTICE', message: '无法连接本地服务：请先启动 apps/server' });
-        } finally {
-          dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
-        }
-        return;
-      }
-
-      let projects: ProjectSummary[] = [];
-      try {
-        projects = await client.listProjects();
-      } catch {
-        dispatch({ type: 'NOTICE', message: '无法读取项目列表：请检查 --workspace 配置' });
-        return;
-      }
-      dispatch({ type: 'SET_PROJECTS', projects });
-
-      const ready = projects.filter((project) => project.status === 'READY');
-      for (const project of ready) {
-        // 逐个加载，单个项目失败不影响其他项目
-        await loadProjectResources(project.projectId);
-      }
-      dispatch({
-        type: 'NOTICE',
-        message:
-          ready.length > 0
-            ? `已加载 ${ready.length} 个项目（${projects.length - ready.length} 个不可用）`
-            : '没有可用的项目：请检查工作区配置',
-      });
-    }
-
     return {
       async openNode(node: ResourceNodeState, projectId?: string | null) {
+        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）
+        restorer.noteInteraction();
         // 打开/刷新/并发/模式切换的全部时序处理都在 open-document.ts：
         // 这里只转发，避免把异步归属判定散落在组件里（G2-R1）。
         await opener.openNode(node, projectId);
+      },
+
+      async restoreWorkspace() {
+        // 没有记录时什么都不做，避免在纯 demo 启动里凭空连 Host
+        if (!store.readLast()) return null;
+        return restorer.restore();
       },
 
       editDoc(docId: string, text: string) {
@@ -321,6 +353,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         if (locked.current.has(docId)) return;
         // 本地编辑代次（G2-R1）：任何在途的磁盘读取都在此作废，避免旧内容覆盖草稿
         opener.noteLocalEdit(docId);
+        restorer.noteInteraction();
         dispatch({ type: 'EDIT_DOC', docId, text });
         if (tab.mode !== 'live' || !tab.sessionId) return;
         queueFor(docId, tab.sessionId, tab.projectId, tab.viewId).schedule(text);
@@ -448,6 +481,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
 
         queues.current.delete(docId);
         opener.forget(docId);
+        restorer.noteInteraction();
         dispatch({ type: 'CLOSE_TAB', docId });
       },
 
@@ -469,9 +503,14 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         // 先同步模式，再派发：在途的打开/读取响应据此判定"已不属于当前工作区"
         modeRef.current = mode;
         opener.reset();
+        restorer.noteInteraction();
         dispatch({ type: 'SET_MODE', mode });
         if (mode === 'live') {
-          await loadWorkspace();
+          await loadWorkspace({
+            getState: () => stateRef.current,
+            dispatch,
+            clientFor: (target) => (target === 'live' ? liveClient : demoClient),
+          });
         }
       },
 
@@ -479,7 +518,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         if (stateRef.current.mode !== 'live') return;
         if (projectId) {
           // 只刷新指定项目，绝不覆盖其他项目的资源树（G2-01）
-          const ok = await loadProjectResources(projectId);
+          const ok = await loadProjectResources(loadDeps, projectId);
           if (ok) {
             dispatch({
               type: 'NOTICE',
@@ -492,7 +531,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           // 未指定项目：只刷新当前项目，避免把别的项目一起重写
           const active = stateRef.current.activeProjectId;
           if (active) {
-            await loadProjectResources(active);
+            await loadProjectResources(loadDeps, active);
             dispatch({
               type: 'NOTICE',
               message: `已刷新项目 ${projectName(active) ?? active} 的文件树`,
@@ -516,6 +555,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         const project = stateRef.current.projects.find((item) => item.projectId === projectId);
         if (!project) return;
         // 只改活动项目：不清空标签、不清队列、不丢草稿（G2-05/G2-07）
+        restorer.noteInteraction();
         dispatch({ type: 'SET_ACTIVE_PROJECT', projectId });
         if (project.status !== 'READY') {
           dispatch({
@@ -525,7 +565,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           return;
         }
         if ((stateRef.current.resourcesByProject[projectId] ?? []).length === 0) {
-          await loadProjectResources(projectId);
+          await loadProjectResources(loadDeps, projectId);
         }
         dispatch({ type: 'NOTICE', message: `已切换到项目 ${project.name}` });
       },
@@ -648,20 +688,11 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         }
       },
     };
-  }, [dispatch, demoClient, liveClient, opener]);
+  }, [dispatch, demoClient, liveClient, opener, restorer, store]);
 
   return (
     <DocumentActionsContext.Provider value={actions}>{children}</DocumentActionsContext.Provider>
   );
-}
-
-function countFiles(nodes: ResourceNodeState[]): number {
-  let total = 0;
-  for (const node of nodes) {
-    if (node.kind === 'folder') total += countFiles(node.children ?? []);
-    else total += 1;
-  }
-  return total;
 }
 
 export function useDocumentActions(): DocumentActions {
