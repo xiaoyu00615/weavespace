@@ -1,4 +1,5 @@
-/** 工作台状态模型（S9-A / S9-B）。布局与缓冲属于 UI；会话与版本以 Core 为准。 */
+/** 工作台状态模型（S9-A / S9-B / G2）。布局与缓冲属于 UI；会话与版本以 Core 为准。 */
+import type { ProjectSummary, WorkspaceMode } from '../client/client-api.ts';
 
 export type ViewMode = 'editor' | 'preview';
 export type LayoutMode = 'single' | 'vertical';
@@ -35,6 +36,11 @@ export type SaveUiStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN' | 'DE
  */
 export interface DocTab {
   docId: string;
+  /**
+   * 所属项目（G2-06）。Multi 必填；Legacy / Demo 为 null。
+   * 所有会话操作都以它为准，**不得**通过拆分 docId 反推项目。
+   */
+  projectId: string | null;
   path: string;
   title: string;
   /** 文件扩展名；决定预览用哪个查看器能力，而不是写死格式分支。 */
@@ -80,6 +86,19 @@ export interface WorkspaceState {
   /** live 模式下的服务端资源树；demo 模式继续使用内置演示树。 */
   resources: ResourceNodeState[];
   loadingResources: boolean;
+
+  // ---- 多项目（G2-05）----
+  /** 服务端运行模式；demo 恒为 legacy。仅 multi 使用下面的项目表。 */
+  workspaceMode: WorkspaceMode;
+  /** 服务端返回的项目列表（含 UNAVAILABLE 与原因）；绝对不含本机路径。 */
+  projects: ProjectSummary[];
+  /** 当前操作焦点所在项目；切换它**不得**影响 tabs / 队列 / 草稿。 */
+  activeProjectId: string | null;
+  /** 每个项目独立的资源树 / 展开状态 / 选中项 / 加载状态。 */
+  resourcesByProject: Record<string, ResourceNodeState[]>;
+  expandedByProject: Record<string, Record<string, boolean>>;
+  selectedByProject: Record<string, string | null>;
+  loadingByProject: Record<string, boolean>;
 }
 
 export type WorkspaceAction =
@@ -92,6 +111,13 @@ export type WorkspaceAction =
   | { type: 'SET_MODE'; mode: ClientMode }
   | { type: 'SET_RESOURCES'; nodes: ResourceNodeState[] }
   | { type: 'SET_LOADING_RESOURCES'; loading: boolean }
+  | { type: 'SET_WORKSPACE_MODE'; workspaceMode: WorkspaceMode }
+  | { type: 'SET_PROJECTS'; projects: ProjectSummary[] }
+  | { type: 'SET_ACTIVE_PROJECT'; projectId: string }
+  | { type: 'SET_PROJECT_RESOURCES'; projectId: string; nodes: ResourceNodeState[] }
+  | { type: 'SET_PROJECT_LOADING'; projectId: string; loading: boolean }
+  | { type: 'TOGGLE_PROJECT_NODE'; projectId: string; path: string }
+  | { type: 'SELECT_PROJECT_NODE'; projectId: string; path: string | null }
   | { type: 'OPEN_TAB'; tab: DocTab }
   | { type: 'TAB_PATCH'; docId: string; patch: Partial<Omit<DocTab, 'docId'>> }
   | { type: 'ACTIVATE_TAB'; docId: string }

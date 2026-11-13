@@ -1,4 +1,4 @@
-import { DEFAULT_EXPANDED } from '../data/demo-project';
+import { DEFAULT_EXPANDED } from '../data/demo-project.ts';
 import type {
   DocTab,
   LayoutMode,
@@ -6,7 +6,7 @@ import type {
   ResourceNodeState,
   WorkspaceAction,
   WorkspaceState,
-} from './types';
+} from './types.ts';
 
 const MIN_RATIO = 25;
 const MAX_RATIO = 75;
@@ -31,6 +31,13 @@ export const INITIAL_STATE: WorkspaceState = {
   mode: 'demo',
   resources: [],
   loadingResources: false,
+  workspaceMode: 'legacy',
+  projects: [],
+  activeProjectId: null,
+  resourcesByProject: {},
+  expandedByProject: {},
+  selectedByProject: {},
+  loadingByProject: {},
 };
 
 function clampRatio(value: number): number {
@@ -92,6 +99,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         resources: [],
         selectedPath: null,
         expanded: action.mode === 'demo' ? { ...DEFAULT_EXPANDED } : {},
+        // 项目维度状态同样属于"上一个工作区"
+        projects: [],
+        activeProjectId: null,
+        resourcesByProject: {},
+        expandedByProject: {},
+        selectedByProject: {},
+        loadingByProject: {},
+        workspaceMode: 'legacy',
         panes: {
           primary: { docId: null, mode: 'editor' },
           secondary: { docId: null, mode: 'preview' },
@@ -229,6 +244,73 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
               }
             : tab,
         ),
+      };
+
+    // ---- 多项目（G2-05）----
+    case 'SET_WORKSPACE_MODE':
+      return state.workspaceMode === action.workspaceMode
+        ? state
+        : { ...state, workspaceMode: action.workspaceMode };
+
+    case 'SET_PROJECTS': {
+      const projects = action.projects;
+      const stillThere = state.activeProjectId
+        ? projects.some((project) => project.projectId === state.activeProjectId)
+        : false;
+      // 默认选中第一个 READY 项目；没有 READY 就保持为空（不伪造可用项目）
+      const fallback = projects.find((project) => project.status === 'READY')?.projectId ?? null;
+      return {
+        ...state,
+        projects,
+        activeProjectId: stillThere ? state.activeProjectId : fallback,
+      };
+    }
+
+    case 'SET_ACTIVE_PROJECT':
+      // 只切"当前项目"：不清空 tabs、不动其他项目的资源树/展开状态/草稿
+      return state.activeProjectId === action.projectId
+        ? state
+        : { ...state, activeProjectId: action.projectId };
+
+    case 'SET_PROJECT_RESOURCES': {
+      const previous = state.expandedByProject[action.projectId];
+      return {
+        ...state,
+        resourcesByProject: { ...state.resourcesByProject, [action.projectId]: action.nodes },
+        expandedByProject: {
+          ...state.expandedByProject,
+          [action.projectId]:
+            previous && Object.keys(previous).length > 0
+              ? previous
+              : defaultExpandedFor(action.nodes),
+        },
+      };
+    }
+
+    case 'SET_PROJECT_LOADING':
+      return {
+        ...state,
+        loadingByProject: { ...state.loadingByProject, [action.projectId]: action.loading },
+      };
+
+    case 'TOGGLE_PROJECT_NODE': {
+      const current = state.expandedByProject[action.projectId] ?? {};
+      return {
+        ...state,
+        expandedByProject: {
+          ...state.expandedByProject,
+          [action.projectId]: { ...current, [action.path]: !current[action.path] },
+        },
+      };
+    }
+
+    case 'SELECT_PROJECT_NODE':
+      return {
+        ...state,
+        selectedByProject: {
+          ...state.selectedByProject,
+          [action.projectId]: action.path,
+        },
       };
 
     case 'NOTICE':

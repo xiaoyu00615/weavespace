@@ -1,4 +1,5 @@
 import { useDocumentActions } from '../state/DocumentActionsContext';
+import { projectLabelOf } from '../state/doc-identity';
 import { useWorkspace } from '../state/WorkspaceContext';
 
 /** 文件标签：切换活动文档、关闭标签（关闭规则由动作层按模式判定）。 */
@@ -21,6 +22,8 @@ export function TabStrip() {
     <div className="tabs" role="tablist" aria-label="已打开文档">
       {state.tabs.map((tab) => {
         const active = tab.docId === activeDocId;
+        // 跨项目同名文件必须可区分：标签上显式标注项目名（G2-07）
+        const projectLabel = projectLabelOf(state.projects, tab.projectId);
         return (
           <div key={tab.docId} className={active ? 'tab tab--active' : 'tab'}>
             <button
@@ -30,6 +33,7 @@ export function TabStrip() {
               className="tab__label"
               onClick={() => dispatch({ type: 'ACTIVATE_TAB', docId: tab.docId })}
             >
+              {projectLabel && <span className="tab__project">{projectLabel}</span>}
               {tab.title}
               {tab.dirty && (
                 <span

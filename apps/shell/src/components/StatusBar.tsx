@@ -1,3 +1,4 @@
+import { projectLabelOf } from '../state/doc-identity';
 import { useWorkspace } from '../state/WorkspaceContext';
 
 /** 底部状态栏：模式标识、最近提示、活动文档与布局状态。 */
@@ -7,6 +8,9 @@ export function StatusBar() {
     state.focusedPane === 'secondary' ? state.panes.secondary.docId : state.panes.primary.docId;
   const tab = state.tabs.find((item) => item.docId === activeDocId) ?? null;
   const live = state.mode === 'live';
+  const tabProject = projectLabelOf(state.projects, tab?.projectId ?? null);
+  const activeProject = projectLabelOf(state.projects, state.activeProjectId);
+  const activeStatus = state.projects.find((p) => p.projectId === state.activeProjectId)?.status;
 
   return (
     <footer className="statusbar" aria-label="状态栏">
@@ -15,7 +19,15 @@ export function StatusBar() {
       </span>
       <span className="statusbar__notice">{state.notice}</span>
       <span className="statusbar__spacer" />
-      <span className="statusbar__item">{tab ? tab.path : '无活动文档'}</span>
+      {activeProject && (
+        <span className="statusbar__item" title="当前项目（切换项目不会关闭标签或丢弃草稿）">
+          {activeProject}
+          {activeStatus === 'UNAVAILABLE' ? ' · 不可用' : ''}
+        </span>
+      )}
+      <span className="statusbar__item">
+        {tab ? `${tabProject ? `${tabProject} / ` : ''}${tab.path}` : '无活动文档'}
+      </span>
       <span className="statusbar__item">{tab ? `${tab.buffer.length} 字符` : '—'}</span>
       <span className="statusbar__item">
         {tab

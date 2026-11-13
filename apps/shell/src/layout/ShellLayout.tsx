@@ -3,6 +3,7 @@ import { ConflictBanner } from '../components/ConflictBanner';
 import { DocumentToolbar } from '../components/DocumentToolbar';
 import { GlobalNav } from '../components/GlobalNav';
 import { PluginPanel } from '../components/PluginPanel';
+import { ProjectList } from '../components/ProjectList';
 import { ProjectTree } from '../components/ProjectTree';
 import { SplitWorkspace } from '../components/SplitWorkspace';
 import { StatusBar } from '../components/StatusBar';
@@ -26,8 +27,17 @@ export function ShellLayout() {
   return (
     <div className="shell" style={{ gridTemplateColumns: columns }}>
       <GlobalNav />
-      {/* 第二列按导航切换：项目资源树 / 插件与能力面板（S10-A） */}
-      {state.navKey === 'plugins' ? <PluginPanel /> : <ProjectTree />}
+      {/*
+        第二列按导航切换：插件面板 / 多项目列表（Multi） / 单项目资源树（Legacy、Demo）。
+        Multi 与 Legacy 共用同一列，但树的结构与展开状态完全独立。
+      */}
+      {state.navKey === 'plugins' ? (
+        <PluginPanel />
+      ) : state.workspaceMode === 'multi' && state.mode === 'live' ? (
+        <ProjectList />
+      ) : (
+        <ProjectTree />
+      )}
 
       <main className="main">
         <DocumentToolbar />

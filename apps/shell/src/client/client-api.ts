@@ -13,6 +13,17 @@
 
 export type ClientMode = 'demo' | 'live';
 
+/** 服务端运行模式（G2-03）：不得假定连接的一定是 Multi。 */
+export type WorkspaceMode = 'legacy' | 'multi';
+
+/** 项目摘要：与服务端 `ProjectSummary` 同构，**不含任何本机路径**。 */
+export interface ProjectSummary {
+  projectId: string;
+  name: string;
+  status: 'READY' | 'UNAVAILABLE';
+  reason?: string;
+}
+
 export interface ResourceNode {
   id: string;
   name: string;
@@ -37,6 +48,10 @@ export interface DocumentSnapshot {
   dirty: boolean;
   /** CLEAN | EDITING_DIRTY | SAVING | CONFLICT | FAILED | OUTCOME_UNKNOWN（demo 为 DEMO） */
   documentState: string;
+  /** 会话所属项目（Multi）；Legacy 不返回。 */
+  projectId?: string;
+  /** 会话失效标记（与 documentState 正交）：磁盘访问已被拒绝，草稿仍保留。 */
+  stale?: { reason: string; since: string };
 }
 
 export type SaveStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN' | 'DEMO';
@@ -80,10 +95,19 @@ export interface CloseOutcome {
 
 export interface WeaveSpaceClient {
   readonly mode: ClientMode;
-  listResources(): Promise<ResourceNode[]>;
-  openDocument(path: string): Promise<OpenOutcome>;
+  /** 服务端运行模式（`/api/health`）；demo 恒为 `legacy`。 */
+  workspaceMode(): Promise<WorkspaceMode>;
+  /** 仅 Multi 有项目列表；Legacy 返回 `[]`。 */
+  listProjects(): Promise<ProjectSummary[]>;
+  listResources(projectId?: string): Promise<ResourceNode[]>;
+  openDocument(path: string, projectId?: string): Promise<OpenOutcome>;
   readDocument(sessionId: string, viewId?: string | null): Promise<OpenOutcome>;
-  applyEdit(sessionId: string, buffer: string, expectedVersion?: string | null): Promise<OpenOutcome>;
+  applyEdit(
+    sessionId: string,
+    buffer: string,
+    expectedVersion?: string | null,
+    viewId?: string | null,
+  ): Promise<OpenOutcome>;
   saveDocument(sessionId: string, expectedVersion: string, viewId?: string | null): Promise<SaveOutcome>;
   closeDocument(sessionId: string, viewId: string): Promise<CloseOutcome>;
   /** 只读查看磁盘当前内容（冲突恢复入口的第一步）。 */
@@ -136,16 +160,29 @@ async function request(
 export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
   return {
     mode: 'live',
-    async listResources() {
-      const { body } = await request(baseUrl, '/api/resources');
+    async workspaceMode() {
+      const { body } = await request(baseUrl, '/api/health');
+      const mode = (body as { workspaceMode?: string }).workspaceMode;
+      // 旧版服务端没有该字段 → 只能是 legacy；不得假定 Multi
+      return mode === 'multi' ? 'multi' : 'legacy';
+    },
+    async listProjects() {
+      const { httpStatus, body } = await request(baseUrl, '/api/projects');
+      if (httpStatus === 404) return [];
+      const projects = (body as { projects?: ProjectSummary[] }).projects;
+      return Array.isArray(projects) ? projects : [];
+    },
+    async listResources(projectId?: string) {
+      const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+      const { body } = await request(baseUrl, `/api/resources${query}`);
       return Array.isArray((body as { nodes?: ResourceNode[] }).nodes)
         ? ((body as { nodes: ResourceNode[] }).nodes ?? [])
         : [];
     },
-    async openDocument(path: string) {
+    async openDocument(path: string, projectId?: string) {
       const { body } = await request(baseUrl, '/api/open', {
         method: 'POST',
-        body: JSON.stringify({ path }),
+        body: JSON.stringify(projectId ? { projectId, path } : { path }),
       });
       return {
         status: body.status === 'APPLIED' ? 'APPLIED' : 'REJECTED',
@@ -166,10 +203,21 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         document: body.document,
       };
     },
-    async applyEdit(sessionId: string, buffer: string, expectedVersion?: string | null) {
+    async applyEdit(
+      sessionId: string,
+      buffer: string,
+      expectedVersion?: string | null,
+      viewId?: string | null,
+    ) {
       const { body } = await request(baseUrl, '/api/edit', {
         method: 'POST',
-        body: JSON.stringify({ sessionId, buffer, expectedVersion: expectedVersion ?? undefined }),
+        body: JSON.stringify({
+          sessionId,
+          buffer,
+          expectedVersion: expectedVersion ?? undefined,
+          // Multi 必须带 viewId（会话归属校验）；Legacy 允许省略
+          ...(viewId ? { viewId } : {}),
+        }),
       });
       return {
         status: body.status === 'APPLIED' ? 'APPLIED' : 'REJECTED',
@@ -263,6 +311,13 @@ export function createDemoClient(
 
   return {
     mode: 'demo',
+    // 演示模式不接触 Host：模式恒为 legacy，也没有项目列表
+    async workspaceMode() {
+      return 'legacy' as const;
+    },
+    async listProjects() {
+      return [];
+    },
     async listResources() {
       return nodes;
     },

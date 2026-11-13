@@ -6,7 +6,7 @@
  * - 页面里的“保存”只清掉 dirty 标记并给出演示提示，**不会写入磁盘**；
  * - 未来由 Core 的 Client API 提供真实资源树与文档内容（见 ../client/client-api.ts）。
  */
-import type { ResourceNodeState } from '../state/types';
+import type { ResourceNodeState } from '../state/types.ts';
 
 export interface DemoNode {
   /** 树内唯一 key，同时作为演示文档 id。 */

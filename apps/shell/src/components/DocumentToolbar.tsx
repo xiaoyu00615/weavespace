@@ -10,11 +10,21 @@ export function DocumentToolbar() {
     state.focusedPane === 'secondary' ? state.panes.secondary.docId : state.panes.primary.docId;
   const activeTab = state.tabs.find((tab) => tab.docId === activeDocId) ?? null;
   const live = state.mode === 'live';
+  // 多项目：标题显示当前项目；不做成项目下拉（项目列表在左侧同时可见）
+  const multi = live && state.workspaceMode === 'multi';
+  const activeProject = multi
+    ? state.projects.find((project) => project.projectId === state.activeProjectId)
+    : undefined;
+  const projectLabel = multi
+    ? (activeProject?.name ?? '多项目工作区')
+    : live
+      ? '本地测试项目'
+      : DEMO_PROJECT_NAME;
 
   return (
     <header className="toolbar" role="toolbar" aria-label="工作台工具栏">
       <div className="toolbar__left">
-        <span className="toolbar__project">{live ? '本地测试项目' : DEMO_PROJECT_NAME}</span>
+        <span className="toolbar__project">{projectLabel}</span>
         <span
           className={live ? 'badge badge--live' : 'badge badge--demo'}
           title={live ? '真实文件：保存会写入本机测试项目' : '所有内容均为内置演示数据'}

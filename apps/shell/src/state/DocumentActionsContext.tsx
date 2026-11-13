@@ -1,5 +1,5 @@
 /**
- * 文档操作编排（S9-B）。
+ * 文档操作编排（S9-B / G2）。
  *
  * 职责边界：
  * - UI 组件只调用本 hook 暴露的动作，不直接 fetch、不直接改 Core 状态；
@@ -7,6 +7,13 @@
  * - demo 模式的"保存"返回 `DEMO`，明确不是真实写入；
  * - live 模式的编辑经串行队列提交（见 client/edit-queue.ts），保存前先 flush；
  * - 关闭未保存的 live 会话直接拒绝（暂无安全 discard 契约，不虚构成功）。
+ *
+ * 多项目（G2）：
+ * - 文档 id 由 `makeDocId(projectId, path)` 生成，A/a.md 与 B/a.md 是不同文档；
+ * - 队列 / 保存锁 / 草稿备份键全部按该 id 索引，项目之间互不影响；
+ * - 每个异步动作在发起时**固定捕获** `{ projectId, docId, sessionId }`，
+ *   响应回来先比对归属，过期回填一律丢弃（G2-10）；
+ * - 项目切换只改"当前项目"，不清标签、不清队列、不丢草稿。
  */
 import { createContext, useContext, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
@@ -14,19 +21,22 @@ import {
   createDemoClient,
   createLiveClient,
   type DocumentSnapshot,
+  type ProjectSummary,
   type WeaveSpaceClient,
+  type WorkspaceMode,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
 import { extensionOf } from '../capabilities/registry';
 import { backupDraftBeforeReload } from '../client/draft-backup';
 import { runSaveFlow } from '../client/save-flow';
 import { DEMO_CONTENTS, DEMO_NODES } from '../data/demo-project';
+import { draftBackupKey, isProjectOpenable, isResponseOwnerCurrent, makeDocId } from './doc-identity';
 import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
 
 export interface DocumentActions {
-  /** 打开文件（live 走服务端 CommandBus；demo 走内置数据）。 */
-  openNode(node: ResourceNodeState): Promise<void>;
+  /** 打开（或复用）会话节点。Multi 必须给 projectId。 */
+  openNode(node: ResourceNodeState, projectId?: string | null): Promise<void>;
   /** 提交一次编辑：本地即时生效，live 模式下按序同步到 Core。 */
   editDoc(docId: string, text: string): void;
   /** 保存：demo 只清标记；live 先 flush 编辑再条件保存。 */
@@ -35,8 +45,10 @@ export interface DocumentActions {
   closeTab(docId: string): Promise<void>;
   /** 切换 demo/live；有未保存修改时拒绝。 */
   switchMode(mode: ClientMode): Promise<void>;
-  /** 重新拉取 live 资源树。 */
-  reloadResources(): Promise<void>;
+  /** 重新拉取资源：Multi 只刷新指定项目，Legacy 刷新单项目树。 */
+  reloadResources(projectId?: string): Promise<void>;
+  /** 切换"当前项目"：只改焦点，不动标签 / 队列 / 草稿。 */
+  switchProject(projectId: string): Promise<void>;
   /** 只读查看磁盘当前内容（冲突恢复第一步）。 */
   fetchDiskVersion(docId: string): Promise<
     { ok: true; content: string; contentVersion: string } | { ok: false; errorCode: string | null; message?: string }
@@ -55,9 +67,9 @@ const DocumentActionsContext = createContext<DocumentActions | null>(null);
 /** 冲突重载前的草稿备份前缀：只写 sessionStorage，不落任何用户目录。 */
 const DRAFT_BACKUP_PREFIX = 'ws:draft-backup:';
 
-function backupDraftLocally(path: string, content: string): boolean {
+function backupDraftLocally(projectId: string | null, path: string, content: string): boolean {
   try {
-    window.sessionStorage.setItem(`${DRAFT_BACKUP_PREFIX}${path}`, content);
+    window.sessionStorage.setItem(`${DRAFT_BACKUP_PREFIX}${draftBackupKey(projectId, path)}`, content);
     return true;
   } catch {
     return false;
@@ -76,6 +88,7 @@ async function copyText(text: string): Promise<boolean> {
 
 function tabFromSnapshot(
   docId: string,
+  projectId: string | null,
   title: string,
   extension: string,
   mode: ClientMode,
@@ -83,6 +96,7 @@ function tabFromSnapshot(
 ): DocTab {
   return {
     docId,
+    projectId,
     path: doc.path,
     title,
     extension,
@@ -130,15 +144,38 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   };
 
   const actions = useMemo<DocumentActions>(() => {
-    const queueFor = (docId: string, sessionId: string): EditQueue => {
+    const tabOf = (docId: string): DocTab | undefined =>
+      stateRef.current.tabs.find((tab) => tab.docId === docId);
+
+    /** Multi：按项目取资源树（Legacy 用单树）。 */
+    const projectName = (projectId: string | null): string | null => {
+      if (!projectId) return null;
+      return (
+        stateRef.current.projects.find((project) => project.projectId === projectId)?.name ??
+        projectId
+      );
+    };
+
+    /**
+     * 编辑队列：索引为项目限定的 docId。
+     * `sessionId` / `viewId` / `projectId` 在创建时固定，之后不随 state 漂移——
+     * 项目切换或重新打开都不会把已发出的请求改投到别的会话。
+     */
+    const queueFor = (
+      docId: string,
+      sessionId: string,
+      projectId: string | null,
+      viewId: string | null,
+    ): EditQueue => {
       const existing = queues.current.get(docId);
       if (existing) return existing;
       const queue = createEditQueue<unknown>(async (text: string) => {
-        const current = stateRef.current.tabs.find((tab) => tab.docId === docId);
+        const current = tabOf(docId);
         const outcome = await clientFor(current?.mode ?? stateRef.current.mode).applyEdit(
           sessionId,
           text,
           current?.baseVersion ?? null,
+          viewId,
         );
         if (outcome.status !== 'APPLIED' || !outcome.document) {
           dispatch({
@@ -151,8 +188,17 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           });
         }
         // 只回写 Core 的 revision/状态，**不回写内容**：编辑器永远以用户输入为准
-        const latest = stateRef.current.tabs.find((tab) => tab.docId === docId);
-        if (latest && outcome.document.revision >= latest.revision) {
+        const latest = tabOf(docId);
+        const owned = isResponseOwnerCurrent(
+          { projectId, docId, sessionId },
+          {
+            projectId: latest?.projectId ?? null,
+            docId: latest?.docId ?? '',
+            sessionId: latest?.sessionId ?? null,
+            exists: Boolean(latest),
+          },
+        );
+        if (latest && owned && outcome.document.revision >= latest.revision) {
           dispatch({
             type: 'TAB_PATCH',
             docId,
@@ -167,23 +213,154 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       return queue;
     };
 
+    /**
+     * 同步项目状态（G2-11）：根被删除/移走后服务端会返回 UNAVAILABLE。
+     * 与资源刷新一起做，避免界面仍显示 READY 而实际已不可用。
+     */
+    async function refreshProjectStatuses(): Promise<ProjectSummary[] | null> {
+      try {
+        const projects = await clientFor('live').listProjects();
+        dispatch({ type: 'SET_PROJECTS', projects });
+        return projects;
+      } catch {
+        return null;
+      }
+    }
+
+    async function loadProjectResources(projectId: string): Promise<boolean> {
+      dispatch({ type: 'SET_PROJECT_LOADING', projectId, loading: true });
+      try {
+        const nodes = await clientFor('live').listResources(projectId);
+        dispatch({ type: 'SET_PROJECT_RESOURCES', projectId, nodes });
+        // 资源树与项目状态一起刷新：项目可能刚刚失效
+        const projects = await refreshProjectStatuses();
+        const status = projects?.find((project) => project.projectId === projectId);
+        if (status?.status === 'UNAVAILABLE') {
+          dispatch({
+            type: 'NOTICE',
+            message: `项目 ${status.name} 已不可用${status.reason ? `（${status.reason}）` : ''}：既有标签与草稿仍保留`,
+          });
+          return false;
+        }
+        return true;
+      } catch {
+        dispatch({
+          type: 'NOTICE',
+          message: '无法连接本地服务：请先启动 apps/server（npm run start:server）',
+        });
+        return false;
+      } finally {
+        dispatch({ type: 'SET_PROJECT_LOADING', projectId, loading: false });
+      }
+    }
+
+    /** 进入 live：识别服务端模式（不得假定 Multi），再按模式加载资源。 */
+    async function loadWorkspace(): Promise<void> {
+      const client = clientFor('live');
+      let workspaceMode: WorkspaceMode = 'legacy';
+      try {
+        workspaceMode = await client.workspaceMode();
+      } catch {
+        dispatch({
+          type: 'NOTICE',
+          message: '无法连接本地服务：请先启动 apps/server（npm run start:server）',
+        });
+        return;
+      }
+      dispatch({ type: 'SET_WORKSPACE_MODE', workspaceMode });
+
+      if (workspaceMode !== 'multi') {
+        dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
+        try {
+          const nodes = await client.listResources();
+          dispatch({ type: 'SET_RESOURCES', nodes });
+          const files = countFiles(nodes);
+          dispatch({
+            type: 'NOTICE',
+            message: files > 0 ? `已加载 ${files} 个可编辑文件（真实文件模式）` : '未发现可编辑文件',
+          });
+        } catch {
+          dispatch({ type: 'NOTICE', message: '无法连接本地服务：请先启动 apps/server' });
+        } finally {
+          dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
+        }
+        return;
+      }
+
+      let projects: ProjectSummary[] = [];
+      try {
+        projects = await client.listProjects();
+      } catch {
+        dispatch({ type: 'NOTICE', message: '无法读取项目列表：请检查 --workspace 配置' });
+        return;
+      }
+      dispatch({ type: 'SET_PROJECTS', projects });
+
+      const ready = projects.filter((project) => project.status === 'READY');
+      for (const project of ready) {
+        // 逐个加载，单个项目失败不影响其他项目
+        await loadProjectResources(project.projectId);
+      }
+      dispatch({
+        type: 'NOTICE',
+        message:
+          ready.length > 0
+            ? `已加载 ${ready.length} 个项目（${projects.length - ready.length} 个不可用）`
+            : '没有可用的项目：请检查工作区配置',
+      });
+    }
+
     return {
-      async openNode(node: ResourceNodeState) {
+      async openNode(node: ResourceNodeState, projectId?: string | null) {
         if (node.kind === 'folder') {
-          dispatch({ type: 'TOGGLE_NODE', path: node.id });
+          if (projectId) {
+            dispatch({ type: 'TOGGLE_PROJECT_NODE', projectId, path: node.id });
+          } else {
+            dispatch({ type: 'TOGGLE_NODE', path: node.id });
+          }
           return;
         }
-        const docId = node.path ?? node.id;
-        const existing = stateRef.current.tabs.find((tab) => tab.docId === docId);
+
+        const targetProject = projectId ?? null;
+        if (!isProjectOpenable(stateRef.current.projects, targetProject)) {
+          dispatch({
+            type: 'NOTICE',
+            message: `项目${projectName(targetProject) ? ` ${projectName(targetProject)}` : ''}当前不可用：无法打开新的磁盘文件（既有标签与草稿仍保留）`,
+          });
+          return;
+        }
+
+        const path = node.path ?? node.id;
+        const docId = makeDocId(targetProject, path);
+        const existing = tabOf(docId);
         if (existing) {
           dispatch({ type: 'ACTIVATE_TAB', docId });
           // 干净标签可能与磁盘脱节（页面刷新后旧视图仍在服务端）：重新打开并同步内容。
           // 有草稿时不动：Core 也不会在 dirty 时刷新，返回值就是会话缓冲，回填会覆盖输入。
           if (existing.mode === 'live' && !existing.dirty) {
-            const refreshed = await clientFor('live').openDocument(docId);
+            const captured = {
+              projectId: existing.projectId,
+              docId,
+              sessionId: existing.sessionId,
+            };
+            const refreshed = await clientFor('live').openDocument(
+              existing.path,
+              existing.projectId ?? undefined,
+            );
             if (refreshed.status === 'APPLIED' && refreshed.document) {
               const doc = refreshed.document;
-              if (doc.content !== existing.buffer || doc.baseVersion !== existing.baseVersion) {
+              const latest = tabOf(docId);
+              // 过期响应（标签已关闭 / 会话被替换 / 项目不一致）必须丢弃
+              const owned = isResponseOwnerCurrent(captured, {
+                projectId: latest?.projectId ?? null,
+                docId: latest?.docId ?? '',
+                sessionId: latest?.sessionId ?? null,
+                exists: Boolean(latest),
+              });
+              if (
+                owned &&
+                (doc.content !== existing.buffer || doc.baseVersion !== existing.baseVersion)
+              ) {
                 dispatch({
                   type: 'TAB_PATCH',
                   docId,
@@ -205,7 +382,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         const mode = stateRef.current.mode;
         const client = clientFor(mode);
         dispatch({ type: 'NOTICE', message: `正在打开 ${node.name} …` });
-        const outcome = await client.openDocument(docId);
+        const outcome = await client.openDocument(path, targetProject ?? undefined);
         if (outcome.status !== 'APPLIED' || !outcome.document) {
           dispatch({
             type: 'NOTICE',
@@ -213,17 +390,25 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           });
           return;
         }
+        // 打开期间标签已被别的操作创建：不再新建，只激活（避免遗留无人管理的 viewId）
+        if (tabOf(docId)) {
+          dispatch({ type: 'ACTIVATE_TAB', docId });
+          return;
+        }
         dispatch({
           type: 'OPEN_TAB',
           tab: tabFromSnapshot(
             docId,
+            targetProject,
             node.name,
-            // 只记录扩展名：用哪个查看器由能力注册表决定，不再在动作层写死格式分支
             node.extension ?? extensionOf(node.name),
             mode,
             outcome.document,
           ),
         });
+        if (targetProject) {
+          dispatch({ type: 'SELECT_PROJECT_NODE', projectId: targetProject, path: docId });
+        }
         // 放在 OPEN_TAB 之后：OPEN_TAB 会写"已打开"提示，不能让刷新提示被覆盖
         if (outcome.reloaded) {
           dispatch({
@@ -234,17 +419,17 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       },
 
       editDoc(docId: string, text: string) {
-        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        const tab = tabOf(docId);
         if (!tab) return;
         // 保存期间的输入一律丢弃：Core 正在比较版本，不能让缓冲在保存途中继续变化
         if (locked.current.has(docId)) return;
         dispatch({ type: 'EDIT_DOC', docId, text });
         if (tab.mode !== 'live' || !tab.sessionId) return;
-        queueFor(docId, tab.sessionId).schedule(text);
+        queueFor(docId, tab.sessionId, tab.projectId, tab.viewId).schedule(text);
       },
 
       async saveTab(docId: string) {
-        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        const tab = tabOf(docId);
         if (!tab) return;
         // 用 ref 判定（而不是 tab.saving）：后者要等一次渲染才更新
         if (locked.current.has(docId)) {
@@ -291,11 +476,11 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
                 ? flushLatest(queue, buffer)
                 : { ok: true as const, lastSynced: buffer },
             commit: () => {
-              const latest = stateRef.current.tabs.find((item) => item.docId === docId);
+              const latest = tabOf(docId);
               return client.saveDocument(
                 sessionId,
                 latest?.baseVersion ?? (tab.baseVersion as string),
-                latest?.viewId ?? null,
+                latest?.viewId ?? tab.viewId,
               );
             },
           });
@@ -309,6 +494,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
             documentState: result.documentState,
             baseVersion: result.baseVersion,
             revision: result.revision,
+            // 项目级失败（根失效/会话失效）时服务端可能不带正文：
+            // 这里**从不**用保存响应覆盖 buffer，因此缺失 content 不会清空草稿。
             notice: result.notice,
           });
         } catch {
@@ -330,7 +517,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       },
 
       async closeTab(docId: string) {
-        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        const tab = tabOf(docId);
         if (!tab) return;
         if (tab.saving) {
           dispatch({ type: 'NOTICE', message: '正在保存中，暂时不能关闭' });
@@ -350,6 +537,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
 
         if (tab.mode === 'live' && tab.sessionId && tab.viewId) {
           await queues.current.get(docId)?.flush();
+          // 只关闭**本标签自己的** viewId；其他标签（含其他项目的同名文件）不受影响
           const outcome = await clientFor('live').closeDocument(tab.sessionId, tab.viewId);
           if (outcome.status !== 'APPLIED') {
             dispatch({
@@ -366,7 +554,6 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
 
       async switchMode(mode: ClientMode) {
         if (mode === stateRef.current.mode) return;
-        const target = clientFor(mode);
         if (stateRef.current.tabs.some((tab) => tab.dirty)) {
           dispatch({ type: 'NOTICE', message: '有未保存修改，已阻止切换模式（请先保存）' });
           return;
@@ -381,28 +568,67 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         locked.current.clear();
         dispatch({ type: 'SET_MODE', mode });
         if (mode === 'live') {
-          dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
-          try {
-            const nodes = await target.listResources();
-            dispatch({ type: 'SET_RESOURCES', nodes });
-            const files = countFiles(nodes);
-            dispatch({
-              type: 'NOTICE',
-              message: files > 0 ? `已加载 ${files} 个可编辑文件（真实文件模式）` : '未发现可编辑文件',
-            });
-          } catch {
-            dispatch({
-              type: 'NOTICE',
-              message: '无法连接本地服务：请先启动 apps/server（npm run start:server）',
-            });
-          } finally {
-            dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
-          }
+          await loadWorkspace();
         }
       },
 
+      async reloadResources(projectId?: string) {
+        if (stateRef.current.mode !== 'live') return;
+        if (projectId) {
+          // 只刷新指定项目，绝不覆盖其他项目的资源树（G2-01）
+          const ok = await loadProjectResources(projectId);
+          if (ok) {
+            dispatch({
+              type: 'NOTICE',
+              message: `已刷新项目 ${projectName(projectId) ?? projectId} 的文件树`,
+            });
+          }
+          return;
+        }
+        if (stateRef.current.workspaceMode === 'multi') {
+          // 未指定项目：只刷新当前项目，避免把别的项目一起重写
+          const active = stateRef.current.activeProjectId;
+          if (active) {
+            await loadProjectResources(active);
+            dispatch({
+              type: 'NOTICE',
+              message: `已刷新项目 ${projectName(active) ?? active} 的文件树`,
+            });
+          }
+          return;
+        }
+        dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
+        try {
+          const nodes = await clientFor('live').listResources();
+          dispatch({ type: 'SET_RESOURCES', nodes });
+          dispatch({ type: 'NOTICE', message: `已刷新资源树（${countFiles(nodes)} 个文件）` });
+        } catch {
+          dispatch({ type: 'NOTICE', message: '刷新失败：无法连接本地服务' });
+        } finally {
+          dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
+        }
+      },
+
+      async switchProject(projectId: string) {
+        const project = stateRef.current.projects.find((item) => item.projectId === projectId);
+        if (!project) return;
+        // 只改活动项目：不清空标签、不清队列、不丢草稿（G2-05/G2-07）
+        dispatch({ type: 'SET_ACTIVE_PROJECT', projectId });
+        if (project.status !== 'READY') {
+          dispatch({
+            type: 'NOTICE',
+            message: `项目 ${project.name} 不可用${project.reason ? `（${project.reason}）` : ''}：既有标签与草稿仍保留`,
+          });
+          return;
+        }
+        if ((stateRef.current.resourcesByProject[projectId] ?? []).length === 0) {
+          await loadProjectResources(projectId);
+        }
+        dispatch({ type: 'NOTICE', message: `已切换到项目 ${project.name}` });
+      },
+
       async fetchDiskVersion(docId: string) {
-        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        const tab = tabOf(docId);
         if (!tab || tab.mode !== 'live' || !tab.sessionId) {
           return { ok: false as const, errorCode: 'ERR_DOCUMENT_NOT_FOUND' };
         }
@@ -418,10 +644,10 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       },
 
       async copyDraft(docId: string) {
-        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        const tab = tabOf(docId);
         if (!tab) return false;
         const copied = await copyText(tab.buffer);
-        const backedUp = backupDraftLocally(tab.path, tab.buffer);
+        const backedUp = backupDraftLocally(tab.projectId, tab.path, tab.buffer);
         dispatch({
           type: 'NOTICE',
           message: copied
@@ -434,7 +660,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       },
 
       async reloadFromDisk(docId: string) {
-        const tab = stateRef.current.tabs.find((item) => item.docId === docId);
+        const tab = tabOf(docId);
         if (!tab || tab.mode !== 'live') return false;
         if (!tab.sessionId || !tab.viewId) {
           dispatch({ type: 'NOTICE', message: '缺少会话信息，无法重新加载' });
@@ -459,13 +685,13 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         try {
           // 先让在途编辑落定，避免重载后又被旧缓冲覆盖
           await queues.current.get(docId)?.flush();
-          const draft = stateRef.current.tabs.find((item) => item.docId === docId)?.buffer ?? tab.buffer;
+          const draft = tabOf(docId)?.buffer ?? tab.buffer;
           const sessionId = tab.sessionId;
           const viewId = tab.viewId;
 
           // F03：先备份，再重载；两种备份都失败时不发起重载（草稿原样保留）
           const backup = await backupDraftBeforeReload(draft, {
-            saveLocal: (content) => backupDraftLocally(tab.path, content),
+            saveLocal: (content) => backupDraftLocally(tab.projectId, tab.path, content),
             copy: (content) => copyText(content),
             reload: async () => {
               const outcome = await clientFor('live').reloadDocument(sessionId, viewId);
@@ -516,20 +742,6 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           return false;
         } finally {
           unlocked(docId);
-        }
-      },
-
-      async reloadResources() {
-        if (stateRef.current.mode !== 'live') return;
-        dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
-        try {
-          const nodes = await clientFor('live').listResources();
-          dispatch({ type: 'SET_RESOURCES', nodes });
-          dispatch({ type: 'NOTICE', message: `已刷新资源树（${countFiles(nodes)} 个文件）` });
-        } catch {
-          dispatch({ type: 'NOTICE', message: '刷新失败：无法连接本地服务' });
-        } finally {
-          dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
         }
       },
     };

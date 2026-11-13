@@ -1,4 +1,4 @@
-# apps/shell — WeaveSpace 工作台 Shell（S9-A / S9-B）
+# apps/shell — WeaveSpace 工作台 Shell（S9-A / S9-B / G2）
 
 浏览器端的五区工作台外壳，支持两种模式：
 
@@ -102,6 +102,23 @@ Shell 不再 import 任何格式实现；预览按**扩展名**向能力注册�
 渲染层输出原文（纯文本），**不产出任何锚点**。规范化会先剔除 ASCII 控制字符与空格，
 避免 `java\tscript:` 这类伪装绕过判断。渲染层始终不调用 `dangerouslySetInnerHTML`。
 
+## 多项目工作区（G2）
+
+- 进入「真实文件」模式时先用 `GET /api/health` 读 `workspaceMode`，**不假定**服务端一定是 Multi：
+  - `legacy` → 左列仍是单项目树（`ProjectTree`）；
+  - `multi` → 左列是多项目列表（`ProjectList`），`GET /api/projects` 拿项目与状态。
+- 多个项目**同时可见**，各自独立的资源树 / 展开状态 / 选中项 / 加载状态，刷新只作用于目标项目。
+- 文档 id 使用项目命名空间 `doc:<projectId>/<relativePath>`（`state/doc-identity.ts`），
+  `DocTab` 显式记录 `projectId`；A/a.md 与 B/a.md 是不同文档，标签上标注项目名。
+- 会话类请求（edit/save/read/disk/reload/close）一律带 `viewId`；`projectId` 由服务端从会话解析，
+  前端不会重新声明，也不会据此切换项目。
+- 异步响应归属：每个动作发起时固定捕获 `{projectId, docId, sessionId}`，响应回来先比对
+  （`isResponseOwnerCurrent`），过期回填直接丢弃，因此晚到的 A 响应不会污染 B。
+- 项目失效（UNAVAILABLE）：不再允许打开新的磁盘文件，但既有标签、缓冲与 dirty 标记全部保留；
+  保存失败时服务端可能不返回 `document.content`，UI **不会**把它当成空文档——buffer 只由本地编辑驱动。
+- 草稿备份键为 `ws:draft-backup:<projectId|local>:<path>`，A/a.md 与 B/a.md 不会互相覆盖。
+- 本阶段**不做**：Quick File、工作区持久化、Registry 动态刷新/重绑定、自动会话恢复。
+
 ## 与 Core 的边界
 
 - 浏览器**不访问**文件系统或 SQLite；真实读写必须经 Core 的 CommandBus + PermissionService。
@@ -130,10 +147,11 @@ Shell 不再 import 任何格式实现；预览按**扩展名**向能力注册�
    + 端到端接口测试（`tests/suites/20-s9b-live-file.test.ts`）+ 真实 Chrome（CDP）冒烟；
    仓库内未引入 playwright/puppeteer，浏览器冒烟脚本不随仓库分发。
 6. 插件面板只支持启用/停用内置插件；没有安装、来源校验与签名。
-7. 冲突恢复：出现 `CONFLICT` 时工具栏下方出现恢复面板，可「查看磁盘版本」「复制草稿」
+7. 多项目下**没有**项目切换器的"下拉"形态：项目列表常驻左列；分区折叠是纯 UI 状态，刷新页面即恢复默认展开。
+8. 冲突恢复：出现 `CONFLICT` 时工具栏下方出现恢复面板，可「查看磁盘版本」「复制草稿」
    「重新加载（丢弃草稿）」。重新加载需要 `window.confirm` 明确确认；确认前会把草稿备份到
    `sessionStorage`（`ws:draft-backup:<path>`）并尽力复制到剪贴板；
    **两条备份都失败时不会发起重载**，只提示用户手动复制（`client/draft-backup.ts`）。
    重载失败或取消时草稿保持不变。
    仍没有"另存为/强制覆盖"入口。
-7. 未做多用户与并发编辑：单进程、单 actor（`local-user`）。
+9. 未做多用户与并发编辑：单进程、单 actor（`local-user`）；`viewId` 是归属校验标识，不是认证凭据。
