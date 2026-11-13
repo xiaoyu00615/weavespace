@@ -18,6 +18,9 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
   Legacy 保持 `local` / `doc:<relativePath>` 不变。
 - Multi 的 `projectId` 必须由客户端在 `/api/resources`、`/api/open` 显式提供；
   其余接口一律按**服务端会话身份**解析项目，客户端给的 `projectId` 只作一致性断言。
+- Multi 的会话类接口（`/api/document`、`/api/document/disk`、`/api/edit`、`/api/save`）
+  **必须带 `viewId`**：它绑定 actor 与该会话，缺失即 400 `ERR_COMMAND_INVALID`。
+  Legacy 仍保持 `viewId` 可选（既有行为不变）。`viewId` 是归属校验标识，不是认证凭据。
 - 只有 Registry 判定为 `READY` 的项目才有 Provider；`UNAVAILABLE`（根缺失/非目录/
   重解析点/身份不可确认/UNC）不会被自动创建或自动接管。
 - 页面通过 Vite 同源代理访问：`apps/shell` 的 dev server 把 `/api` 转发到本服务，
@@ -55,6 +58,11 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 | **未知 `projectId`** | 404 | `REJECTED` + `ERR_PROJECT_NOT_FOUND` |
 | **未获授权的项目** | 403 | `REJECTED` + `ERR_PERMISSION_DENIED` |
 | **会话已失效且项目仍不可用** | 409 / 503 | `REJECTED` + `ERR_SESSION_STALE` / `ERR_PROJECT_UNAVAILABLE` |
+| **Multi 会话接口缺 `viewId`** | 400 | `REJECTED` + `ERR_COMMAND_INVALID` |
+
+Multi 下项目级失败（根失效/会话失效）的 `/api/save` 响应**省略 `document.content`**：
+只返回 `dirty` / `baseVersion` / `revision` / `stale` 等状态，避免把草稿正文复制进错误响应；
+草稿正文仍可通过合法的 `/api/document?sessionId&viewId` 取回。
 
 `UNKNOWN` 既不是成功也不是失败：不写收据、不自动重试，需人工核对磁盘。
 

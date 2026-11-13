@@ -301,25 +301,24 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
       let reloaded = false;
 
       /**
-       * G1-07：失效会话不得被静默复用。
-       * - 有未保存草稿 → 拒绝（`ERR_SESSION_STALE`），绝不覆盖；
-       * - 无草稿 → 丢弃该会话并按磁盘重建（磁盘是唯一权威，不存在草稿损失）。
-       * 两种情况都不做 Provider 重绑定、不迁移到其他根。
+       * G1-07 / G1-R1：A1 阶段失效会话**一律拒绝**重开（dirty 与非 dirty 同样处理）。
+       *
+       * 为什么不做"非 dirty 直接丢弃重建"：那等于让调用方在一次失败之后静默获得一个
+       * 绑定新磁盘状态的新会话，属于自动恢复语义，必须留给 A2（显式 revalidate/adopt）。
+       * 本轮只做安全失效与拒绝：**不删除 Session、不删除 View、不重绑 Provider、
+       * 不修改 baseVersion / revision / 六态 state**。
        */
       if (session?.stale) {
-        if (session.dirty) {
-          throw Object.assign(
-            new Error(
-              `会话已失效（${session.stale.reason}）且存在未保存修改，拒绝覆盖草稿: ${session.path}`,
-            ),
-            { errorCode: 'ERR_SESSION_STALE' as const, staleReason: session.stale.reason },
-          );
-        }
-        for (const viewId of session.views) views.delete(viewId);
-        sessions.delete(session.sessionId);
-        sessionsByResource.delete(input.resourceId);
-        sessionId = undefined;
-        session = undefined;
+        throw Object.assign(
+          new Error(
+            `会话已失效（${session.stale.reason}），A1 不支持自动重开: ${session.path}`,
+          ),
+          {
+            errorCode: 'ERR_SESSION_STALE' as const,
+            staleReason: session.stale.reason,
+            dirty: session.dirty,
+          },
+        );
       }
 
       /**

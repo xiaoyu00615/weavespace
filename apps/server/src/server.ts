@@ -51,7 +51,8 @@ export interface DocumentDto {
   viewId: string | null;
   resourceId: string;
   path: string;
-  content: string;
+  /** 草稿正文；项目级失败响应（G1-R1）中会被省略，避免把草稿复制进错误响应。 */
+  content?: string;
   baseVersion: string | null;
   revision: number;
   dirty: boolean;
@@ -387,7 +388,13 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     document,
     permission,
     resolveProvider: (providerId) => providers.get(providerId),
-    ...(mode === 'multi' ? { requireProjectId: true, gate: registry } : {}),
+    ...(mode === 'multi' && registry
+      ? {
+          requireProjectId: true,
+          // 门禁同时给出可信 providerId：payload 里的声明只能用于一致性校验
+          gate: { resolveProject: (projectId: string) => registry.assertUsable(projectId) },
+        }
+      : {}),
   });
 
   /** viewId → 会话；仅用于「这个 viewId 是否属于该会话」的校验，不作授权凭据。 */
@@ -398,7 +405,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     return document.inspectSession(sessionId);
   }
 
-  function documentDto(sessionId: string, viewId: string | null): DocumentDto {
+  function documentDto(
+    sessionId: string,
+    viewId: string | null,
+    options: { includeContent?: boolean } = {},
+  ): DocumentDto {
     const identity = identityOf(sessionId);
     const view = document.getSession(sessionId);
     if (!identity || !view) {
@@ -409,7 +420,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       viewId,
       resourceId: identity.resourceId,
       path: identity.path,
-      content: document.getBuffer(sessionId),
+      ...(options.includeContent === false
+        ? {}
+        : { content: document.getBuffer(sessionId) }),
       baseVersion: view.baseVersion,
       revision: view.revision,
       dirty: view.dirty,
@@ -419,8 +432,12 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     };
   }
 
-  function requireView(sessionId: string, viewId: string | undefined): void {
-    if (!viewId) return;
+  function requireView(sessionId: string, viewId: string | undefined, required = false): void {
+    if (!viewId) {
+      // Multi（G1-R1）：viewId 是会话归属的绑定校验标识，不允许只凭 sessionId 操作会话
+      if (required) throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 viewId');
+      return;
+    }
     const record = views.get(viewId);
     if (!record || record.sessionId !== sessionId) {
       throw new HttpError(403, 'ERR_PERMISSION_DENIED', 'viewId 与 sessionId 不匹配');
@@ -592,7 +609,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       if (mode === 'multi' && !projectId) {
         throw new HttpError(400, 'ERR_PROJECT_REQUIRED', PUBLIC_ERROR_MESSAGES.ERR_PROJECT_REQUIRED ?? '必须声明 projectId');
       }
+      // 先判项目存在与可用（404/503），再判授权（403）：
+      // 不存在的项目不应因"没有授权记录"而被报成权限问题。
+      let multiProvider: StorageProvider | undefined;
       if (mode === 'multi') {
+        multiProvider = requireProjectHandle(projectId).provider;
         // 项目级读授权（G1-05）：A 项目的授权不覆盖 B 项目
         const decision = permission.authorize({
           actorId,
@@ -606,8 +627,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       }
 
       try {
-        const source =
-          mode === 'multi' ? requireProjectHandle(projectId).provider : legacyOnlyProvider();
+        const source = multiProvider ?? legacyOnlyProvider();
         const paths = await source.list();
         sendJson(res, 200, {
           status: 'APPLIED',
@@ -632,7 +652,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       const viewId = url.searchParams.get('viewId') ?? undefined;
       if (!sessionId) throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 sessionId');
       if (!identityOf(sessionId)) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
-      requireView(sessionId, viewId);
+      requireView(sessionId, viewId, mode === 'multi');
       assertProjectAssertion(identityOf(sessionId), url.searchParams.get('projectId'));
       authorizeRead(sessionId);
       // G1-11：先过 G-DISK 门禁，再用**会话绑定项目**的 Provider 读取
@@ -660,7 +680,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       if (!sessionId) throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 sessionId');
       // 先判会话是否存在（404），再判 viewId 归属（403）：错误语义更精确
       if (!identityOf(sessionId)) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
-      requireView(sessionId, viewId);
+      requireView(sessionId, viewId, mode === 'multi');
       assertProjectAssertion(identityOf(sessionId), url.searchParams.get('projectId'));
       authorizeRead(sessionId);
       sendJson(res, 200, { status: 'APPLIED', document: documentDto(sessionId, viewId ?? null) });
@@ -753,7 +773,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         if (typeof body.buffer !== 'string') {
           throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 buffer');
         }
-        requireView(sessionId, typeof body.viewId === 'string' ? body.viewId : undefined);
+        requireView(sessionId, typeof body.viewId === 'string' ? body.viewId : undefined, mode === 'multi');
         const identity = identityOf(sessionId);
         if (!identity) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
         assertProjectAssertion(identity, body.projectId);
@@ -794,7 +814,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         if (!expectedVersion) {
           throw new HttpError(400, 'ERR_COMMAND_INVALID', '写命令必须携带 expectedVersion');
         }
-        requireView(sessionId, typeof body.viewId === 'string' ? body.viewId : undefined);
+        requireView(sessionId, typeof body.viewId === 'string' ? body.viewId : undefined, mode === 'multi');
         const saveIdentity = identityOf(sessionId);
         assertProjectAssertion(saveIdentity, body.projectId);
 
@@ -847,7 +867,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           status,
           errorCode: outcome.errorCode,
           contentVersion: outcome.resultingVersion ?? null,
-          document: documentDto(sessionId, typeof body.viewId === 'string' ? body.viewId : null),
+          // G1-R1：项目级失败（根失效/会话失效）不得回传草稿正文副本；
+          // dirty / baseVersion / stale 仍保留，供 UI 提示与后续恢复。
+          document: documentDto(sessionId, typeof body.viewId === 'string' ? body.viewId : null, {
+            includeContent: !(mode === 'multi' && projectLevel),
+          }),
         });
         return;
       }
@@ -941,17 +965,23 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     errorCode?: string,
   ): Promise<void> {
     const httpStatus =
-      errorCode === 'ERR_DOCUMENT_VERSION_CONFLICT'
+      errorCode === 'ERR_DOCUMENT_VERSION_CONFLICT' || errorCode === 'ERR_SESSION_STALE'
         ? 409
         : errorCode === 'ERR_PERMISSION_DENIED' || errorCode === 'ERR_RESOURCE_IDENTITY_CONFLICT'
           ? 403
-          : errorCode === 'ERR_ROOT_CHANGED' || errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED'
+          : errorCode === 'ERR_ROOT_CHANGED' ||
+              errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED' ||
+              errorCode === 'ERR_PROJECT_UNAVAILABLE'
             ? 503
-            : errorCode === 'ERR_RESOURCE_NOT_FOUND' || errorCode === 'ERR_DOCUMENT_NOT_FOUND'
+            : errorCode === 'ERR_PROJECT_NOT_FOUND' ||
+                errorCode === 'ERR_RESOURCE_NOT_FOUND' ||
+                errorCode === 'ERR_DOCUMENT_NOT_FOUND'
               ? 404
-              : status === 'UNKNOWN'
-                ? 202
-                : 422;
+              : errorCode === 'ERR_PROJECT_REQUIRED'
+                ? 400
+                : status === 'UNKNOWN'
+                  ? 202
+                  : 422;
     sendJson(res, httpStatus, { status: 'REJECTED', errorCode, message: '命令被拒绝' });
   }
 

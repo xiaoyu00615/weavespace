@@ -44,11 +44,14 @@ export interface CommandDispatchOutcome extends CommandResult {
 }
 
 /**
- * 项目门禁（G1-08）。Host 用它把 Registry 的可用性判定接进命令链路；
+ * 项目门禁（G1-08 / G1-R1）。Host 用它把 Registry 的**可信项目身份**接进命令链路；
  * Core 不依赖 Registry 实现，只依赖这个最小契约。
+ *
+ * `resolveProject` 必须同时完成"可用性判定"与"providerId 派生"：
+ * 返回的 providerId 是唯一可信来源，payload 中的声明只能用于一致性校验。
  */
 export interface ProjectGate {
-  assertUsable(projectId: string): unknown;
+  resolveProject(projectId: string): { providerId: string };
 }
 
 export interface CommandBusOptions {
@@ -113,15 +116,20 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
   const receipts = new Map<string, ReceiptEntry>();
   const seenCommandIds = new Set<string>();
 
-  /** 门禁失败 → 归一为可返回的错误码，不抛穿（保持 CommandBus 的 REJECTED 语义）。 */
-  function gateErrorOf(projectId: string): CommandResult['errorCode'] | undefined {
-    if (!options.gate) return undefined;
+  /**
+   * 解析项目的**可信身份**（G1-R1）：可用性判定 + providerId 派生一次完成。
+   * 门禁失败不抛穿，归一为可返回的错误码，保持 CommandBus 的 REJECTED 语义。
+   */
+  function resolveTrustedProject(
+    projectId: string,
+  ): { ok: true; providerId?: string } | { ok: false; code: CommandResult['errorCode'] } {
+    if (!options.gate) return { ok: true };
     try {
-      options.gate.assertUsable(projectId);
-      return undefined;
+      const handle = options.gate.resolveProject(projectId);
+      return { ok: true, providerId: handle.providerId };
     } catch (err) {
       const code = (err as { errorCode?: string } | undefined)?.errorCode;
-      return (code ?? 'ERR_PROJECT_UNAVAILABLE') as CommandResult['errorCode'];
+      return { ok: false, code: (code ?? 'ERR_PROJECT_UNAVAILABLE') as CommandResult['errorCode'] };
     }
   }
 
@@ -362,17 +370,36 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
               { field: 'projectId', reason: 'Multi 模式必须声明 projectId（不得回落默认项目）' },
             ]);
           }
+          let trustedProviderId: string | undefined;
           if (payloadProjectId) {
-            const gateCode = gateErrorOf(payloadProjectId);
-            if (gateCode) {
-              return reject(gateCode, undefined, {
+            const trusted = resolveTrustedProject(payloadProjectId);
+            if (!trusted.ok) {
+              return reject(trusted.code, undefined, {
                 projectId: payloadProjectId,
                 claimedResourceId,
                 claimedPath: payloadPath,
               });
             }
+            trustedProviderId = trusted.providerId || undefined;
+
+            // 身份一致性（G1-R1）：声明只能用于校验，不能覆盖 Registry 的可信结果
+            if (claimedProviderId && trustedProviderId && claimedProviderId !== trustedProviderId) {
+              return reject(
+                'ERR_COMMAND_INVALID',
+                [{ field: 'providerId', reason: '声明的 providerId 与项目可信身份不一致' }],
+                { projectId: payloadProjectId, claimedProviderId, trustedProviderId },
+              );
+            }
+            if (claimedResourceId && !claimedResourceId.startsWith(`doc:${payloadProjectId}/`)) {
+              return reject(
+                'ERR_COMMAND_INVALID',
+                [{ field: 'resourceId', reason: 'resourceId 不属于声明的项目命名空间' }],
+                { projectId: payloadProjectId, claimedResourceId },
+              );
+            }
           }
-          const providerId = claimedProviderId ?? (options.requireProjectId ? '' : 'local');
+          const providerId =
+            trustedProviderId ?? claimedProviderId ?? (options.requireProjectId ? '' : 'local');
           if (!providerId) {
             return reject('ERR_PROJECT_REQUIRED', [
               {
@@ -424,12 +451,22 @@ export function createCommandBus(options: CommandBusOptions): CommandBus {
               ]);
             }
             if (identity.projectId) {
-              const gateCode = gateErrorOf(identity.projectId);
-              if (gateCode) {
-                return reject(gateCode, undefined, {
+              const trusted = resolveTrustedProject(identity.projectId);
+              if (!trusted.ok) {
+                return reject(trusted.code, undefined, {
                   projectId: identity.projectId,
                   sessionId,
                   reason: '会话所属项目已不可用',
+                });
+              }
+              // Provider 身份必须仍是会话绑定的那个（不得静默重绑定到别的根）
+              if (trusted.providerId && trusted.providerId !== identity.providerId) {
+                return reject('ERR_RESOURCE_IDENTITY_CONFLICT', undefined, {
+                  projectId: identity.projectId,
+                  sessionId,
+                  boundProviderId: identity.providerId,
+                  trustedProviderId: trusted.providerId,
+                  reason: '会话绑定的 Provider 与项目当前可信身份不一致',
                 });
               }
             } else if (options.requireProjectId) {

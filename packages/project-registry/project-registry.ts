@@ -123,8 +123,35 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
     });
   }
 
-  const list = (): readonly ProjectSummary[] =>
-    Object.freeze(
+  /**
+   * 重新确认某个已 READY 条目的根身份；失效则就地降级。
+   * `list()` 与 `assertUsable()` 复用同一判定，避免出现"第二套项目状态"。
+   */
+  function refreshEntry(entry: Entry): void {
+    if (entry.status !== 'READY' || !entry.handle) return;
+    const inspection = inspectProjectRoot(entry.rootDir);
+    if (inspection.status !== 'READY') {
+      entry.status = 'UNAVAILABLE';
+      entry.reason = inspection.reason;
+      entry.handle = undefined;
+      return;
+    }
+    if (inspection.canonicalRoot !== entry.handle.canonicalRoot) {
+      entry.status = 'UNAVAILABLE';
+      entry.reason = 'CANONICAL_CHANGED';
+      entry.handle = undefined;
+      return;
+    }
+    if (inspection.rootToken !== entry.handle.rootToken) {
+      entry.status = 'UNAVAILABLE';
+      entry.reason = 'ROOT_TOKEN_CHANGED';
+      entry.handle = undefined;
+    }
+  }
+
+  const list = (): readonly ProjectSummary[] => {
+    for (const entry of entries.values()) refreshEntry(entry);
+    return Object.freeze(
       [...entries.values()].map((entry) =>
         Object.freeze({
           projectId: entry.projectId,
@@ -134,6 +161,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         }),
       ),
     );
+  };
 
   /**
    * 访问门禁：每次都重新确认根身份。一旦发现变化，就把项目永久置为 UNAVAILABLE
@@ -150,24 +178,9 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       throw unavailableError(projectId, entry.reason);
     }
 
-    const inspection = inspectProjectRoot(entry.rootDir);
-    if (inspection.status !== 'READY') {
-      entry.status = 'UNAVAILABLE';
-      entry.reason = inspection.reason;
-      entry.handle = undefined;
-      throw unavailableError(projectId, inspection.reason);
-    }
-    if (inspection.canonicalRoot !== entry.handle.canonicalRoot) {
-      entry.status = 'UNAVAILABLE';
-      entry.reason = 'CANONICAL_CHANGED';
-      entry.handle = undefined;
-      throw unavailableError(projectId, 'CANONICAL_CHANGED');
-    }
-    if (inspection.rootToken !== entry.handle.rootToken) {
-      entry.status = 'UNAVAILABLE';
-      entry.reason = 'ROOT_TOKEN_CHANGED';
-      entry.handle = undefined;
-      throw unavailableError(projectId, 'ROOT_TOKEN_CHANGED');
+    refreshEntry(entry);
+    if (entry.status !== 'READY' || !entry.handle) {
+      throw unavailableError(projectId, entry.reason);
     }
     return entry.handle;
   }

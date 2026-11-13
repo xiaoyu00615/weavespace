@@ -291,18 +291,21 @@ test('H-07 根失效后草稿必须保留且可读回，重开被拒绝', async 
   });
 });
 
-test('H-07b [UNIT] STALE 会话：dirty 重开拒绝、非 dirty 丢弃重建', async () => {
+test('H-07b [UNIT] STALE 会话在 A1 一律拒绝重开，且不删除会话/草稿', async () => {
   const base = await mkdtemp(join(tmpdir(), 'ws-g1s-'));
   try {
     const root = join(base, 'project');
-    await mkdir(root, { recursive: true });
+    await mkdir(join(root, 'docs'), { recursive: true });
     await writeFile(join(root, 'a.md'), '# A\n', 'utf8');
+    await writeFile(join(root, 'docs', 'clean.md'), '# clean\n', 'utf8');
     const provider = createLocalProvider({ rootDir: root, providerId: 'local:project-a' });
     const document = createDocumentService();
     const resourceId = 'doc:project-a/a.md';
 
+    // dirty：拒绝，草稿与版本保持不变
     const dirty = await document.openSession({ resourceId, path: 'a.md', provider, projectId: 'project-a' });
     document.applyEdit(dirty.sessionId, '# draft\n');
+    const before = document.getSession(dirty.sessionId);
     document.markProjectStale('project-a', 'MISSING');
 
     await assert.rejects(
@@ -310,10 +313,14 @@ test('H-07b [UNIT] STALE 会话：dirty 重开拒绝、非 dirty 丢弃重建', 
       (err: { errorCode?: string }) => err.errorCode === 'ERR_SESSION_STALE',
       'dirty 的失效会话不得被覆盖重建',
     );
+    const after = document.getSession(dirty.sessionId);
+    assert.ok(after, '不得删除已有 Session');
+    assert.equal(after?.sessionId, dirty.sessionId);
     assert.equal(document.getBuffer(dirty.sessionId), '# draft\n', '草稿必须保留');
-    assert.equal(document.getSession(dirty.sessionId)?.baseVersion, document.getSession(dirty.sessionId)?.baseVersion);
+    assert.equal(after?.baseVersion, before?.baseVersion, '不得修改 baseVersion');
+    assert.equal(after?.revision, before?.revision);
 
-    // 非 dirty：允许丢弃旧会话并按磁盘重建（无草稿损失）
+    // 非 dirty：A1 同样拒绝自动重开；会话与视图都不得被删除
     const clean = await document.openSession({
       resourceId: 'doc:project-a/docs/clean.md',
       path: 'docs/clean.md',
@@ -321,13 +328,23 @@ test('H-07b [UNIT] STALE 会话：dirty 重开拒绝、非 dirty 丢弃重建', 
       projectId: 'project-a',
     });
     document.markProjectStale('project-a', 'MISSING');
-    const reopened = await document.openSession({
-      resourceId: 'doc:project-a/docs/clean.md',
-      path: 'docs/clean.md',
-      provider,
-      projectId: 'project-a',
-    });
-    assert.notEqual(reopened.sessionId, clean.sessionId, '非 dirty 的失效会话应按磁盘重建');
+    const cleanBefore = document.getSession(clean.sessionId);
+
+    await assert.rejects(
+      () =>
+        document.openSession({
+          resourceId: 'doc:project-a/docs/clean.md',
+          path: 'docs/clean.md',
+          provider,
+          projectId: 'project-a',
+        }),
+      (err: { errorCode?: string }) => err.errorCode === 'ERR_SESSION_STALE',
+      'A1 不实现自动重开：非 dirty 的失效会话也必须拒绝',
+    );
+    const cleanAfter = document.getSession(clean.sessionId);
+    assert.ok(cleanAfter, '不得删除已有 Session');
+    assert.equal(cleanAfter?.revision, cleanBefore?.revision, '不得自动恢复或替换 Provider');
+    assert.equal(cleanAfter?.state, cleanBefore?.state, '不得修改六态 DocumentState');
   } finally {
     await rm(base, { recursive: true, force: true }).catch(() => {});
   }
@@ -469,5 +486,157 @@ test('H-12 一个项目失效不影响另一个 READY 项目', async () => {
     });
     assert.equal(saved.status, 200);
     assert.equal(await readFile(join(rootB, 'a.md'), 'utf8'), '# B\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// V-01 Multi 会话接口缺 viewId：一律拒绝（G1-R1 缺口 1）
+// ---------------------------------------------------------------------------
+test('V-01 Multi 会话接口省略 viewId 一律拒绝，且不改动会话', async () => {
+  await withMulti(async ({ api, post, open }) => {
+    const opened = await open('project-a', 'a.md');
+    const sessionId = opened.body.document.sessionId as string;
+    const viewId = opened.body.document.viewId as string;
+    const baseVersion = opened.body.document.baseVersion as string;
+
+    const read = await api(`/api/document?sessionId=${sessionId}`);
+    assert.equal(read.status, 400, '省略 viewId 不得只凭 sessionId 返回正文');
+    assert.equal(read.body.errorCode, 'ERR_COMMAND_INVALID');
+
+    const edit = await post('/api/edit', { sessionId, buffer: '# forged\n' });
+    assert.equal(edit.status, 400, '省略 viewId 不得修改会话');
+    assert.equal(edit.body.errorCode, 'ERR_COMMAND_INVALID');
+
+    const save = await post('/api/save', { sessionId, expectedVersion: baseVersion });
+    assert.equal(save.status, 400, '省略 viewId 不得触发保存');
+    assert.equal(save.body.errorCode, 'ERR_COMMAND_INVALID');
+
+    const disk = await api(`/api/document/disk?sessionId=${sessionId}`);
+    assert.equal(disk.status, 400, '省略 viewId 不得读取磁盘');
+
+    // 会话内容必须未被改动
+    const intact = await api(`/api/document?sessionId=${sessionId}&viewId=${viewId}`);
+    assert.equal(intact.status, 200);
+    assert.equal(intact.body.document.content, '# A\n');
+    assert.equal(intact.body.document.dirty, false);
+  });
+});
+
+test('V-02 Legacy 的 viewId 仍为可选（既有行为不变）', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'ws-g1v-'));
+  const root = join(base, 'project');
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, 'a.md'), '# A\n', 'utf8');
+  const server = await createShellServer({ rootDir: root, port: 0 });
+  const api = async (path: string, init?: RequestInit): Promise<ApiResponse> => {
+    const res = await fetch(`${server.url}${path}`, init);
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+  try {
+    const opened = await api('/api/open', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'a.md' }),
+    });
+    const sessionId = opened.body.document.sessionId as string;
+    const read = await api(`/api/document?sessionId=${sessionId}`);
+    assert.equal(read.status, 200, 'Legacy 仍允许省略 viewId');
+    assert.equal(read.body.document.content, '# A\n');
+  } finally {
+    await server.close().catch(() => {});
+    await rm(base, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+// ---------------------------------------------------------------------------
+// V-03 STALE 保存失败响应不得回传草稿正文（G1-R1）
+// ---------------------------------------------------------------------------
+test('V-03 STALE 保存失败响应不含 document.content 或草稿副本', async () => {
+  await withMulti(async ({ api, post, open, rootA }) => {
+    const opened = await open('project-a', 'a.md');
+    const sessionId = opened.body.document.sessionId as string;
+    const viewId = opened.body.document.viewId as string;
+    const baseVersion = opened.body.document.baseVersion as string;
+    await post('/api/edit', { sessionId, viewId, buffer: '# secret draft\n' });
+
+    await rm(rootA, { recursive: true, force: true });
+    const saved = await post('/api/save', { sessionId, viewId, expectedVersion: baseVersion });
+    assert.equal(saved.status, 503);
+
+    const text = JSON.stringify(saved.body);
+    assert.equal(text.includes('secret draft'), false, `失败响应不得包含草稿正文: ${text}`);
+    assert.equal('content' in (saved.body.document ?? {}), false, '失败响应不得包含 document.content');
+    // 但 dirty 状态必须保留，供 UI 提示
+    assert.equal(saved.body.document?.dirty, true);
+
+    // 合法 view 仍可取回草稿（G-DRAFT）
+    const draft = await api(`/api/document?sessionId=${sessionId}&viewId=${viewId}`);
+    assert.equal(draft.status, 200);
+    assert.equal(draft.body.document.content, '# secret draft\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P-01 /api/projects 反映真实状态（G1-R1 缺口 4）
+// ---------------------------------------------------------------------------
+test('P-01 删除 project-a 根后 /api/projects 显示 A 不可用、B 仍 READY', async () => {
+  await withMulti(async ({ api, rootA }) => {
+    await rm(rootA, { recursive: true, force: true });
+    const res = await api('/api/projects');
+    assert.equal(res.status, 200);
+    const projects = res.body.projects as Array<{ projectId: string; status: string; reason?: string }>;
+    const a = projects.find((p) => p.projectId === 'project-a');
+    const b = projects.find((p) => p.projectId === 'project-b');
+    assert.equal(a?.status, 'UNAVAILABLE');
+    assert.equal(a?.reason, 'MISSING');
+    assert.equal(b?.status, 'READY');
+    assert.equal(JSON.stringify(res.body).includes(rootA), false, '项目列表不得包含绝对路径');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P-02 项目失效导致的 CommandBus 失败不得映射为 422
+// ---------------------------------------------------------------------------
+test('P-02 项目不可用时的 edit 返回 503，而不是 422', async () => {
+  await withMulti(async ({ post, open, rootA }) => {
+    const opened = await open('project-a', 'a.md');
+    await rm(rootA, { recursive: true, force: true });
+    const edited = await post('/api/edit', {
+      sessionId: opened.body.document.sessionId,
+      viewId: opened.body.document.viewId,
+      buffer: '# x\n',
+    });
+    assert.equal(edited.status, 503, `项目不可用不得是 422: ${JSON.stringify(edited.body)}`);
+    assert.equal(edited.body.errorCode, 'ERR_PROJECT_UNAVAILABLE');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P-03 项目错误码矩阵与安全文案
+// ---------------------------------------------------------------------------
+test('P-03 未知项目 404 / 缺 projectId 400 / 不可用 503 / 文案不含路径', async () => {
+  await withMulti(async ({ api, post, rootA, base }) => {
+    const unknown = await api('/api/resources?projectId=no-such-project');
+    assert.equal(unknown.status, 404);
+    assert.equal(unknown.body.errorCode, 'ERR_PROJECT_NOT_FOUND');
+
+    const unknownOpen = await post('/api/open', { projectId: 'no-such-project', path: 'a.md' });
+    assert.equal(unknownOpen.status, 404);
+    assert.equal(unknownOpen.body.errorCode, 'ERR_PROJECT_NOT_FOUND');
+
+    const missing = await api('/api/resources');
+    assert.equal(missing.status, 400);
+    assert.equal(missing.body.errorCode, 'ERR_PROJECT_REQUIRED');
+
+    await rm(rootA, { recursive: true, force: true });
+    const unavailable = await api('/api/resources?projectId=project-a');
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.body.errorCode, 'ERR_PROJECT_UNAVAILABLE');
+
+    for (const body of [unknown.body, unknownOpen.body, missing.body, unavailable.body]) {
+      const text = JSON.stringify(body);
+      assert.doesNotMatch(text, /[A-Za-z]:[\\/]/, `错误响应不得包含盘符路径: ${text}`);
+      assert.equal(text.includes(base), false, `错误响应不得包含本机路径: ${text}`);
+    }
   });
 });
