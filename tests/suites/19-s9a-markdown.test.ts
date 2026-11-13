@@ -1,7 +1,7 @@
 /**
  * S9A-F01 / S9A-F02：工作台 Markdown 解析的终止性与链接协议安全。
  *
- * 为什么测 `markdown-parser.ts` 而不是直接测组件：渲染层只做 AST → React 映射，
+ * 为什么测 `blocks.ts` 而不是直接测组件：渲染层只做 AST → React 映射，
  * 全部判定（块级分类、链接协议）都在解析器里；解析器是纯 TS，可被 Node 直接加载，
  * 因此这些用例能在 `node tests/run-all.ts` 里同进程运行。
  *
@@ -21,7 +21,7 @@ import {
   safeHref,
   type Block,
   type Inline,
-} from '../../apps/shell/src/lib/markdown-parser.ts';
+} from '../../plugins/markdown/blocks.ts';
 
 const ROOT = process.cwd();
 
@@ -249,7 +249,7 @@ test('S9A-F02f 解析结果中不存在任何未通过白名单的 href', () => 
 // ---------------------------------------------------------------------------
 
 test('S9A-F02g 渲染器不使用 dangerouslySetInnerHTML', async () => {
-  const source = await readFile(resolve(ROOT, 'apps/shell/src/lib/markdown.tsx'), 'utf8');
+  const source = await readFile(resolve(ROOT, 'plugins/markdown/viewer.tsx'), 'utf8');
   // 注释里允许出现该词（用于说明策略），但不得作为属性/赋值真正使用。
   assert.equal(
     /dangerouslySetInnerHTML\s*[:=]/.test(source),

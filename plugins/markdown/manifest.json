@@ -8,6 +8,7 @@
   "requestedPermissions": ["workspace.read", "workspace.write", "workspace.ui"],
   "activationEvents": ["onFileExtension:.md", "onFileExtension:.markdown"],
   "entrypoints": {
-    "host": "./index.ts"
+    "host": "./index.ts",
+    "client": "./client.tsx"
   }
 }

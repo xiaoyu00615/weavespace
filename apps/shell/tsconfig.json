@@ -4,6 +4,20 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    /**
+     * 插件目录（plugins/**）把 react 当作**由宿主提供的 peer 依赖**：
+     * 插件不在 apps/shell 之下，TS 默认的向上查找到不了这里的 node_modules。
+     * 因此由宿主（本工程）显式声明解析目标——插件不 import 任何 Shell 代码。
+     * TS 7 已移除 baseUrl：paths 默认相对本 tsconfig 所在目录解析。
+     */
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react/jsx-dev-runtime": ["./node_modules/@types/react/jsx-dev-runtime"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/client": ["./node_modules/@types/react-dom/client"]
+    },
+    "resolveJsonModule": true,
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,

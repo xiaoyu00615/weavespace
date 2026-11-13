@@ -2,6 +2,7 @@ import { AuxPanel } from '../components/AuxPanel';
 import { ConflictBanner } from '../components/ConflictBanner';
 import { DocumentToolbar } from '../components/DocumentToolbar';
 import { GlobalNav } from '../components/GlobalNav';
+import { PluginPanel } from '../components/PluginPanel';
 import { ProjectTree } from '../components/ProjectTree';
 import { SplitWorkspace } from '../components/SplitWorkspace';
 import { StatusBar } from '../components/StatusBar';
@@ -25,7 +26,8 @@ export function ShellLayout() {
   return (
     <div className="shell" style={{ gridTemplateColumns: columns }}>
       <GlobalNav />
-      <ProjectTree />
+      {/* 第二列按导航切换：项目资源树 / 插件与能力面板（S10-A） */}
+      {state.navKey === 'plugins' ? <PluginPanel /> : <ProjectTree />}
 
       <main className="main">
         <DocumentToolbar />

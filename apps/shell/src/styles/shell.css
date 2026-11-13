@@ -819,3 +819,58 @@ button {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ---- S10-A：插件与能力面板（最小样式，沿用既有视觉变量） ---- */
+.plugin {
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.plugin__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.plugin__name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin__meta,
+.plugin__caps {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.plugin__error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #b42318;
+}
+
+.chip--small {
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.preview__error {
+  margin: 12px;
+  padding: 12px 14px;
+  border: 1px solid #f0c9a8;
+  border-radius: 8px;
+  background: #fff8f1;
+  font-size: 13px;
+  color: #7a3b12;
+}
+
+.preview__error-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}

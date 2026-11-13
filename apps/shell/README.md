@@ -52,12 +52,12 @@ src/
     SplitWorkspace.tsx     单视图 / 左右分屏 + 可拖动分隔条
     DocumentViews.tsx      源码编辑视图与预览视图
     AuxPanel.tsx           右侧辅助面板（AI / 任务 / 诊断，预留）
+    PluginPanel.tsx        插件与能力面板：读取真实 Runtime 状态，启用/停用插件
     StatusBar.tsx          底部状态栏
   state/                   纯数据层：types / workspace-reducer / WorkspaceContext
                            + DocumentActionsContext（打开/编辑/保存/关闭的编排）
   data/demo-project.ts     演示项目树与文档内容
-  lib/markdown-parser.ts   块级/行内解析 + 链接协议白名单（纯 TS，无 React）
-  lib/markdown.tsx         仅做 AST → React 映射（无 dangerouslySetInnerHTML）
+  capabilities/            能力注册表（S10-A）：组合根 / 上下文 / 安全渲染 / 错误边界
   client/client-api.ts     Client API 边界：demo / live 两种实现
   client/edit-queue.ts     编辑请求串行队列（合并中间态，避免响应乱序回退）
   styles/shell.css         布局与主题
@@ -65,11 +65,27 @@ src/
 
 布局只由 CSS Grid 与一个 reducer 决定；调整某个区域不需要动其他组件。
 
-## Markdown 解析约定
+## 能力注册表（S10-A）
 
-解析与渲染是两层：`markdown-parser.ts` 是纯函数（无 React / 无 DOM），`markdown.tsx` 只把
-AST 映射成 React 节点。解析逻辑因此可以被 Node 直接加载并回归测试，
-不需要浏览器或 JSX 转换：`node tests/suites/19-s9a-markdown.test.ts`。
+Shell 不再 import 任何格式实现；预览按**扩展名**向能力注册表要 `file.viewer`：
+
+```
+组件 → useViewer(extension) → ShellCapabilityRegistry.resolveViewer()
+       → packages/plugin-runtime.resolveCapability('file.viewer', { extension })
+       → 某个已激活插件提供的 ViewerCapability.render()
+```
+
+- `capabilities/registry.ts` 是唯一 import 插件的地方（组合根），内置注册
+  `weavespace.markdown` 与 `weavespace.plaintext`；注册顺序即优先级。
+- 停用 Markdown → `.md` 自动回退到通用文本查看器；文件树、会话、草稿、保存链路均不受影响。
+- 两种故障都只影响预览窗格：`renderViewerSafely`（兜同步抛错）+ `ViewerBoundary`（兜渲染期错误）。
+- 仍存在的边界：**同进程，无沙箱**；错误边界不等于隔离。
+
+## Markdown 解析约定（实现已迁至 `plugins/markdown/`）
+
+解析与渲染是两层：`plugins/markdown/blocks.ts` 是纯函数（无 React / 无 DOM），
+`plugins/markdown/viewer.tsx` 只把 AST 映射成 React 节点。解析逻辑因此可以被 Node 直接加载
+并回归测试，不需要浏览器或 JSX 转换：`node tests/suites/19-s9a-markdown.test.ts`。
 
 **块级识别与段落终止共用同一个分类器**（`classifyBlock`）。这是为了避免
 「块级分支不接受某行、段落循环却把它当作块级起点」导致 `index` 不前进、
@@ -96,7 +112,8 @@ AST 映射成 React 节点。解析逻辑因此可以被 Node 直接加载并回
 - **保存前必须确认草稿已同步到 Core**：若 `applyEdit` 被拒绝或网络失败，保存不会发起，
   草稿与脏标记保留（`client/save-flow.ts`）。保存期间锁定该文档输入，解锁在 `finally` 中，
   不依赖 React 状态是否已刷新；请求另有 20s 超时，避免挂住的请求让保存永久锁死。
-- 本阶段**未接入**插件系统、AI、多用户权限。
+- 插件只提供「如何显示」；权限、会话、版本冲突与落盘仍由 Core 强制（`S10A-07` 覆盖）。
+- 本阶段**未接入** AI、多用户权限、插件安装/热更新。
 
 ## 已知限制
 
@@ -109,7 +126,8 @@ AST 映射成 React 节点。解析逻辑因此可以被 Node 直接加载并回
 5. UI 验证方式：`tsc` + `vite build` + 解析器回归套件（`tests/suites/19-s9a-markdown.test.ts`）
    + 端到端接口测试（`tests/suites/20-s9b-live-file.test.ts`）+ 真实 Chrome（CDP）冒烟；
    仓库内未引入 playwright/puppeteer，浏览器冒烟脚本不随仓库分发。
-6. 冲突恢复：出现 `CONFLICT` 时工具栏下方出现恢复面板，可「查看磁盘版本」「复制草稿」
+6. 插件面板只支持启用/停用内置插件；没有安装、来源校验与签名。
+7. 冲突恢复：出现 `CONFLICT` 时工具栏下方出现恢复面板，可「查看磁盘版本」「复制草稿」
    「重新加载（丢弃草稿）」。重新加载需要 `window.confirm` 明确确认；确认前会把草稿备份到
    `sessionStorage`（`ws:draft-backup:<path>`）并尽力复制到剪贴板；
    **两条备份都失败时不会发起重载**，只提示用户手动复制（`client/draft-backup.ts`）。

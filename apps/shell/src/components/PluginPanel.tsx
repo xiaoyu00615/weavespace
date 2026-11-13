@@ -19,7 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export function PluginPanel() {
-  const { state, dispatch } = useWorkspace();
+  const { dispatch } = useWorkspace();
   const { registry, ready, revision, toggle, notice } = useCapabilities();
   // revision 是订阅信号：插件状态变化后重新读取注册表
   void revision;
