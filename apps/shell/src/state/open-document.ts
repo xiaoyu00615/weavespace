@@ -81,6 +81,32 @@ export function tabFromSnapshot(
   };
 }
 
+/**
+ * 用户"正在看什么"的快照（G2-R2）。
+ *
+ * 只有项目、焦点窗格、活动文档三者都没变，才说明用户仍然期望把新打开的文档
+ * 设为当前文档；任何一项变了，迟到的响应就只能后台登记标签。
+ */
+interface FocusSnapshot {
+  projectId: string | null;
+  pane: WorkspaceState['focusedPane'];
+  docId: string | null;
+}
+
+function captureFocus(state: WorkspaceState): FocusSnapshot {
+  return {
+    projectId: state.activeProjectId,
+    pane: state.focusedPane,
+    docId: state.panes[state.focusedPane]?.docId ?? null,
+  };
+}
+
+function canActivate(focus: FocusSnapshot, state: WorkspaceState): boolean {
+  if (state.activeProjectId !== focus.projectId) return false;
+  if (state.focusedPane !== focus.pane) return false;
+  return (state.panes[state.focusedPane]?.docId ?? null) === focus.docId;
+}
+
 export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
   /** 同一 (模式, 文档) 的并发打开合并为一次请求：不会各自在服务端造一个 View。 */
   const inFlight = new Map<string, Promise<void>>();
@@ -208,11 +234,7 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
   ): Promise<void> {
     const client = deps.clientFor(mode);
     const before = deps.getState();
-    const focus = {
-      pane: before.focusedPane,
-      docId: before.panes[before.focusedPane]?.docId ?? null,
-      activeProjectId: before.activeProjectId,
-    };
+    const focus = captureFocus(before);
     deps.dispatch({ type: 'NOTICE', message: `正在打开 ${node.name} …` });
 
     let outcome;
@@ -255,26 +277,24 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
       return;
     }
 
-    // 用户已经切到别的项目：标签仍然创建（内容已经取回），但**不要**把焦点抢回来
-    const projectChanged = deps.getState().activeProjectId !== focus.activeProjectId;
+    const tab = tabFromSnapshot(
+      docId,
+      projectId,
+      node.name,
+      node.extension ?? extensionOfPath(node.name),
+      mode,
+      outcome.document,
+    );
 
-    deps.dispatch({
-      type: 'OPEN_TAB',
-      tab: tabFromSnapshot(
-        docId,
-        projectId,
-        node.name,
-        node.extension ?? extensionOfPath(node.name),
-        mode,
-        outcome.document,
-      ),
-    });
+    // 用户在这期间换了项目 / 窗格 / 活动文档：只后台登记标签，绝不改动当前焦点
+    // （G2-R2）。这同时覆盖"旧实现把焦点还原成发起时那个文档"的错误行为。
+    if (canActivate(focus, deps.getState())) {
+      deps.dispatch({ type: 'OPEN_TAB', tab });
+    } else {
+      deps.dispatch({ type: 'OPEN_TAB_BACKGROUND', tab });
+    }
     if (projectId) {
       deps.dispatch({ type: 'SELECT_PROJECT_NODE', projectId, path: docId });
-    }
-    if (projectChanged && focus.docId) {
-      deps.dispatch({ type: 'FOCUS_PANE', pane: focus.pane });
-      deps.dispatch({ type: 'ACTIVATE_TAB', docId: focus.docId });
     }
     // 放在 OPEN_TAB 之后：OPEN_TAB 会写"已打开"提示，不能让刷新提示被覆盖
     if (outcome.reloaded) {
@@ -318,9 +338,13 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
       const key = `${mode}::${docId}`;
       const running = inFlight.get(key);
       if (running) {
-        // 合并在途请求：等它结束后只做激活，不再发第二个 open（否则必然多一个 View）
+        // 合并在途请求：等它结束后最多只做激活，不再发第二个 open（否则必然多一个 View）。
+        // 等待期间用户可能已经切走，因此这里**同样**要按焦点快照判断（G2-R2）。
+        const waitingFocus = captureFocus(deps.getState());
         await running.catch(() => undefined);
-        if (tabOf(docId)) deps.dispatch({ type: 'ACTIVATE_TAB', docId });
+        if (tabOf(docId) && canActivate(waitingFocus, deps.getState())) {
+          deps.dispatch({ type: 'ACTIVATE_TAB', docId });
+        }
         return;
       }
 

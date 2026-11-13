@@ -119,6 +119,11 @@ export type WorkspaceAction =
   | { type: 'TOGGLE_PROJECT_NODE'; projectId: string; path: string }
   | { type: 'SELECT_PROJECT_NODE'; projectId: string; path: string | null }
   | { type: 'OPEN_TAB'; tab: DocTab }
+  /**
+   * 只登记标签，**不改**当前窗格/焦点（G2-R2）。
+   * 迟到的打开响应在"用户已经换了项目/窗格/文档"时只能走这条路径。
+   */
+  | { type: 'OPEN_TAB_BACKGROUND'; tab: DocTab }
   | { type: 'TAB_PATCH'; docId: string; patch: Partial<Omit<DocTab, 'docId'>> }
   | { type: 'ACTIVATE_TAB'; docId: string }
   | { type: 'CLOSE_TAB'; docId: string }

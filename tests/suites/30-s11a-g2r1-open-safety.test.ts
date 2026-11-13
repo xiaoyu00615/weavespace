@@ -51,6 +51,14 @@ const NODE_A2: ResourceNodeState = {
   path: 'docs/only-a.md',
 };
 
+const NODE_NOTES: ResourceNodeState = {
+  id: 'doc:project-a/notes.md',
+  name: 'notes.md',
+  kind: 'file',
+  extension: '.md',
+  path: 'notes.md',
+};
+
 const NODE_B: ResourceNodeState = {
   id: 'doc:project-b/a.md',
   name: 'a.md',
@@ -95,6 +103,7 @@ async function withMulti(fn: (h: Harness) => Promise<void>): Promise<void> {
   await mkdir(join(rootB, 'docs'), { recursive: true });
   await writeFile(join(rootA, 'a.md'), '# A\n', 'utf8');
   await writeFile(join(rootA, 'docs', 'only-a.md'), '# only A\n', 'utf8');
+  await writeFile(join(rootA, 'notes.md'), '# notes\n', 'utf8');
   await writeFile(join(rootB, 'a.md'), '# B\n', 'utf8');
 
   const workspace: WorkspaceConfig = {
@@ -132,7 +141,11 @@ async function withMulti(fn: (h: Harness) => Promise<void>): Promise<void> {
       calls.push(projectId ? { path, projectId } : { path });
       const pending = inner.openDocument(path, projectId);
       const held = gate;
-      if (held) await held;
+      if (held) {
+        // 只挂起**这一次**响应：等待期间用户打开别的文件必须能正常完成
+        gate = null;
+        await held;
+      }
       const outcome = await pending;
       if (outcome.document?.viewId) {
         views.push({ sessionId: outcome.document.sessionId, viewId: outcome.document.viewId });
@@ -423,3 +436,116 @@ test('R1-08 未保存草稿的模式切换守卫保持有效', () => {
   assert.equal(hasUnsavedDrafts([{ dirty: false }, { dirty: false }]), false);
   assert.equal(hasUnsavedDrafts([{ dirty: false }, { dirty: true }]), true);
 });
+
+// ---------------------------------------------------------------------------
+// R2-01（F-01）旧项目请求不得覆盖后来打开的文档焦点
+// ---------------------------------------------------------------------------
+test('R2-01 迟到的 A/notes.md 不得把焦点从 B/a.md 抢回去', async () => {
+  await withMulti(async (h) => {
+    await h.opener.openNode(NODE_A, 'project-a');
+    const aDocId = h.state.tabs[0].docId;
+    assert.equal(paneDocId(h), aDocId, '前提：当前显示 A/a.md');
+
+    // A/notes.md 的响应被挂起
+    const release = h.holdNextOpen();
+    const pending = h.opener.openNode(NODE_NOTES, 'project-a');
+
+    // 用户切到项目 B 并打开 B/a.md（切换项目 = 点项目标题，打开文件 = 点文件）
+    h.dispatch({ type: 'SET_ACTIVE_PROJECT', projectId: 'project-b' });
+    await h.opener.openNode(NODE_B, 'project-b');
+    const bDocId = 'doc:project-b/a.md';
+    assert.equal(h.state.activeProjectId, 'project-b');
+    assert.equal(paneDocId(h), bDocId, '前提：当前窗格已指向 B/a.md');
+
+    release();
+    await pending;
+
+    const notes = h.state.tabs.find((tab) => tab.docId === 'doc:project-a/notes.md');
+    assert.ok(notes, 'A/notes.md 允许出现在标签栏');
+    assert.equal(paneDocId(h), bDocId, '旧请求不得覆盖用户后来打开的文档焦点');
+    assert.equal(h.state.activeProjectId, 'project-b', '不得把当前项目改回 A');
+
+    // 不激活不等于释放：新建文档的受管 View 必须保留
+    assert.equal(
+      await viewAccepted(h, {
+        sessionId: notes.sessionId as string,
+        viewId: notes.viewId as string,
+      }),
+      true,
+      '未激活的新标签仍必须持有有效 View',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R2-02（F-02）并发合并的等待方不能重新抢焦点
+// ---------------------------------------------------------------------------
+test('R2-02 合并请求的等待方不得在旧响应后抢回焦点', async () => {
+  await withMulti(async (h) => {
+    await h.opener.openNode(NODE_A, 'project-a');
+
+    const release = h.holdNextOpen();
+    const first = h.opener.openNode(NODE_NOTES, 'project-a');
+    const second = h.opener.openNode(NODE_NOTES, 'project-a');
+
+    h.dispatch({ type: 'SET_ACTIVE_PROJECT', projectId: 'project-b' });
+    await h.opener.openNode(NODE_B, 'project-b');
+    const bDocId = 'doc:project-b/a.md';
+    assert.equal(paneDocId(h), bDocId);
+
+    release();
+    await Promise.all([first, second]);
+
+    assert.equal(paneDocId(h), bDocId, '两个请求结束后焦点仍必须是 B/a.md');
+    assert.equal(h.state.activeProjectId, 'project-b');
+    assert.equal(
+      h.calls.filter((call) => call.path === 'notes.md').length,
+      1,
+      '并发打开必须合并为一次请求',
+    );
+    const notes = h.state.tabs.find((tab) => tab.docId === 'doc:project-a/notes.md');
+    assert.ok(notes, 'A/notes.md 仍应被登记');
+    assert.equal(
+      await viewAccepted(h, {
+        sessionId: notes.sessionId as string,
+        viewId: notes.viewId as string,
+      }),
+      true,
+      'A 只产生一个受管理 View，且必须有效',
+    );
+    assert.equal(
+      h.views.filter((view) => view.sessionId === notes.sessionId).length,
+      1,
+      'A/notes.md 只允许一个 View',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R2-03（F-03）没有旧活动文档时也不能抢焦点
+// ---------------------------------------------------------------------------
+test('R2-03 窗格为空时切到 B：迟到的 A 响应只能后台登记', async () => {
+  await withMulti(async (h) => {
+    assert.equal(h.state.tabs.length, 0, '前提：一开始没有任何标签');
+    assert.equal(paneDocId(h), null, '前提：当前窗格为空');
+
+    const release = h.holdNextOpen();
+    const pending = h.opener.openNode(NODE_NOTES, 'project-a');
+
+    // 用户切到项目 B，窗格仍是空的
+    h.dispatch({ type: 'SET_ACTIVE_PROJECT', projectId: 'project-b' });
+    assert.equal(paneDocId(h), null);
+
+    release();
+    await pending;
+
+    assert.equal(h.state.tabs.length, 1, 'A/notes.md 可以后台登记标签');
+    assert.equal(paneDocId(h), null, '不得自动成为当前窗格的活动文档');
+    assert.equal(h.state.activeProjectId, 'project-b', '当前项目仍是 B');
+  });
+});
+
+/** 当前焦点窗格里的文档 id（用户"正在看的"那个）。 */
+function paneDocId(h: Harness): string | null {
+  return h.state.panes[h.state.focusedPane]?.docId ?? null;
+}

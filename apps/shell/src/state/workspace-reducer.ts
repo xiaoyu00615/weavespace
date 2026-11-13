@@ -148,6 +148,19 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
     }
 
+    /**
+     * 后台登记标签（G2-R2）：标签出现，但当前窗格、焦点与选中项都不动。
+     * 用于"请求发出后用户已经切走"的迟到响应——不能覆盖用户的新选择。
+     */
+    case 'OPEN_TAB_BACKGROUND': {
+      if (state.tabs.some((tab) => tab.docId === action.tab.docId)) return state;
+      return {
+        ...state,
+        tabs: [...state.tabs, action.tab],
+        notice: `已在后台打开：${action.tab.title}（未切换当前文档）`,
+      };
+    }
+
     case 'TAB_PATCH':
       return {
         ...state,
