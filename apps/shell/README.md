@@ -114,6 +114,14 @@ Shell 不再 import 任何格式实现；预览按**扩展名**向能力注册�
   前端不会重新声明，也不会据此切换项目。
 - 异步响应归属：每个动作发起时固定捕获 `{projectId, docId, sessionId}`，响应回来先比对
   （`isResponseOwnerCurrent`），过期回填直接丢弃，因此晚到的 A 响应不会污染 B。
+- 回填磁盘刷新还要多两道判定（`canApplyDiskRefresh`）：**本地编辑代次**未变、且
+  `revision`/`baseVersion` 未推进。请求期间用户继续输入时，旧读取结果一律丢弃——
+  不允许覆盖缓冲、不允许把 `dirty` 重置为 false、不允许回退版本。
+- 打开流程集中在 `state/open-document.ts`：同一 (模式, 文档) 的并发打开合并为一次请求；
+  重新打开干净标签时为了核对磁盘会临时 `open` 一次，它返回的 View 不属于任何标签，
+  **用完立即 `close`**，标签自己的 `viewId` 始终是唯一受管的那个。
+- 模式切换与旧响应：切到 Demo 时在途的 live 打开会直接丢弃并释放新 View，
+  不得向 Demo 工作区插入 live 标签；切换项目时标签可以出现，但不会抢走当前焦点。
 - 项目失效（UNAVAILABLE）：不再允许打开新的磁盘文件，但既有标签、缓冲与 dirty 标记全部保留；
   保存失败时服务端可能不返回 `document.content`，UI **不会**把它当成空文档——buffer 只由本地编辑驱动。
 - 草稿备份键为 `ws:draft-backup:<projectId|local>:<path>`，A/a.md 与 B/a.md 不会互相覆盖。

@@ -20,17 +20,16 @@ import type { ReactNode } from 'react';
 import {
   createDemoClient,
   createLiveClient,
-  type DocumentSnapshot,
   type ProjectSummary,
   type WeaveSpaceClient,
   type WorkspaceMode,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
-import { extensionOf } from '../capabilities/registry';
 import { backupDraftBeforeReload } from '../client/draft-backup';
 import { runSaveFlow } from '../client/save-flow';
 import { DEMO_CONTENTS, DEMO_NODES } from '../data/demo-project';
-import { draftBackupKey, isProjectOpenable, isResponseOwnerCurrent, makeDocId } from './doc-identity';
+import { draftBackupKey, hasUnsavedDrafts, isResponseOwnerCurrent } from './doc-identity';
+import { createDocumentOpener, createEditEpochs, type DocumentOpener } from './open-document';
 import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
 
@@ -86,34 +85,6 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-function tabFromSnapshot(
-  docId: string,
-  projectId: string | null,
-  title: string,
-  extension: string,
-  mode: ClientMode,
-  doc: DocumentSnapshot,
-): DocTab {
-  return {
-    docId,
-    projectId,
-    path: doc.path,
-    title,
-    extension,
-    buffer: doc.content,
-    dirty: doc.dirty,
-    mode,
-    sessionId: doc.sessionId,
-    viewId: doc.viewId,
-    baseVersion: doc.baseVersion,
-    revision: doc.revision,
-    documentState: doc.documentState,
-    saving: false,
-    lastStatus: null,
-    errorCode: null,
-  };
-}
-
 export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   const { state, dispatch } = useWorkspace();
 
@@ -129,6 +100,32 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   // 回调里读取"最新"状态，避免闭包拿到过期快照
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  /**
+   * 模式的同步镜像：`switchMode` 里 dispatch 之后 state 仍然是旧值，
+   * 而在途的 HTTP 响应可能在那之后立刻返回——必须有一个同步可读的模式。
+   */
+  const modeRef = useRef<ClientMode>(state.mode);
+  modeRef.current = state.mode;
+
+  /** 本地编辑代次（G2-R1）：用于判断"磁盘读取期间用户是否又改了内容"。 */
+  const edits = useRef(createEditEpochs());
+
+  /**
+   * 打开流程的编排器（G2-R1）：真实实现放在 `open-document.ts`，
+   * 这里只注入宿主依赖，便于在 Node 里用真实 Host + reducer 验证时序。
+   */
+  const opener = useMemo<DocumentOpener>(
+    () =>
+      createDocumentOpener({
+        getState: () => stateRef.current,
+        getMode: () => modeRef.current,
+        dispatch,
+        clientFor,
+        editEpochs: edits.current,
+      }),
+    [dispatch, demoClient, liveClient],
+  );
 
   const queues = useRef(new Map<string, EditQueue>());
   /**
@@ -312,110 +309,9 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
 
     return {
       async openNode(node: ResourceNodeState, projectId?: string | null) {
-        if (node.kind === 'folder') {
-          if (projectId) {
-            dispatch({ type: 'TOGGLE_PROJECT_NODE', projectId, path: node.id });
-          } else {
-            dispatch({ type: 'TOGGLE_NODE', path: node.id });
-          }
-          return;
-        }
-
-        const targetProject = projectId ?? null;
-        if (!isProjectOpenable(stateRef.current.projects, targetProject)) {
-          dispatch({
-            type: 'NOTICE',
-            message: `项目${projectName(targetProject) ? ` ${projectName(targetProject)}` : ''}当前不可用：无法打开新的磁盘文件（既有标签与草稿仍保留）`,
-          });
-          return;
-        }
-
-        const path = node.path ?? node.id;
-        const docId = makeDocId(targetProject, path);
-        const existing = tabOf(docId);
-        if (existing) {
-          dispatch({ type: 'ACTIVATE_TAB', docId });
-          // 干净标签可能与磁盘脱节（页面刷新后旧视图仍在服务端）：重新打开并同步内容。
-          // 有草稿时不动：Core 也不会在 dirty 时刷新，返回值就是会话缓冲，回填会覆盖输入。
-          if (existing.mode === 'live' && !existing.dirty) {
-            const captured = {
-              projectId: existing.projectId,
-              docId,
-              sessionId: existing.sessionId,
-            };
-            const refreshed = await clientFor('live').openDocument(
-              existing.path,
-              existing.projectId ?? undefined,
-            );
-            if (refreshed.status === 'APPLIED' && refreshed.document) {
-              const doc = refreshed.document;
-              const latest = tabOf(docId);
-              // 过期响应（标签已关闭 / 会话被替换 / 项目不一致）必须丢弃
-              const owned = isResponseOwnerCurrent(captured, {
-                projectId: latest?.projectId ?? null,
-                docId: latest?.docId ?? '',
-                sessionId: latest?.sessionId ?? null,
-                exists: Boolean(latest),
-              });
-              if (
-                owned &&
-                (doc.content !== existing.buffer || doc.baseVersion !== existing.baseVersion)
-              ) {
-                dispatch({
-                  type: 'TAB_PATCH',
-                  docId,
-                  patch: {
-                    buffer: doc.content,
-                    baseVersion: doc.baseVersion,
-                    revision: doc.revision,
-                    dirty: false,
-                    documentState: doc.documentState,
-                  },
-                });
-                dispatch({ type: 'NOTICE', message: '检测到磁盘变化：已同步最新内容与版本' });
-              }
-            }
-          }
-          return;
-        }
-
-        const mode = stateRef.current.mode;
-        const client = clientFor(mode);
-        dispatch({ type: 'NOTICE', message: `正在打开 ${node.name} …` });
-        const outcome = await client.openDocument(path, targetProject ?? undefined);
-        if (outcome.status !== 'APPLIED' || !outcome.document) {
-          dispatch({
-            type: 'NOTICE',
-            message: `无法打开 ${node.name}：${outcome.errorCode ?? '未知错误'}`,
-          });
-          return;
-        }
-        // 打开期间标签已被别的操作创建：不再新建，只激活（避免遗留无人管理的 viewId）
-        if (tabOf(docId)) {
-          dispatch({ type: 'ACTIVATE_TAB', docId });
-          return;
-        }
-        dispatch({
-          type: 'OPEN_TAB',
-          tab: tabFromSnapshot(
-            docId,
-            targetProject,
-            node.name,
-            node.extension ?? extensionOf(node.name),
-            mode,
-            outcome.document,
-          ),
-        });
-        if (targetProject) {
-          dispatch({ type: 'SELECT_PROJECT_NODE', projectId: targetProject, path: docId });
-        }
-        // 放在 OPEN_TAB 之后：OPEN_TAB 会写"已打开"提示，不能让刷新提示被覆盖
-        if (outcome.reloaded) {
-          dispatch({
-            type: 'NOTICE',
-            message: '检测到磁盘已被外部修改：已重新载入最新内容与版本',
-          });
-        }
+        // 打开/刷新/并发/模式切换的全部时序处理都在 open-document.ts：
+        // 这里只转发，避免把异步归属判定散落在组件里（G2-R1）。
+        await opener.openNode(node, projectId);
       },
 
       editDoc(docId: string, text: string) {
@@ -423,6 +319,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         if (!tab) return;
         // 保存期间的输入一律丢弃：Core 正在比较版本，不能让缓冲在保存途中继续变化
         if (locked.current.has(docId)) return;
+        // 本地编辑代次（G2-R1）：任何在途的磁盘读取都在此作废，避免旧内容覆盖草稿
+        opener.noteLocalEdit(docId);
         dispatch({ type: 'EDIT_DOC', docId, text });
         if (tab.mode !== 'live' || !tab.sessionId) return;
         queueFor(docId, tab.sessionId, tab.projectId, tab.viewId).schedule(text);
@@ -549,12 +447,14 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         }
 
         queues.current.delete(docId);
+        opener.forget(docId);
         dispatch({ type: 'CLOSE_TAB', docId });
       },
 
       async switchMode(mode: ClientMode) {
         if (mode === stateRef.current.mode) return;
-        if (stateRef.current.tabs.some((tab) => tab.dirty)) {
+        // 未保存草稿阻止切换：语义与之前完全一致，只是判定抽成可测的纯函数
+        if (hasUnsavedDrafts(stateRef.current.tabs)) {
           dispatch({ type: 'NOTICE', message: '有未保存修改，已阻止切换模式（请先保存）' });
           return;
         }
@@ -566,6 +466,9 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         }
         queues.current.clear();
         locked.current.clear();
+        // 先同步模式，再派发：在途的打开/读取响应据此判定"已不属于当前工作区"
+        modeRef.current = mode;
+        opener.reset();
         dispatch({ type: 'SET_MODE', mode });
         if (mode === 'live') {
           await loadWorkspace();
@@ -745,7 +648,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         }
       },
     };
-  }, [dispatch, demoClient, liveClient]);
+  }, [dispatch, demoClient, liveClient, opener]);
 
   return (
     <DocumentActionsContext.Provider value={actions}>{children}</DocumentActionsContext.Provider>
