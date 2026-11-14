@@ -4,6 +4,7 @@
 - **状态**：PROPOSED（待用户正式批准）
 - **日期**：2026-11-14
 - **修订**：R2（2026-11-14）——移除门禁由"会话数为零"改为按 **View 生命周期**判定（`activeViews === 0` + 无危险会话 + 无在途 G-DISK，干净历史会话不阻止移除）；测试拆为 A 类（正常移除）与 B 类（异常失效）；修正 G-DRAFT 的路径表述（保留项目内相对 `path`，不泄露绝对根与令牌）。
+- **修订**：R3（2026-11-14）——同步 ADR-022 安全勘误：新增 `REVOKE_UNKNOWN` 状态（墓碑写入结果不确定时该项目立即拒盘）；`RECOVERY_RESTRICTED` 明确为"G-DISK 全拒 + 禁止变更"，不再是"只读"。
 - **基线**：`c3666b57f7ac50b5b70a2157ff885d6bf9c25792`
 - **关联**：ADR-021（授权来源）、ADR-022（事务与持久化）
 - **替代关系**：**落实**（非放宽）`docs/20 PR-26`「STALE 下合法 view 仍能取回正文」；局部细化 `docs/20 §5.5` 的草稿门禁描述。原文不改写。
@@ -62,7 +63,10 @@
       └──inspect 失败──▶ UNAVAILABLE（不可自动恢复；rebind 为 A2）
 
   任意状态 ──提交后编程异常──▶ DEGRADED（变更 503，重启自愈）
-  加载异常（校验失败/备份回退）──▶ RECOVERY_RESTRICTED（只读，禁止一切变更）
+  REVOKING ──墓碑结果不确定──▶ REVOKE_UNKNOWN（该项目 G-DISK 403，核对证据后收敛）
+  加载异常（校验失败 / 备份回退 / 日志缺失或链断）──▶ RECOVERY_RESTRICTED
+                                                      （禁止一切变更；撤销集合可证 → 允许读写，
+                                                        不可证 → G-DISK 全拒，仅 G-DRAFT）
 ```
 
 **关键分界**：`QUIESCING` 之前任何失败都**零变更**；墓碑 fsync 成功之后**不存在回滚**——移除一旦生效，只能用"重新添加"恢复（新 `projectId`，见 ADR-022 §3 的 id 不复用规则），不允许把 `REVOKED` 改回 `ACTIVE`。
@@ -232,7 +236,8 @@ snapshot.workspaceKey === host.workspaceKey
 |---|---|
 | quiesce 超时 / 复检不通过 | abort → ACTIVE；返回 409 + 阻塞原因；草稿、grant、Provider 全不动 |
 | 移除中用户又发 open/edit | 409 `ERR_PROJECT_QUIESCING`；Shell 按普通失败提示，不重试循环 |
-| 墓碑写入失败（fsync 报错） | **尚未生效**，零变更，返回 5xx `ERR_PERSIST_FAILED`；可安全重试 |
+| 墓碑写入**确认失败**（打开失败 / 0 字节错误） | **尚未生效**，零变更，返回 5xx `ERR_PERSIST_FAILED`；可安全重试 |
+| 墓碑写入**结果不确定**（`fsync` 报错 / 部分写入 / 中途被杀） | 不能断言"零变更"：该项目进入 `REVOKE_UNKNOWN`（G-DISK 一律 403 `ERR_PROJECT_REVOKE_UNKNOWN`），随后核对日志尾部；命中本次 `opId` → 按已撤销继续；确认无本次行 → 回 ACTIVE；无法判定 → `RECOVERY_RESTRICTED`（ADR-022 §3.1.1） |
 | 墓碑成功、配置写失败 | `REVOKED_PENDING_CONFIG` + `DEGRADED`：项目立即不可访问（第 6 步已生效），返回 5xx 且响应体标 `outcome: 'revoked'` 与 `opId`；重启后按墓碑补齐为 `REMOVED` |
 | 客户端超时 / 不知道结果 | `GET /api/projects/op?opId=` 查最终结果，判定来源为**磁盘**（墓碑是否含该 id），不是内存 |
 | 移除中进程崩溃（C3a / C3b / C4） | 见 ADR-022 §5：墓碑胜出，重启后不复活；C3b 的配置滞后按"已知滞后"补齐 |
