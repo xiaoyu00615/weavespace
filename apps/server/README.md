@@ -12,10 +12,24 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 
 - 只绑定 `127.0.0.1`；端口优先取命令行，其次 `WS_PORT`，默认 `5177`。端口可省略
   （`--workspace <file>` 后不写端口即用默认端口，UX-00 起支持）。
-- 项目根 / 工作区配置**只能**来自启动参数，请求无法指定；同时给出两者直接拒绝
-  （`ERR_PROJECT_CONFIG_INVALID`）。
+- 项目根 / 工作区配置**只能**来自启动参数，请求无法指定；启动参数阶段同时给出两者
+  直接拒绝（`ERR_STARTUP_MODE_CONFLICT`）。服务端编程式入口 `createShellServer()` 的
+  同类冲突仍报 `ERR_PROJECT_CONFIG_INVALID`：前者是**命令行用法错误**，后者是**配置对象
+  不合法**，两者错误码不同、不要混用。
+- **Multi 模式的身份命名空间**（G1-04）：
+  `providerId = local:<projectId>`、`resourceId = doc:<projectId>/<relativePath>`；
+  Legacy 保持 `local` / `doc:<relativePath>` 不变。
+- Multi 的 `projectId` 必须由客户端在 `/api/resources`、`/api/open` 显式提供；
+  其余接口一律按**服务端会话身份**解析项目，客户端给的 `projectId` 只作一致性断言。
+- Multi 的会话类接口（`/api/document`、`/api/document/disk`、`/api/edit`、`/api/save`）
+  **必须带 `viewId`**：它绑定 actor 与该会话，缺失即 400 `ERR_COMMAND_INVALID`。
+  Legacy 仍保持 `viewId` 可选（既有行为不变）。`viewId` 是归属校验标识，不是认证凭据。
+- 只有 Registry 判定为 `READY` 的项目才有 Provider；`UNAVAILABLE`（根缺失/非目录/
+  重解析点/身份不可确认/UNC）不会被自动创建或自动接管。
+- 页面通过 Vite 同源代理访问：`apps/shell` 的 dev server 把 `/api` 转发到本服务，
+  因此浏览器侧始终同源，不需要任何 CORS 头。
 
-### 启动参数规则（UX-00）
+### 启动参数规则（UX-00 / UX-00-R1）
 
 参数解析在 `src/startup-args.ts`（纯函数，`tests/suites/39-*` 覆盖），`main.ts` 只做
 「解析 → 建服务」。全部非法参数都以 `exit 2` + 单行说明结束，不打印堆栈：
@@ -29,24 +43,19 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 | 无参数 | `ERR_STARTUP_NO_TARGET` + 用法 |
 | `--workspace` 缺值 / 空值 / 后面跟着另一个选项 | `ERR_STARTUP_WORKSPACE_MISSING_VALUE` |
 | 同时给项目根与 `--workspace`、重复指定 `--workspace`、Multi 下多个位置参数 | `ERR_STARTUP_MODE_CONFLICT` |
+| **Legacy 下第三个及之后的位置参数**（如 `<root> <port> typo`） | `ERR_STARTUP_UNEXPECTED_POSITIONAL` |
 | 未知 `--xxx` 选项 | `ERR_STARTUP_UNKNOWN_OPTION` |
 | 端口非整数 / 越界（`>65535`） | `ERR_STARTUP_INVALID_PORT` |
 
-端口允许 `0`（交给系统分配临时端口，便于并行起实例）。`--workspace` 出现的**次数**决定
-是否 Multi，与是否带端口无关——这正是 UX-00 修复的缺陷：此前不带端口时 `--workspace`
-会被静默丢弃并因"缺少项目根"退出。
-- **Multi 模式的身份命名空间**（G1-04）：
-  `providerId = local:<projectId>`、`resourceId = doc:<projectId>/<relativePath>`；
-  Legacy 保持 `local` / `doc:<relativePath>` 不变。
-- Multi 的 `projectId` 必须由客户端在 `/api/resources`、`/api/open` 显式提供；
-  其余接口一律按**服务端会话身份**解析项目，客户端给的 `projectId` 只作一致性断言。
-- Multi 的会话类接口（`/api/document`、`/api/document/disk`、`/api/edit`、`/api/save`）
-  **必须带 `viewId`**：它绑定 actor 与该会话，缺失即 400 `ERR_COMMAND_INVALID`。
-  Legacy 仍保持 `viewId` 可选（既有行为不变）。`viewId` 是归属校验标识，不是认证凭据。
-- 只有 Registry 判定为 `READY` 的项目才有 Provider；`UNAVAILABLE`（根缺失/非目录/
-  重解析点/身份不可确认/UNC）不会被自动创建或自动接管。
-- 页面通过 Vite 同源代理访问：`apps/shell` 的 dev server 把 `/api` 转发到本服务，
-  因此浏览器侧始终同源，不需要任何 CORS 头。
+两条容易混淆的边界：
+
+- **位置参数数量是硬边界**。Legacy 只接受 `<root>` 与 `[端口]`；多余的第三个及之后
+  一律拒绝且报 `ERR_STARTUP_UNEXPECTED_POSITIONAL`（UX-00-R1 修复：此前被静默忽略，
+  拼错的命令会"看起来启动成功"）。多项结构错误同时存在时，报数量问题优先于报端口问题。
+- `--workspace` 出现的**次数**决定是否 Multi，与是否带端口无关（UX-00 修复的缺陷：
+  此前不带端口时 `--workspace` 会被静默丢弃并因"缺少项目根"退出）。
+
+端口允许 `0`（交给系统分配临时端口，便于并行起实例）。
 
 ## 接口
 

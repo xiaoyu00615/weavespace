@@ -14,6 +14,10 @@
  * 必须按模式冲突拒绝——否则会被当成端口传进 `listen()`，在 `validatePort` 处崩溃。
  * 数字但越界（如 `65536`）仍按端口处理，交给 `resolvePort` 报"端口非法"，
  * 以免真正的错误原因被"模式冲突"掩盖。
+ *
+ * 位置参数的数量是硬边界：Legacy 最多两个（`<项目根> [端口]`），多出的第三个及之后
+ * 一律拒绝（`ERR_STARTUP_UNEXPECTED_POSITIONAL`）。静默忽略会让拼错的命令
+ * "看起来启动成功"，与实际意图不符。
  */
 
 /** 端口默认值；`WS_PORT` 环境变量可覆盖，命令行显式端口优先级最高。 */
@@ -30,7 +34,8 @@ export type StartupArgsErrorCode =
   | 'ERR_STARTUP_WORKSPACE_MISSING_VALUE'
   | 'ERR_STARTUP_MODE_CONFLICT'
   | 'ERR_STARTUP_UNKNOWN_OPTION'
-  | 'ERR_STARTUP_INVALID_PORT';
+  | 'ERR_STARTUP_INVALID_PORT'
+  | 'ERR_STARTUP_UNEXPECTED_POSITIONAL';
 
 export class StartupArgsError extends Error {
   readonly code: StartupArgsErrorCode;
@@ -165,6 +170,15 @@ export function parseStartup(argv: readonly string[], env: StartupEnv = {}): Sta
   if ((rootDir ?? '').trim() === '') {
     // 与 main.ts 既有行为一致：既没给项目根也没给 --workspace → 打印用法后 exit 2
     throw new StartupArgsError('ERR_STARTUP_NO_TARGET', USAGE.trimEnd());
+  }
+  // Legacy 只有 `<项目根> [端口]` 两个位置参数。第三个及之后一律拒绝：
+  // 静默忽略会让"拼错命令"看起来启动成功，实际没按用户意图运行（UX-00-R1）。
+  if (positional.length > 2) {
+    const extra = positional.slice(2);
+    throw new StartupArgsError(
+      'ERR_STARTUP_UNEXPECTED_POSITIONAL',
+      `Legacy 模式最多接受 <项目根目录> [端口]，多出 ${extra.length} 个位置参数: ${extra[0]}\n${USAGE}`,
+    );
   }
   return { mode: 'legacy', rootDir, port: resolvePort(positional[1], env) };
 }

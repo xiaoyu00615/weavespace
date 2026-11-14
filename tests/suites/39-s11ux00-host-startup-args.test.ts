@@ -173,3 +173,70 @@ test('I-13 错误对象带稳定 code 与可读文案', () => {
     assert.ok((e.message ?? '').includes('--workspace'));
   }
 });
+
+// ---------------------------------------------------------------------------
+// R1（GPT 审查发现）：Legacy 模式的多余位置参数必须 fail-closed
+//
+// 修复前：Legacy 只读 `positional[0]` 与 `positional[1]`，第三个及之后的参数被
+// 静默忽略，`['D:/demo', '5177', 'unexpected']` 会当成一次正常启动——
+// 调用方拼错命令却得不到任何反馈，属于"看起来成功、实际没按意图执行"。
+// ---------------------------------------------------------------------------
+test('R1-01 Legacy 项目根 + 端口 + 一个多余参数：必须拒绝', () => {
+  assert.equal(
+    codeOf(['D:/demo', '5177', 'unexpected']),
+    'ERR_STARTUP_UNEXPECTED_POSITIONAL',
+  );
+});
+
+test('R1-02 Legacy 项目根 + 两个多余参数：必须拒绝', () => {
+  assert.equal(
+    codeOf(['D:/demo', '5177', 'unexpected', 'more']),
+    'ERR_STARTUP_UNEXPECTED_POSITIONAL',
+  );
+});
+
+test('R1-03 Legacy 多余参数即使是数字也要拒绝（不能只靠端口校验兜底）', () => {
+  assert.equal(codeOf(['D:/demo', '5177', '5178']), 'ERR_STARTUP_UNEXPECTED_POSITIONAL');
+  assert.equal(codeOf(['D:/demo', '5177', '0']), 'ERR_STARTUP_UNEXPECTED_POSITIONAL');
+});
+
+test('R1-04 多余参数的拒绝先于端口校验：结构错误优先报告', () => {
+  // 端口本身非法，但同时还有多余参数 → 报参数数量问题（更接近真实原因）
+  assert.equal(codeOf(['D:/demo', 'abc', 'x']), 'ERR_STARTUP_UNEXPECTED_POSITIONAL');
+});
+
+test('R1-05 Legacy 原有合法形式继续通过：无端口 / 带端口', () => {
+  const noPort = parseStartup(['D:/demo']);
+  assert.equal(noPort.mode, 'legacy');
+  assert.equal(noPort.rootDir, 'D:/demo');
+  assert.equal(noPort.port, DEFAULT_PORT);
+
+  const withPort = parseStartup(['D:/demo', '5177']);
+  assert.equal(withPort.mode, 'legacy');
+  assert.equal(withPort.rootDir, 'D:/demo');
+  assert.equal(withPort.port, 5177);
+});
+
+test('R1-06 Multi 原有数量限制继续通过：一个位置参数=端口，两个即冲突', () => {
+  const single = parseStartup(['--workspace', 'ws.json', '5188']);
+  assert.equal(single.mode, 'multi');
+  assert.equal(single.port, 5188);
+
+  // Multi 多出位置参数仍报模式冲突（保持既有语义，不改成数量错误码）
+  assert.equal(
+    codeOf(['--workspace', 'ws.json', '5188', 'extra']),
+    'ERR_STARTUP_MODE_CONFLICT',
+  );
+});
+
+test('R1-07 多余位置参数的文案指出数量与被拒的第一个多余值', () => {
+  try {
+    parseStartup(['D:/demo', '5177', 'typo-root', 'x']);
+    assert.fail('应当抛出');
+  } catch (err) {
+    const e = err as { code?: string; message?: string };
+    assert.equal(e.code, 'ERR_STARTUP_UNEXPECTED_POSITIONAL');
+    assert.ok((e.message ?? '').includes('2'), '应给出多余参数个数');
+    assert.ok((e.message ?? '').includes('typo-root'), '应给出第一个多余值，便于定位');
+  }
+});
