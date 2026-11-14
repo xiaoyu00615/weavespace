@@ -1,3 +1,20 @@
+/**
+ * 多项目列表（G2-01 / UX-02A）。
+ *
+ * 结构是一棵**真正的目录树**，不是平铺列表：
+ *   第 1 层：项目根（根文件夹图标 + 名称 + 状态）
+ *   第 2 层：项目根下的文件与文件夹
+ *   第 3 层及以后：按 `ResourceNodeState.children` 递归
+ *
+ * 多个项目**同时可见**，各自独立展开/折叠/刷新/选中。
+ * 单击项目标题 = 切换"当前项目"（只改焦点），不会隐藏其他项目、不会关闭标签。
+ *
+ * 边界：
+ * - UNAVAILABLE 项目不展示文件，只显示原因；已有标签与草稿不受影响；
+ * - 不展示 rootDir / canonicalRoot / rootToken —— 服务端也不返回它们；
+ * - 刷新只作用于当前项目，不覆盖其他项目的资源树；
+ * - 层级完全由数据树的 `children` 与注入的 `depth` 决定，**不解析路径字符串**。
+ */
 import { useState } from 'react';
 import type { ProjectSummary } from '../client/client-api';
 import { makeDocId } from '../state/doc-identity';
@@ -5,110 +22,96 @@ import { useDocumentActions } from '../state/DocumentActionsContext';
 import { useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 import type { ResourceNodeState } from '../state/types';
+import { FolderGlyph, TreeRow } from './FileTreeRow';
 
 /**
- * 多项目列表（G2-01）。
+ * 一层的兄弟节点列表。
  *
- * 结构：项目 → 文件树，多个项目**同时可见**，各自独立展开/折叠/刷新/选中。
- * 单击项目标题切换"当前项目"（只改焦点），不会隐藏其他项目、不会关闭标签。
- *
- * 边界：
- * - UNAVAILABLE 项目不展示文件，只显示原因；已有标签与草稿不受影响；
- * - 不展示 rootDir / canonicalRoot / rootToken —— 服务端也不返回它们；
- * - 刷新只作用于当前项目，不覆盖其他项目的资源树。
+ * `depth` 1 = 项目根的直接子项（箭头/图标列右移一级），依次递归；
+ * `last` 让同层最后一项的引导线收尾，避免下方拖着一条悬空竖线。
  */
-
-function FolderNode({
+function TreeLevel({
   projectId,
-  node,
+  nodes,
   depth,
 }: {
   projectId: string;
-  node: ResourceNodeState;
+  nodes: readonly ResourceNodeState[];
   depth: number;
 }) {
-  const { state, dispatch } = useWorkspace();
-  const expanded = state.expandedByProject[projectId]?.[node.id] ?? false;
-
   return (
-    <li>
-      <button
-        type="button"
-        className="tree__row tree__row--folder"
-        style={{ paddingLeft: 8 + depth * 14 }}
-        aria-expanded={expanded}
-        onClick={() => dispatch({ type: 'TOGGLE_PROJECT_NODE', projectId, path: node.id })}
-      >
-        <span className="tree__caret" aria-hidden="true">
-          {expanded ? '▾' : '▸'}
-        </span>
-        <span className="tree__name">{node.name}</span>
-        <span className="tree__count">{node.children?.length ?? 0}</span>
-      </button>
-      {expanded && node.children && (
-        <ul className="tree__children">
-          {node.children.map((child) =>
-            child.kind === 'folder' ? (
-              <FolderNode key={`${projectId}:${child.id}`} projectId={projectId} node={child} depth={depth + 1} />
-            ) : (
-              <FileNode key={`${projectId}:${child.id}`} projectId={projectId} node={child} depth={depth + 1} />
-            ),
-          )}
-        </ul>
-      )}
-    </li>
+    <ul className="tree__children">
+      {nodes.map((node, index) => (
+        <TreeItem
+          key={`${projectId}:${node.id}`}
+          projectId={projectId}
+          node={node}
+          depth={depth}
+          last={index === nodes.length - 1}
+        />
+      ))}
+    </ul>
   );
 }
 
-function FileNode({
+function TreeItem({
   projectId,
   node,
   depth,
+  last,
 }: {
   projectId: string;
   node: ResourceNodeState;
   depth: number;
+  last: boolean;
 }) {
-  const { state } = useWorkspace();
+  const { state, dispatch } = useWorkspace();
   const actions = useDocumentActions();
   const quick = useQuickFile();
+
+  if (node.kind === 'folder') {
+    const expanded = state.expandedByProject[projectId]?.[node.id] ?? false;
+    return (
+      <TreeRow
+        node={node}
+        depth={depth}
+        last={last}
+        expanded={expanded}
+        onActivate={() => dispatch({ type: 'TOGGLE_PROJECT_NODE', projectId, path: node.id })}
+      >
+        {/* 折叠时整棵后代都不渲染：不是靠 CSS 隐藏 */}
+        {expanded && node.children && node.children.length > 0 && (
+          <TreeLevel projectId={projectId} nodes={node.children} depth={depth + 1} />
+        )}
+      </TreeRow>
+    );
+  }
+
   const docId = makeDocId(projectId, node.path ?? node.id);
   const selected = state.selectedByProject[projectId] === docId;
   const tab = state.tabs.find((item) => item.docId === docId);
 
   return (
-    <li>
-      <button
-        type="button"
-        className={[
-          'tree__row',
-          'tree__row--file',
-          selected ? 'tree__row--selected' : '',
-          tab ? 'tree__row--open' : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        style={{ paddingLeft: 12 + depth * 14 }}
-        onClick={() => {
-          // 打开项目文件即离开 Quick File 预览（Quick File 本身不被清除）
-          quick.deactivate();
-          void actions.openNode(node, projectId);
-        }}
-      >
-        <span className="tree__glyph" aria-hidden="true">
-          ¶
-        </span>
-        <span className="tree__name">{node.name}</span>
-        {tab && <span className="tree__dot" title={tab.dirty ? '已打开（有未保存修改）' : '已在标签中打开'} />}
-      </button>
-    </li>
+    <TreeRow
+      node={node}
+      depth={depth}
+      last={last}
+      selected={selected}
+      opened={Boolean(tab)}
+      dirty={tab?.dirty ?? false}
+      onActivate={() => {
+        // 打开项目文件即离开 Quick File 预览（Quick File 本身不被清除）
+        quick.deactivate();
+        void actions.openNode(node, projectId);
+      }}
+    />
   );
 }
 
 function ProjectSection({ project }: { project: ProjectSummary }) {
   const { state } = useWorkspace();
   const actions = useDocumentActions();
-  // 分区展开是纯 UI 状态：各项目独立，互不影响（不持久化）
+  // 项目根的展开是纯 UI 状态：各项目独立，互不影响；刷新不会重置它
   const [open, setOpen] = useState(true);
   const active = state.activeProjectId === project.projectId;
   const ready = project.status === 'READY';
@@ -118,7 +121,8 @@ function ProjectSection({ project }: { project: ProjectSummary }) {
 
   return (
     <li className={active ? 'project project--active' : 'project'}>
-      <div className="project__header">
+      {/* 第 1 层：项目根。箭头 / 图标 / 名称与其他层级严格对齐 */}
+      <div className="project__root">
         <button
           type="button"
           className="project__caret"
@@ -128,19 +132,22 @@ function ProjectSection({ project }: { project: ProjectSummary }) {
         >
           {open ? '▾' : '▸'}
         </button>
+        <span className="tree__icon-slot" aria-hidden="true">
+          <FolderGlyph open={open} />
+        </span>
         <button
           type="button"
           className="project__title"
           onClick={() => void actions.switchProject(project.projectId)}
-          title={active ? '当前项目' : '切换为当前项目'}
+          title={`${project.name}${active ? '（当前项目）' : '（点击切换为当前项目）'}`}
         >
           {project.name}
         </button>
         <span
-          className={ready ? 'project__badge project__badge--ready' : 'project__badge project__badge--unavailable'}
+          className={ready ? 'project__state' : 'project__state project__state--unavailable'}
           title={ready ? '可用' : `不可用${project.reason ? `：${project.reason}` : ''}`}
         >
-          {ready ? 'READY' : 'UNAVAILABLE'}
+          {ready ? '可用' : '不可用'}
         </span>
         {ready && (
           <button
@@ -166,37 +173,19 @@ function ProjectSection({ project }: { project: ProjectSummary }) {
             <p className="project__meta">该项目下没有可编辑的文本文件</p>
           )}
           {ready && nodes.length > 0 && (
-            <ul className="tree__root">
-              {nodes.map((node) =>
-                node.kind === 'folder' ? (
-                  <FolderNode
-                    key={`${project.projectId}:${node.id}`}
-                    projectId={project.projectId}
-                    node={node}
-                    depth={0}
-                  />
-                ) : (
-                  <FileNode
-                    key={`${project.projectId}:${node.id}`}
-                    projectId={project.projectId}
-                    node={node}
-                    depth={0}
-                  />
-                ),
-              )}
-            </ul>
+            <TreeLevel projectId={project.projectId} nodes={nodes} depth={1} />
           )}
-          <div className="project__meta">
+          <p className="project__meta">
             {ready ? `${fileCount} 个文件` : '磁盘访问已被拒绝'}
             {active && ' · 当前项目'}
-          </div>
+          </p>
         </>
       )}
     </li>
   );
 }
 
-function countFiles(nodes: ResourceNodeState[]): number {
+function countFiles(nodes: readonly ResourceNodeState[]): number {
   let total = 0;
   for (const node of nodes) {
     if (node.kind === 'folder') total += countFiles(node.children ?? []);

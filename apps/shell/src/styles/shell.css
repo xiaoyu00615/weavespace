@@ -10,6 +10,8 @@
   --accent-soft: #e8f0ff;
   --warn: #b4690e;
   --shadow: 0 1px 2px rgb(24 32 44 / 6%);
+  /* 目录树引导线：极低对比度，只用来暗示层级，不参与视觉竞争（UX-02A） */
+  --tree-line: #d7dce4;
   --mono: 'Cascadia Mono', 'Consolas', 'SFMono-Regular', monospace;
 }
 
@@ -170,8 +172,7 @@ button {
   text-overflow: ellipsis;
 }
 
-.tree__meta,
-.tree__count {
+.tree__meta {
   color: var(--muted);
   font-size: 11px;
 }
@@ -184,29 +185,38 @@ button {
 }
 
 .tree__root {
-  padding: 6px 0;
+  padding: 4px 0;
   overflow: auto;
   flex: 1;
 }
 
+/* 一行 = 缩进列 + 箭头 + 图标 + 名称 + 右对齐标记（UX-02A） */
+.tree__item {
+  list-style: none;
+}
+
 .tree__row {
   width: 100%;
+  min-height: 24px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  /* 不用 gap：缩进列与箭头列之间不留额外空隙，层级列才能逐级严格对齐 */
+  gap: 0;
+  padding: 3px 8px 3px 6px;
   border: 0;
   background: transparent;
   cursor: pointer;
   text-align: left;
+  position: relative;
 }
 
 .tree__row:hover {
   background: var(--surface-alt);
 }
 
+/* 文件夹只比文件"重一点点"：层级靠缩进与引导线表达，不靠字号和行距 */
 .tree__row--folder {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .tree__row--selected {
@@ -214,27 +224,106 @@ button {
   color: var(--accent);
 }
 
+/* 选中项左侧 2px 强调条，不改变行高与缩进 */
+.tree__row--selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* ---- 缩进列与低对比度引导线 ---- */
+.tree__indent {
+  display: flex;
+  align-self: stretch;
+  flex: 0 0 auto;
+}
+
+.tree__guide,
+.tree__elbow {
+  position: relative;
+  flex: 0 0 18px;
+  width: 18px;
+}
+
+.tree__guide::before,
+.tree__elbow::before {
+  content: '';
+  position: absolute;
+  left: 6.5px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--tree-line);
+}
+
+/* └：最后一项只画上半段竖线 + 一截横线，下方不留悬空线 */
+.tree__elbow::after {
+  content: '';
+  position: absolute;
+  left: 6.5px;
+  top: 50%;
+  width: 11.5px;
+  border-top: 1px solid var(--tree-line);
+}
+
+.tree__elbow--last::before {
+  bottom: 50%;
+}
+
 .tree__caret {
-  width: 12px;
+  flex: 0 0 13px;
+  width: 13px;
+  margin-right: 5px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1;
   color: var(--muted);
 }
 
-.tree__glyph {
+.tree__icon {
+  flex: 0 0 auto;
   color: var(--muted);
+}
+
+.tree__row > .tree__icon {
+  margin-right: 5px;
+}
+
+.tree__row--folder .tree__icon {
+  color: #5d6b7e;
+}
+
+.tree__icon-slot {
+  display: inline-flex;
+  flex: 0 0 15px;
+  width: 15px;
+  color: #5d6b7e;
 }
 
 .tree__name {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tree__dot {
+  flex: 0 0 auto;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
+}
+
+/* 脏标记用告警色 + 白描边，与"已打开"区分且不压住文件名 */
+.tree__dot--dirty {
+  background: var(--warn);
+  box-shadow: 0 0 0 2px var(--surface);
 }
 
 .tree__footer {
@@ -886,26 +975,32 @@ button {
 
 .project {
   border-bottom: 1px solid var(--border);
-  padding: 2px 0 6px;
+  padding: 2px 0 4px;
 }
 
 .project--active {
-  background: linear-gradient(90deg, var(--accent-soft), transparent 70%);
+  background: linear-gradient(90deg, var(--accent-soft), transparent 72%);
 }
 
-.project__header {
+/* 第 1 层：项目根。与树行共用同一套列宽，缩进/图标/名称严格对齐 */
+.project__root {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px 4px 4px;
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 8px 3px 6px;
 }
 
 .project__caret {
+  flex: 0 0 13px;
+  width: 13px;
+  padding: 0;
   border: none;
   background: none;
   cursor: pointer;
-  width: 18px;
-  padding: 0;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1;
   color: var(--muted);
 }
 
@@ -926,39 +1021,39 @@ button {
   color: var(--accent);
 }
 
-.project__badge {
+/* 状态是"附加信息"，靠右、极小、不占树列宽 */
+.project__state {
+  flex: 0 0 auto;
   font-size: 10px;
-  padding: 0 4px;
-  border-radius: 4px;
-  border: 1px solid transparent;
-  white-space: nowrap;
+  color: var(--muted);
+  padding: 0 2px;
 }
 
-.project__badge--ready {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: #b9cdfb;
-}
-
-.project__badge--unavailable {
-  background: #fdf1e6;
+.project__state--unavailable {
   color: var(--warn);
-  border-color: #f0d1a8;
 }
 
+/* 与树行同节奏的小按钮：默认 .icon-button 是 24×24，会把项目根行顶高 4px */
 .project__refresh {
-  padding: 0 4px;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
 }
 
+/* 提示行对齐到"第 2 层名称"的位置，避免看起来像第 1 层 */
 .project__reason {
-  margin: 2px 10px 4px 24px;
+  margin: 0 10px 4px 42px;
   color: var(--warn);
   font-size: 12px;
   line-height: 1.45;
 }
 
 .project__meta {
-  margin: 2px 10px 0 24px;
+  margin: 2px 10px 0 42px;
   color: var(--muted);
   font-size: 11px;
 }
