@@ -5,9 +5,10 @@
 ## 启动
 
 ```bash
-# 仓库根 —— 两种互斥模式
+# 仓库根 —— 三种互斥模式
 node apps/server/src/main.ts <项目根目录> [端口]                    # Legacy 单项目
-node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi 多项目
+node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi 多项目（静态）
+node apps/server/src/main.ts --workspace-store <dir> [端口]         # Multi 多项目（可运行期添加）
 ```
 
 - 只绑定 `127.0.0.1`；端口优先取命令行，其次 `WS_PORT`，默认 `5177`。端口可省略
@@ -38,11 +39,14 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 |---|---|
 | `<root>` / `<root> <port>` | Legacy |
 | `--workspace <file>` / `--workspace=<file>` | Multi，端口可省略 |
+| `--workspace-store <dir>` / `--workspace-store=<dir>` | 托管 Multi，端口可省略 |
 | `<port> --workspace <file>` | Multi（端口可写在选项前） |
 | `--workspace <file> <port>` | Multi |
 | 无参数 | `ERR_STARTUP_NO_TARGET` + 用法 |
 | `--workspace` 缺值 / 空值 / 后面跟着另一个选项 | `ERR_STARTUP_WORKSPACE_MISSING_VALUE` |
+| `--workspace-store` 缺值 / 空值 / 后面跟着另一个选项 | `ERR_STARTUP_WORKSPACE_STORE_MISSING_VALUE` |
 | 同时给项目根与 `--workspace`、重复指定 `--workspace`、Multi 下多个位置参数 | `ERR_STARTUP_MODE_CONFLICT` |
+| **`--workspace` 与 `--workspace-store` 同时出现** | `ERR_STARTUP_MODE_CONFLICT`（两套项目权威不得并存） |
 | **Legacy 下第三个及之后的位置参数**（如 `<root> <port> typo`） | `ERR_STARTUP_UNEXPECTED_POSITIONAL` |
 | 未知 `--xxx` 选项 | `ERR_STARTUP_UNKNOWN_OPTION` |
 | 端口非整数 / 越界（`>65535`） | `ERR_STARTUP_INVALID_PORT` |
@@ -63,6 +67,9 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 |---|---|---|
 | GET | `/api/health` | 健康检查：`{status,mode,workspaceMode}`；**不返回任何本机绝对路径** |
 | GET | `/api/projects` | Multi：`{projects:[{projectId,name,status,reason?}]}`；Legacy：404 |
+| GET | `/api/session-token` | **托管 Multi**：换一次性会话令牌 `{token, intent?}`；其他模式 501 |
+| POST | `/api/projects/pick` | **托管 Multi**：`{requestId, intentId, name?}` → 请求 Host 弹本机目录选择器（202）；**不接受任何路径字段** |
+| GET | `/api/projects/pick` | 托管 Multi：`?requestId=` → 查询该请求的终态（`PENDING`/`APPLIED`/`CANCELLED`/`REJECTED`） |
 | GET | `/api/resources` | 授权范围内的可编辑文本文件树；Legacy 无需参数，Multi 必须 `?projectId=` |
 | POST | `/api/open` | Legacy `{path}` / Multi `{projectId,path}` → 经 CommandBus 建立会话 |
 | GET | `/api/document` | `?sessionId&viewId` → **G-DRAFT**：按 actor + 会话 + 视图归属读回内存正文（不碰磁盘） |
@@ -93,6 +100,9 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 | **项目正在移除（屏障内）** | 409 | `REJECTED` + `ERR_PROJECT_QUIESCING` |
 | **移除前置条件不满足 / 并发变更** | 409 | `REJECTED` + `ERR_PROJECT_BUSY` |
 | **撤销结果待核对**（`REVOKE_UNKNOWN`） | 403 | `REJECTED` + `ERR_PROJECT_REVOKE_UNKNOWN`（草稿仍可读） |
+| **已有选择器在弹窗中**（single-flight） | 409 | `REJECTED` + `ERR_PICKER_BUSY` |
+| **该平台/环境没有可用选择器** | 501 | `REJECTED` + `ERR_PICKER_UNAVAILABLE` |
+| **意图过期 / 已用 / 不存在，或 `requestId` 未知** | 410 | `REJECTED` + `ERR_INTENT_EXPIRED` / `ERR_INTENT_CONSUMED` / `ERR_INTENT_INVALID` / `ERR_PICK_REQUEST_GONE` |
 
 Multi 下项目级失败（根失效/会话失效）的 `/api/save` 响应**省略 `document.content`**：
 只返回 `dirty` / `baseVersion` / `revision` / `stale` 等状态，避免把草稿正文复制进错误响应；
@@ -112,8 +122,9 @@ Multi 下项目级失败（根失效/会话失效）的 `/api/save` 响应**省�
 Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它持有，Host 只负责使用，
 **不存在第二套项目表**。
 
-- **没有 CLI 入口**：`main.ts` 不提供该参数，托管模式只能由测试/内部接线注入；
-  真实持久化（配置 v2 / 墓碑 / 崩溃恢复）属于 UX-02B-02，在那之前不存在生产可达的撤销路径。
+- **CLI 入口**：UX-02B-01 落定时 `main.ts` 还没有这个参数；UX-02B-02 补上真实持久化，
+  UX-02B-03 才接上 `--workspace-store <dir>`（与 `--workspace` 互斥）。托管模式下 Host
+  自建 `FileProjectStore`，`workspaceKey` 按请求重新求值。
 - `ProjectStore.durability === 'memory'` 时 `removeProject()` 直接拒绝，
   只有显式 `allowEphemeralRevocation: true`（仅测试）才执行。
 - 项目级屏障：`QUIESCING` 期间所有 G-DISK 操作 409 `ERR_PROJECT_QUIESCING`；
@@ -144,8 +155,9 @@ Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它�
 ## 存储 v2（UX-02B-02）
 
 真实实现位于 `src/store/`（`io.ts` / `config.ts` / `revocation-log.ts` / `file-store.ts`）。
-**本轮不暴露任何 HTTP 变更端点，也不接 `--workspace-store` 启动参数**——没有本机选择器
-（ADR-021 T3）之前，动态添加项目不得对网页开放；Store 目前只由内部接线与测试构造。
+UX-02B-02 落盘时**尚未**开放任何 HTTP 变更端点；UX-02B-03 起，`--workspace-store <dir>`
+可用，且只开放**一条**变更路径：`POST /api/projects/pick`（Host 自己弹目录选择器）。
+网页仍然不能提交路径、不能改名、不能删除项目——见下文「目录选择与授权信任边界」。
 
 存储目录中的文件：
 
@@ -191,12 +203,53 @@ Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它�
   合法的"墓碑领先配置一个序号"仍然接受。
 - **授权凭据**：只有 `grantSource === 'os-dialog'` 且 `grantedAt`/`canonicalRoot`/`rootToken`
   齐备、且与当前根身份一致的记录才发 G-DISK；缺失或 `unspecified` 一律 UNAVAILABLE。
-  本轮没有任何生产路径能产生可信记录（选择器属于 02B-03）。
+  `grantSource` 是**逐次**写入的参数（`addProject({ ..., grantSource })`），不是进程级开关：
+  UX-02B-03 起唯一能写 `'os-dialog'` 的地方是 `runPick()` 中 T3 选择器返回成功之后，
+  其余所有 `addProject` 调用（启动加载、测试、内部接线）仍落到 `'unspecified'`。
 - **加载期根独立性**：配置里的重复根/嵌套根按配置顺序只授权第一个，其余降级为
   UNAVAILABLE。
 - **诚实的能力声明**：Windows 上 `fsync(文件)` + `rename` 只能做到"尽可能原子"，
   目录项无法 fsync，因此**不保证断电后 rename 一定可见**；单实例锁只防同机双写。
   上述两点是已知限制，不是"已保证"。
+
+## 目录选择与授权信任边界（UX-02B-03）
+
+托管模式（`--workspace-store <dir>`）下，添加项目的唯一路径是「Host 自己弹本机目录选择器」。
+网页只能**发起意图**，永远不能提供路径。三个判定彼此独立，任何一项都不能替代另一项：
+
+| 边界 | 证明什么 | **不**证明什么 | 实现位置 |
+|---|---|---|---|
+| **T1** 请求来源 | 请求来自本机 Host 的页面：回环绑定 + `Host` 白名单 + `Origin` / `Sec-Fetch-Site` + `X-WS-Token`（只存 SHA-256 摘要，`timingSafeEqual` 比对） | 任何目录授权 | `src/session-token.ts`、`handle()` 前段、`requireSessionToken()` |
+| **T2** 意图一次性 | 这次「添加」意图没有被重放或并发使用：`intentId` 120s TTL、绑定 `actorId`、consume-once | 「人类真的点了按钮」 | `src/project-intents.ts`、`intents.claim()` |
+| **T3** 人工目录确认 | 用户在本机对话框里选定的真实目录：`FolderPicker` 返回的路径 + `inspectProjectRoot()` 复核 | —— | `src/folder-picker/*`、`runPick()` |
+
+链路顺序不可交换：`GET /api/session-token` → `POST /api/projects/pick`（T1 → T2）→
+Host 进程内弹窗（T3）→ 根身份复核 → `ProjectRuntime.addProject` → Store 持久提交 → 授权生效。
+任一步失败都不会产生 Provider 或 grant。
+
+- **路径永不经过 HTTP**：`POST /api/projects/pick` 的请求体只接受 `requestId` / `intentId` / `name`。
+  出现 `rootDir` / `root` / `path` / `directory` / `canonicalRoot` / `rootToken` / `grantSource` /
+  `actorId` / `providerId` 任一字段即 400（这与 `/api/open` 的 `path` 是**项目内相对路径**不冲突，
+  两条规则分开写就是为了不误伤后者）。响应体同样不回传选择到的绝对路径。
+- **逐次授权来源**：`grantSource: 'os-dialog'` 只在 `runPick()` 中、T3 成功返回**之后**作为
+  参数传给 `addProject()`；没有进程级开关，也没有第二个能写这个值的地方。
+- **四态结果**：`picked` / `cancelled` / `unavailable` / `timeout`。后三者**零副作用**——
+  不建项目、不写 Store、不发 grant。
+- **串行**：同一时刻只允许一个对话框（否则 409 `ERR_PICKER_BUSY`）。`requestId` 记录只在
+  内存，Host 重启后查询 → 410 `ERR_PICK_REQUEST_GONE`。
+- **意图类失败统一 410**（过期 / 已用 / 不存在不加区分），避免把状态码变成探测面。
+- **写请求必须带 `Origin`**：浏览器对 POST 一律发送 `Origin`（含同源），缺失即 403；
+  这与「Origin 可选」的通用规则不同，只对本端点生效。
+
+选择器适配器（`src/folder-picker/`，由 `createHostFolderPicker()` 按平台分派）：
+
+| 平台 / 环境 | 实现 | 行为 |
+|---|---|---|
+| Windows | `windows-powershell.ts` | `execFile` + 固定参数数组（`-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -Command <常量脚本>`）+ `shell: false`，**无任何字符串插值**；退出码 0/1/2 → `picked` / `cancelled` / `unavailable` |
+| 任意平台 + TTY | `stdin-prompt.ts` | 交互式提示读一行；`isTTY !== true` 即 `unavailable` |
+| 非 TTY / 未支持平台 | `createUnavailablePicker()` | 恒定 `unavailable` → 501，**不猜测路径** |
+
+Windows 路径以 Base64 回传（避免编码/换行污染），解码失败一律 `unavailable`，不做启发式补救。
 
 ## 安全边界
 

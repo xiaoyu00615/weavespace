@@ -1,13 +1,17 @@
 /**
- * Host 启动参数解析（S11-UX-00）。
+ * Host 启动参数解析（S11-UX-00 / UX-02B-03）。
  *
  * 为什么单独成模块：`main.ts` 顶层会真正建监听，无法被测试 import；
  * 参数规则又必须能在 Node 里直接覆盖（沙箱禁止 spawn 子进程）。
  * 这里只做**纯字符串解析**：不读文件系统、不建服务、不写日志。
  *
- * 两种模式互斥：
- *   Legacy：`<项目根目录> [端口]`
- *   Multi ：`--workspace <workspace.json> [端口]`（也接受 `--workspace=<file>`）
+ * 三种模式互斥：
+ *   Legacy ：`<项目根目录> [端口]`
+ *   Multi  ：`--workspace <workspace.json> [端口]`（也接受 `--workspace=<file>`）
+ *   托管   ：`--workspace-store <dir> [端口]`（也接受 `--workspace-store=<dir>`）
+ *
+ * 托管模式是唯一具备"运行期添加项目"能力的模式：项目集合来自存储目录，
+ * 目录只能由 Host 内部的本机选择器给出（ADR-021）。静态模式的变更端点一律 501。
  *
  * 位置参数的身份由**是否像端口（全数字）**判断，而不是看它在第几位：
  * Multi 下唯一的位置参数只能是端口，不是全数字就说明用户同时给了项目根，
@@ -25,13 +29,15 @@ export const DEFAULT_PORT = 5177;
 
 export const USAGE =
   '用法:\n' +
-  '  node apps/server/src/main.ts <项目根目录> [端口]              （Legacy 单项目）\n' +
-  '  node apps/server/src/main.ts --workspace <workspace.json> [端口]（Multi 多项目）\n';
+  '  node apps/server/src/main.ts <项目根目录> [端口]                    （Legacy 单项目）\n' +
+  '  node apps/server/src/main.ts --workspace <workspace.json> [端口]    （Multi 多项目，静态）\n' +
+  '  node apps/server/src/main.ts --workspace-store <dir> [端口]         （Multi 多项目，可运行期添加）\n';
 
 /** 启动参数错误码：测试断言错误码，不依赖中文文案。 */
 export type StartupArgsErrorCode =
   | 'ERR_STARTUP_NO_TARGET'
   | 'ERR_STARTUP_WORKSPACE_MISSING_VALUE'
+  | 'ERR_STARTUP_WORKSPACE_STORE_MISSING_VALUE'
   | 'ERR_STARTUP_MODE_CONFLICT'
   | 'ERR_STARTUP_UNKNOWN_OPTION'
   | 'ERR_STARTUP_INVALID_PORT'
@@ -60,6 +66,12 @@ export type StartupArgs =
   | {
       readonly mode: 'multi';
       readonly workspacePath: string;
+      readonly port: number;
+    }
+  | {
+      /** 托管：存储目录（配置 v2 + 墓碑日志 + 锁）。 */
+      readonly mode: 'managed';
+      readonly storeDir: string;
       readonly port: number;
     };
 
@@ -100,10 +112,14 @@ function looksLikePortNumber(value: string | undefined): boolean {
  */
 export function parseStartup(argv: readonly string[], env: StartupEnv = {}): StartupArgs {
   const positional: string[] = [];
-  /** `--workspace` 的值（用于识别重复指定）；出现即代表 Multi。 */
+  /** `--workspace` 的值（用于识别重复指定）；出现即代表静态 Multi。 */
   const workspaceValues: string[] = [];
+  /** `--workspace-store` 的值；出现即代表托管 Multi。 */
+  const storeValues: string[] = [];
   let workspaceFlagSeen = false;
+  let storeFlagSeen = false;
   let missingWorkspaceValue = false;
+  let missingStoreValue = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -129,6 +145,27 @@ export function parseStartup(argv: readonly string[], env: StartupEnv = {}): Sta
       workspaceValues.push(value);
       continue;
     }
+    if (arg === '--workspace-store') {
+      storeFlagSeen = true;
+      const next = argv[i + 1];
+      i += 1;
+      if (next === undefined || next.trim() === '' || next.startsWith('--')) {
+        missingStoreValue = true;
+        continue;
+      }
+      storeValues.push(next);
+      continue;
+    }
+    if (arg.startsWith('--workspace-store=')) {
+      storeFlagSeen = true;
+      const value = arg.slice('--workspace-store='.length);
+      if (value.trim() === '') {
+        missingStoreValue = true;
+        continue;
+      }
+      storeValues.push(value);
+      continue;
+    }
     if (arg.startsWith('--')) {
       // 拼错的选项不能被当成项目根或端口（否则会在更深的地方以难懂的方式失败）
       throw new StartupArgsError('ERR_STARTUP_UNKNOWN_OPTION', `未知选项: ${arg}\n${USAGE}`);
@@ -139,6 +176,12 @@ export function parseStartup(argv: readonly string[], env: StartupEnv = {}): Sta
   if (missingWorkspaceValue) {
     throw new StartupArgsError('ERR_STARTUP_WORKSPACE_MISSING_VALUE', '--workspace 需要一个工作区配置文件路径');
   }
+  if (missingStoreValue) {
+    throw new StartupArgsError(
+      'ERR_STARTUP_WORKSPACE_STORE_MISSING_VALUE',
+      '--workspace-store 需要一个存储目录路径',
+    );
+  }
   if (workspaceValues.length > 1) {
     // 重复指定不取最后一个：两个候选工区意味着调用方意图不明
     throw new StartupArgsError(
@@ -146,9 +189,22 @@ export function parseStartup(argv: readonly string[], env: StartupEnv = {}): Sta
       `--workspace 只能指定一次，收到 ${workspaceValues.length} 次`,
     );
   }
+  if (storeValues.length > 1) {
+    throw new StartupArgsError(
+      'ERR_STARTUP_MODE_CONFLICT',
+      `--workspace-store 只能指定一次，收到 ${storeValues.length} 次`,
+    );
+  }
+  if (workspaceFlagSeen && storeFlagSeen) {
+    // 两套项目权威同时存在：谁说了算不明确，必须拒绝（ADR-021 §7）
+    throw new StartupArgsError(
+      'ERR_STARTUP_MODE_CONFLICT',
+      '启动参数冲突：--workspace 与 --workspace-store 互斥（静态配置与托管存储不能同时作为项目权威）',
+    );
+  }
 
-  // 关键修复：`--workspace` 一旦出现就是 Multi，**与是否有端口无关**。
-  if (workspaceFlagSeen) {
+  // 关键修复：`--workspace` / `--workspace-store` 一旦出现就是 Multi，**与是否有端口无关**。
+  if (workspaceFlagSeen || storeFlagSeen) {
     if (positional.length > 1) {
       throw new StartupArgsError(
         'ERR_STARTUP_MODE_CONFLICT',
@@ -160,10 +216,13 @@ export function parseStartup(argv: readonly string[], env: StartupEnv = {}): Sta
     if (portArg !== undefined && !looksLikePortNumber(portArg)) {
       throw new StartupArgsError(
         'ERR_STARTUP_MODE_CONFLICT',
-        '启动参数冲突：不能同时指定项目根与 --workspace（Legacy 与 Multi 互斥）',
+        '启动参数冲突：不能同时指定项目根与工作区配置（Legacy 与 Multi 互斥）',
       );
     }
-    return { mode: 'multi', workspacePath: workspaceValues[0], port: resolvePort(portArg, env) };
+    const port = resolvePort(portArg, env);
+    return storeFlagSeen
+      ? { mode: 'managed', storeDir: storeValues[0], port }
+      : { mode: 'multi', workspacePath: workspaceValues[0], port };
   }
 
   const rootDir = positional[0];

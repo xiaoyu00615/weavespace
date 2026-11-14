@@ -96,6 +96,21 @@ export const ERROR_CODES = {
    * 草稿仍保留，可经授权读取；不得自动迁移或丢弃。
    */
   ERR_SESSION_STALE: 'ERR_SESSION_STALE',
+  /**
+   * 托管模式（UX-02B-03）：本机目录选择器不可用（无 GUI / 被策略拦截 / 超时 / 找不到
+   * PowerShell）。**绝不**退化成"让网页输入路径"，只能改用静态模式或重试。
+   */
+  ERR_PICKER_UNAVAILABLE: 'ERR_PICKER_UNAVAILABLE',
+  /** 已有一次目录选择在进行中（选择器单飞）：同一时刻只允许一个系统对话框。 */
+  ERR_PICKER_BUSY: 'ERR_PICKER_BUSY',
+  /** 变更意图 `intentId` 已过期（默认 120s），需要重新申请。 */
+  ERR_INTENT_EXPIRED: 'ERR_INTENT_EXPIRED',
+  /** 变更意图 `intentId` 已被消费过：一次性，禁止重放。 */
+  ERR_INTENT_CONSUMED: 'ERR_INTENT_CONSUMED',
+  /** 变更意图不存在或不属于当前 actor（不区分两者，避免探测）。 */
+  ERR_INTENT_INVALID: 'ERR_INTENT_INVALID',
+  /** 目录选择请求的 `requestId` 已不存在（Host 重启 / 记录过期）。 */
+  ERR_PICK_REQUEST_GONE: 'ERR_PICK_REQUEST_GONE',
   ERR_PLUGIN_INVALID_MANIFEST: 'ERR_PLUGIN_INVALID_MANIFEST',
   ERR_PLUGIN_DUPLICATE_ID: 'ERR_PLUGIN_DUPLICATE_ID',
   ERR_PLUGIN_NOT_REGISTERED: 'ERR_PLUGIN_NOT_REGISTERED',

@@ -1,12 +1,14 @@
 /**
- * localhost 服务启动入口（S9-B / G1 / UX-00）。
+ * localhost 服务启动入口（S9-B / G1 / UX-00 / UX-02B-03）。
  *
- * 两种互斥模式：
+ * 三种互斥模式：
  *   Legacy：`node apps/server/src/main.ts <项目根目录> [端口]`
  *   Multi ：`node apps/server/src/main.ts --workspace <workspace.json> [端口]`
+ *   托管   ：`node apps/server/src/main.ts --workspace-store <dir> [端口]`
  *
  * 项目根 / 工作区配置只能由启动参数（可信配置）给出；服务不接受请求里指定的目录。
- * 同时给出项目根与工作区配置 → 直接拒绝（Legacy 与 Multi 不得混用身份规则）。
+ * 托管模式下运行期添加项目也**不接受**请求路径：目录只能由 Host 内部的本机
+ * 选择器（Windows 系统对话框 / 交互式终端）给出，浏览器只发起意图。
  *
  * 参数解析本身在 `startup-args.ts`：那是纯函数，可被测试直接 import；
  * 本文件只负责「解析 → 建服务 → 打日志 → 信号关闭」。
@@ -29,17 +31,23 @@ try {
 }
 
 const server =
-  args.mode === 'multi'
-    ? await createShellServer({ workspacePath: resolve(args.workspacePath), port: args.port })
-    : await createShellServer({ rootDir: resolve(args.rootDir), port: args.port });
+  args.mode === 'managed'
+    ? await createShellServer({ managedStore: { dir: resolve(args.storeDir) }, port: args.port })
+    : args.mode === 'multi'
+      ? await createShellServer({ workspacePath: resolve(args.workspacePath), port: args.port })
+      : await createShellServer({ rootDir: resolve(args.rootDir), port: args.port });
 
 // Multi 日志不打印任何项目根，避免把本机路径写进可分享的运行日志
 process.stdout.write(
-  args.mode === 'multi'
-    ? `[g1] live api  ${server.url}  mode=multi  workspace=${args.workspacePath}\n` +
-        `[g1] 浏览器请访问 http://127.0.0.1:5178（Vite 会把 /api 代理到本服务）\n`
-    : `[s9b] live api  ${server.url}  root=${server.rootDir}  actor=${server.actorId}\n` +
-        `[s9b] 浏览器请访问 http://127.0.0.1:5178（Vite 会把 /api 代理到本服务）\n`,
+  args.mode === 'managed'
+    ? `[g1] live api  ${server.url}  mode=multi  store=${args.storeDir}\n` +
+        `[g1] 浏览器请访问 http://127.0.0.1:5178（Vite 会把 /api 代理到本服务）\n` +
+        `[g1] 添加项目会弹出本机目录选择器；目录永远不会经由网页传入\n`
+    : args.mode === 'multi'
+      ? `[g1] live api  ${server.url}  mode=multi  workspace=${args.workspacePath}\n` +
+          `[g1] 浏览器请访问 http://127.0.0.1:5178（Vite 会把 /api 代理到本服务）\n`
+      : `[s9b] live api  ${server.url}  root=${server.rootDir}  actor=${server.actorId}\n` +
+          `[s9b] 浏览器请访问 http://127.0.0.1:5178（Vite 会把 /api 代理到本服务）\n`,
 );
 
 const shutdown = async (signal: string): Promise<void> => {

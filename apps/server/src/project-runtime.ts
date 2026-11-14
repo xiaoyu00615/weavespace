@@ -213,7 +213,19 @@ export interface ProjectRuntime {
   revision(): number;
   stateOf(projectId: string): ProjectLifecycle | 'ABSENT';
 
-  addProject(input: { name: string; rootDir: string }): Promise<ProjectSummary>;
+  /**
+   * 添加项目。
+   *
+   * `grantSource` 只能由 Host 内部的 T3 路径（本机选择器成功结果）逐次给出；
+   * 缺省回落到构造期的 `deps.grantSource`（缺省 `unspecified` = 只登记不授权）。
+   * 逐次传入而**不是**只靠构造期开关，是为了让"这一次添加确实经过选择器"
+   * 成为可断言的调用事实，而不是进程级的一个常量。
+   */
+  addProject(input: {
+    name: string;
+    rootDir: string;
+    grantSource?: string;
+  }): Promise<ProjectSummary>;
   renameProject(projectId: string, name: string): Promise<ProjectSummary>;
   removeProject(projectId: string): Promise<RemoveOutcome | RemoveBlocked>;
 
@@ -812,7 +824,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
 
       const projectId = issueProjectId(name);
       const opId = `op-${randomUUID()}`;
-      const grantSource = deps.grantSource ?? 'unspecified';
+      const grantSource = input.grantSource ?? deps.grantSource ?? 'unspecified';
       if (!KNOWN_GRANT_SOURCES.includes(grantSource)) {
         throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, `非法的授权来源: ${grantSource}`);
       }

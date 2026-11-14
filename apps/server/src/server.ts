@@ -27,6 +27,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { basename } from 'node:path';
 import { createCommandBus, type CommandBus } from '../../../packages/command/index.ts';
 import { ERROR_CODES, type ErrorCode } from '../../../packages/contracts/index.ts';
 import { createDocumentService, type DocumentService } from '../../../packages/document/index.ts';
@@ -46,7 +47,12 @@ import {
   type WorkspaceConfig,
 } from '../../../packages/project-registry/index.ts';
 import { buildResourceTree, type ResourceNodeDto } from './tree.ts';
-import type { ProjectRuntime } from './project-runtime.ts';
+import { createProjectRuntime, type ProjectRuntime } from './project-runtime.ts';
+import { createFileProjectStore, type FileProjectStore, type StoreIo } from './store/index.ts';
+import { createHostFolderPicker, type ExecFileImpl, type FolderPicker } from './folder-picker/index.ts';
+import { createIntentRegistry, type IntentRegistry } from './project-intents.ts';
+import { createPickRegistry, type PickRegistry } from './pick-registry.ts';
+import { createSessionTokenStore, type SessionTokenStore } from './session-token.ts';
 
 export type SaveOutcomeStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN';
 
@@ -99,6 +105,32 @@ export interface ShellServerOptions {
    */
   managed?: { create(deps: ManagedRuntimeDeps): ProjectRuntime };
   /**
+   * 托管模式（UX-02B-03）的生产接线：`--workspace-store <dir>` 指向的存储目录。
+   *
+   * Host 自己创建 `FileProjectStore` 与 `ProjectRuntime`，并持有唯一的
+   * `FolderPicker`。与 `managed`（测试用工厂）、`rootDir`、`workspace` 全部互斥。
+   *
+   * `picker` 缺省按平台建（Windows → 系统对话框，可交互终端 → stdin，其余不可用）。
+   * 只有真实选择器成功返回的目录，才会以 `grantSource: 'os-dialog'` 进入事务；
+   * 任何 HTTP 字段都无法替代它。
+   */
+  managedStore?: {
+    /** 存储目录（`workspace.json` / `revocations.jsonl` / 锁文件所在处）。 */
+    readonly dir: string;
+    /** 仅测试注入：替换选择器。生产不传。 */
+    readonly picker?: FolderPicker;
+    /** 仅测试注入：替换存储 I/O 层。 */
+    readonly storeIo?: StoreIo;
+    /** 仅测试注入：替换 Windows 选择器的进程调用。 */
+    readonly execFileImpl?: ExecFileImpl;
+    /** 意图 TTL（默认 120s）；仅测试会改。 */
+    readonly intentTtlMs?: number;
+    /** 选择器超时（默认 120s）；仅测试会改。 */
+    readonly pickerTimeoutMs?: number;
+    /** 仅测试注入：可控时钟（意图过期/请求保留期断言用）。 */
+    readonly now?: () => number;
+  };
+  /**
    * 仅测试注入：**包裹**内置授权表的观察/拦截层。
    *
    * 生产代码仍然自己构造授权表（Legacy 的全项目授权、Multi 的逐项目 grant），
@@ -136,7 +168,18 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_PROJECT_BUSY':
     case 'ERR_STORE_LOCKED':
     case 'ERR_STORE_ID_REUSED':
+    case 'ERR_PICKER_BUSY':
       return 409;
+    // 意图/请求凭据类：一律 410，避免用不同状态码区分"过期/已用/不存在"（可探测性）
+    case 'ERR_INTENT_EXPIRED':
+    case 'ERR_INTENT_CONSUMED':
+    case 'ERR_INTENT_INVALID':
+    case 'ERR_PICK_REQUEST_GONE':
+      return 410;
+    // 选择器不可用 / 变更端点不支持：语义明确地"服务不提供该能力"，不是客户端错误
+    case 'ERR_PICKER_UNAVAILABLE':
+    case 'ERR_COMMAND_UNSUPPORTED':
+      return 501;
     case 'ERR_PERMISSION_DENIED':
     case 'ERR_PATH_OUTSIDE_ROOT':
     case 'ERR_RESOURCE_IDENTITY_CONFLICT':
@@ -217,6 +260,14 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_STORE_RESTRICTED: '工作区存储处于受限状态，暂不接受变更（需重启或人工修复）',
   ERR_STORE_ID_REUSED: '项目标识已签发过，不能复用',
   ERR_SESSION_STALE: '会话已失效（项目不可用），草稿仍保留',
+  ERR_PICKER_UNAVAILABLE:
+    '本机目录选择器不可用（无图形界面 / 被策略拦截 / 超时），请改用静态配置启动',
+  ERR_PICKER_BUSY: '已有一次目录选择正在进行，请先完成或等待其超时',
+  ERR_INTENT_EXPIRED: '变更意图已过期，请重新发起',
+  ERR_INTENT_CONSUMED: '变更意图已被使用，不可重放',
+  ERR_INTENT_INVALID: '变更意图无效',
+  ERR_PICK_REQUEST_GONE: '目录选择请求已不存在（Host 可能已重启），请重试',
+  ERR_COMMAND_UNSUPPORTED: '当前运行模式不提供该接口',
 };
 
 function publicMessageOf(errorCode: ErrorCode): string {
@@ -364,9 +415,17 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
   }
 
   // ---- 模式判定（G1-03）：Legacy 单根 / 静态 Multi / 托管 Multi，三者互斥 ----
-  const wantsManaged = options.managed !== undefined;
+  const wantsManagedStore = options.managedStore !== undefined;
+  const wantsManaged = options.managed !== undefined || wantsManagedStore;
   const wantsStaticMulti = options.workspace !== undefined || options.workspacePath !== undefined;
   const wantsMulti = wantsManaged || wantsStaticMulti;
+  if (wantsManagedStore && options.managed !== undefined) {
+    // 两套 Runtime 工厂同时存在 → 谁持有项目权威不明确，必须拒绝
+    throw Object.assign(
+      new Error('启动参数冲突：managed 与 managedStore 不能同时提供（项目权威必须唯一）'),
+      { errorCode: 'ERR_PROJECT_CONFIG_INVALID' as const },
+    );
+  }
   if (wantsManaged && wantsStaticMulti) {
     throw Object.assign(
       new Error('启动参数冲突：托管模式与静态工作区配置互斥（不能同时持有两套项目权威）'),
@@ -381,6 +440,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
   }
   if (!wantsMulti && (options.rootDir === undefined || options.rootDir === '')) {
     throw Object.assign(new Error('缺少项目根（Legacy）或工作区配置（Multi）'), {
+      errorCode: 'ERR_PROJECT_CONFIG_INVALID' as const,
+    });
+  }
+  if (wantsManagedStore && (options.managedStore?.dir ?? '').trim() === '') {
+    throw Object.assign(new Error('--workspace-store 需要一个非空的存储目录'), {
       errorCode: 'ERR_PROJECT_CONFIG_INVALID' as const,
     });
   }
@@ -494,10 +558,59 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
   /**
    * 托管模式的唯一项目权威（UX-02B-01）。由调用方（测试/内部接线）构造，
    * Host 只负责使用它，不持有第二套项目表。
+   *
+   * UX-02B-03 起，生产入口（`--workspace-store`）也走这里：Store 与 Runtime 都由
+   * Host 创建，`close()` 时释放存储单实例锁。契约里**没有**任何"传路径就注册"的形状：
+   * Runtime 的 `addProject` 只能由下面 T3 路径在拿到选择器结果后调用。
    */
-  const runtime: ProjectRuntime | undefined = options.managed
-    ? options.managed.create({ actorId, document, permission })
+  let managedFileStore: FileProjectStore | undefined;
+  const runtime: ProjectRuntime | undefined = (() => {
+    if (options.managed) return options.managed.create({ actorId, document, permission });
+    const config = options.managedStore;
+    if (!config) return undefined;
+    const store = createFileProjectStore({
+      dir: config.dir,
+      ...(config.storeIo ? { io: config.storeIo } : {}),
+    });
+    managedFileStore = store;
+    try {
+      return createProjectRuntime({
+        actorId,
+        document,
+        permission,
+        store,
+        // 刻意**不**在构造期声明 'os-dialog'：授权来源必须逐次来自选择器成功结果。
+      });
+    } catch (err) {
+      // Runtime 构造失败（例如装载时 store 抛错）也必须释放锁，否则下次启动被自己挡住
+      store.close();
+      managedFileStore = undefined;
+      throw err;
+    }
+  })();
+
+  // ---- T1 / T2 / T3 所需的进程内状态（仅托管模式持有选择器与意图）----
+  const tokenStore: SessionTokenStore = createSessionTokenStore();
+  const picker: FolderPicker | undefined = options.managedStore
+    ? (options.managedStore.picker ??
+      createHostFolderPicker(
+        options.managedStore.execFileImpl
+          ? { execFileImpl: options.managedStore.execFileImpl }
+          : {},
+      ))
     : undefined;
+  const intents: IntentRegistry | undefined = options.managedStore
+    ? createIntentRegistry({
+        ttlMs: options.managedStore.intentTtlMs,
+        now: options.managedStore.now,
+      })
+    : undefined;
+  const pickRequests: PickRegistry | undefined = options.managedStore
+    ? createPickRegistry({ now: options.managedStore.now })
+    : undefined;
+  const pickerTimeoutMs = options.managedStore?.pickerTimeoutMs ?? 120_000;
+  /** 选择器任务结束时若 Host 已关闭，结果直接丢弃（不得再写 Store）。 */
+  let disposed = false;
 
   /** Provider 解析：托管模式按 Runtime 现查（不再是启动时的 Map 快照）。 */
   const resolveProviderById = (providerId: string): StorageProvider | undefined =>
@@ -687,6 +800,130 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     }
   }
 
+  /**
+   * **T1**：变更类请求必须携带 `X-WS-Token`。
+   *
+   * 令牌只证明"请求来自本机 Host 的页面"，不证明任何目录权限。缺省/伪造/已淘汰
+   * 一律 403，且在触碰选择器之前返回（S-01…S-04 要求"不弹对话框"）。
+   */
+  function requireSessionToken(req: IncomingMessage): void {
+    const raw = req.headers['x-ws-token'];
+    const token = Array.isArray(raw) ? raw[0] : raw;
+    if (!tokenStore.validate(token)) {
+      throw new HttpError(403, 'ERR_PERMISSION_DENIED', '缺少或无效的会话令牌');
+    }
+  }
+
+  /**
+   * 选择请求**禁止**携带的字段（ADR-021 §3.2）。
+   *
+   * 这些字段一旦被接受，就等于"网页可以指定本机路径 / 自述授权来源"，即绕过 T3。
+   * 与 `rejectTrustedFields` 分开是有意的：`path` 在 `/api/open` 里是**项目内相对
+   * 路径**，属于另一类参数，绝不能被这条规则误伤。
+   */
+  const PICK_FORBIDDEN_FIELDS = [
+    'rootDir',
+    'root',
+    'path',
+    'directory',
+    'canonicalRoot',
+    'rootToken',
+    'grantSource',
+    'actorId',
+    'providerId',
+  ] as const;
+
+  function rejectPickFields(body: Record<string, unknown>): void {
+    for (const field of PICK_FORBIDDEN_FIELDS) {
+      if (field in body) {
+        throw new HttpError(
+          400,
+          'ERR_COMMAND_INVALID',
+          `不接受客户端提供的 ${field}：目录与授权凭据只能由 Host 内部产生`,
+        );
+      }
+    }
+  }
+
+  /** 准入/提交失败对应的 HTTP 语义（S-11 / S-12 需要区分 422 与 409）。 */
+  function pickStatusOf(errorCode: string | undefined): number {
+    switch (errorCode) {
+      case 'ERR_PROJECT_DUPLICATE_ROOT':
+        return 409;
+      case 'ERR_PROJECT_NESTED_ROOT':
+      case 'ERR_PROJECT_CONFIG_INVALID':
+        return 422;
+      case 'ERR_PROJECT_BUSY':
+      case 'ERR_STORE_LOCKED':
+      case 'ERR_STORE_ID_REUSED':
+        return 409;
+      case 'ERR_STORE_RESTRICTED':
+      case 'ERR_PROJECT_UNAVAILABLE':
+        return 503;
+      default:
+        return httpStatusOfDomainError(errorCode);
+    }
+  }
+
+  /**
+   * 选择任务（T3 的唯一实现路径）。
+   *
+   * 顺序不可交换：先弹**本机**对话框，拿到真实路径，才可能进入 addProject
+   * （后者内部做 `inspectProjectRoot` + 重复/嵌套检查 + 持久提交）。因此：
+   * - 取消 / 超时 / 不可用 → 停在第一步，零副作用；
+   * - 复核失败 → addProject 抛错，Store 未被写入；
+   * - 成功 → 提交成功之后才有 Provider 与 grant。
+   */
+  async function runPick(input: { requestId: string; name?: string }): Promise<void> {
+    const registry = pickRequests as PickRegistry;
+    const rt = runtime as ProjectRuntime;
+    const pk = picker as FolderPicker;
+    try {
+      const outcome = await pk.pick({ timeoutMs: pickerTimeoutMs });
+      if (disposed) return;
+
+      if (outcome.status === 'cancelled') {
+        registry.settle(input.requestId, { status: 'CANCELLED', httpStatus: 200 });
+        return;
+      }
+      if (outcome.status === 'timeout') {
+        registry.settle(input.requestId, {
+          status: 'REJECTED',
+          httpStatus: 501,
+          errorCode: 'ERR_PICKER_UNAVAILABLE',
+          reason: 'timeout',
+        });
+        return;
+      }
+      if (outcome.status === 'unavailable') {
+        registry.settle(input.requestId, {
+          status: 'REJECTED',
+          httpStatus: 501,
+          errorCode: 'ERR_PICKER_UNAVAILABLE',
+          reason: 'unavailable',
+        });
+        return;
+      }
+
+      // ---- T3 的唯一出口：选择器成功返回的路径 + 逐次声明 'os-dialog' ----
+      // 名称可由调用方提供（非路径信息）；缺省取目录名，绝不回传该路径。
+      const picked = outcome.folder.absolutePath;
+      const name = input.name ?? (basename(picked) || 'project');
+      const project = await rt.addProject({ name, rootDir: picked, grantSource: 'os-dialog' });
+      if (disposed) return;
+      registry.settle(input.requestId, { status: 'APPLIED', httpStatus: 200, project });
+    } catch (err) {
+      const code = (err as { errorCode?: string } | undefined)?.errorCode;
+      const reason = (err as { reason?: string } | undefined)?.reason;
+      registry.settle(input.requestId, {
+        status: 'REJECTED',
+        httpStatus: pickStatusOf(code),
+        ...(typeof code === 'string' ? { errorCode: code } : {}),
+        ...(typeof reason === 'string' ? { reason } : {}),
+      });
+    }
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!hostAllowed(req.headers.host)) {
       sendJson(res, 403, { status: 'REJECTED', errorCode: 'ERR_PERMISSION_DENIED', message: '非法 Host' });
@@ -739,6 +976,92 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         ...(key ? { workspaceKey: key } : {}),
       });
       return;
+    }
+
+    /**
+     * T1 引导端点（ADR-021 §4）：发放会话令牌；托管模式下同时发放一次性意图。
+     *
+     * 之所以在同一个响应里给出 token + intentId，是因为页面"点一次添加"必须同时
+     * 持有两者，而端点清单只定义了这一个引导入口。**两者证明力互不替代**：
+     * token 证明请求来自本机页面（T1），intentId 证明这次意图未被重放（T2），
+     * 谁都不证明"用户真的选了目录"——那只有 T3。
+     *
+     * 跨源页面读不到响应体（服务不发送任何 CORS 头），这里仍显式校验来源。
+     */
+    if (method === 'GET' && pathname === '/api/session-token') {
+      const origin = req.headers.origin;
+      if (origin !== undefined) {
+        const allowedOrigins = new Set(
+          options.allowedOrigins ?? [`http://${req.headers.host ?? ''}`, ...VITE_DEV_ORIGINS],
+        );
+        if (!allowedOrigins.has(origin.toLowerCase())) {
+          sendJson(res, 403, {
+            status: 'REJECTED',
+            errorCode: 'ERR_PERMISSION_DENIED',
+            message: '来源不被允许',
+          });
+          return;
+        }
+      }
+      const site = req.headers['sec-fetch-site'];
+      if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') {
+        sendJson(res, 403, {
+          status: 'REJECTED',
+          errorCode: 'ERR_PERMISSION_DENIED',
+          message: `跨站请求被拒绝（sec-fetch-site=${site}）`,
+        });
+        return;
+      }
+      const token = tokenStore.issue();
+      const intent = intents?.issue(actorId);
+      sendJson(res, 200, {
+        status: 'APPLIED',
+        token,
+        ...(intent ? { intent } : {}),
+      });
+      return;
+    }
+
+    // 目录选择结果查询（ADR-021 §4）。pending 记录只在内存，Host 重启后 → 410。
+    if (method === 'GET' && pathname === '/api/projects/pick') {
+      if (!pickRequests) {
+        throw new HttpError(
+          501,
+          'ERR_COMMAND_UNSUPPORTED',
+          PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持目录选择',
+        );
+      }
+      requireSessionToken(req);
+      const requestId = url.searchParams.get('requestId') ?? '';
+      if (requestId === '') {
+        throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 requestId');
+      }
+      const record = pickRequests.get(requestId);
+      if (!record) {
+        throw new HttpError(
+          410,
+          'ERR_PICK_REQUEST_GONE',
+          PUBLIC_ERROR_MESSAGES.ERR_PICK_REQUEST_GONE ?? '目录选择请求已不存在',
+        );
+      }
+      sendJson(res, record.httpStatus, {
+        status: record.status,
+        requestId: record.requestId,
+        ...(record.project ? { project: record.project } : {}),
+        ...(record.errorCode ? { errorCode: record.errorCode } : {}),
+        ...(record.reason ? { reason: record.reason } : {}),
+      });
+      return;
+    }
+
+    // 本阶段不实现的操作结果查询端点：501，且不留下无鉴权入口，也不按 projectId 猜结果。
+    if (method === 'GET' && pathname === '/api/projects/op') {
+      if (runtime) requireSessionToken(req);
+      throw new HttpError(
+        501,
+        'ERR_COMMAND_UNSUPPORTED',
+        PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持该接口',
+      );
     }
 
     // Multi 专用：项目列表只给 Summary（不含 rootDir / canonicalRoot / rootToken）
@@ -849,6 +1172,73 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     if (method === 'POST') {
       const body = await readJsonBody(req, maxBodyBytes);
       rejectTrustedFields(body, mode);
+
+      /**
+       * 启动本机目录选择（ADR-021 §4）。
+       *
+       * 校验顺序即安全顺序：
+       * 1. 模式（非托管 → 501，不含任何实现）
+       * 2. T1 令牌（无/伪造 → 403，**不弹对话框**）
+       * 3. 请求体禁字段（path/rootDir/... → 400，零 IO）
+       * 4. 单飞（已有一次进行中 → 409，不消费意图）
+       * 5. T2 意图（过期/已用/未知 → 410，一次性消费）
+       * 6. 启动 T3 选择器 → 202 + requestId
+       */
+      if (pathname === '/api/projects/pick') {
+        if (!runtime || !picker || !intents || !pickRequests) {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持目录选择',
+          );
+        }
+        requireSessionToken(req);
+        // S-02：变更类请求必须显式声明 Origin。浏览器对所有 POST 都会发送（含同源），
+        // 因此"没有 Origin"只可能是非浏览器客户端或跨源探测——不弹对话框。
+        if (req.headers.origin === undefined) {
+          throw new HttpError(403, 'ERR_PERMISSION_DENIED', '变更类请求必须声明 Origin');
+        }
+        rejectPickFields(body);
+        if (pickRequests.isBusy()) {
+          throw new HttpError(
+            409,
+            'ERR_PICKER_BUSY',
+            PUBLIC_ERROR_MESSAGES.ERR_PICKER_BUSY ?? '已有一次目录选择正在进行',
+          );
+        }
+        const intentId = typeof body.intentId === 'string' ? body.intentId : '';
+        if (intentId === '') {
+          throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 intentId');
+        }
+        const claimed = intents.claim(intentId, actorId);
+        if (!claimed.ok) {
+          const code: ErrorCode =
+            claimed.reason === 'expired'
+              ? 'ERR_INTENT_EXPIRED'
+              : claimed.reason === 'consumed'
+                ? 'ERR_INTENT_CONSUMED'
+                : 'ERR_INTENT_INVALID';
+          // 三种失败一律 410：不区分"过期/已用/不存在"，避免成为探测面
+          throw new HttpError(410, code, publicMessageOf(code));
+        }
+        const rawName = typeof body.name === 'string' ? body.name.trim() : '';
+        const requestId = pickRequests.begin();
+        // 选择器可能开很久：结果为异步，客户端用 requestId 轮询
+        void runPick({ requestId, ...(rawName === '' ? {} : { name: rawName }) });
+        sendJson(res, 202, { status: 'PENDING', requestId });
+        return;
+      }
+
+      // 本阶段未实现的变更端点（remove / rename / removal-precheck / …）：
+      // 统一 501，绝不留下"看起来能用但没有鉴权/没有事务"的部分实现。
+      if (pathname.startsWith('/api/projects/')) {
+        if (runtime) requireSessionToken(req);
+        throw new HttpError(
+          501,
+          'ERR_COMMAND_UNSUPPORTED',
+          PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持该接口',
+        );
+      }
 
       if (pathname === '/api/open') {
         const projectPath = normalizeProjectPath(body.path);
@@ -1200,8 +1590,13 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     rootDir: mode === 'legacy' ? (options.rootDir as string) : '',
     mode,
     async close() {
+      // 先停受理：选择器任务即使之后返回，也不会再写 Store（pending 记录随进程消失，
+      // 客户端拿 410 重试——见 S-13）。
+      disposed = true;
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+      managedFileStore?.close();
+      managedFileStore = undefined;
     },
   };
 }
