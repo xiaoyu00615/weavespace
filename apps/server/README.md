@@ -103,6 +103,7 @@ node apps/server/src/main.ts --workspace-store <dir> [端口]         # Multi �
 | **已有选择器在弹窗中**（single-flight） | 409 | `REJECTED` + `ERR_PICKER_BUSY` |
 | **该平台/环境没有可用选择器** | 501 | `REJECTED` + `ERR_PICKER_UNAVAILABLE` |
 | **意图过期 / 已用 / 不存在，或 `requestId` 未知** | 410 | `REJECTED` + `ERR_INTENT_EXPIRED` / `ERR_INTENT_CONSUMED` / `ERR_INTENT_INVALID` / `ERR_PICK_REQUEST_GONE` |
+| **输入不合法**（名称过长/含控制字符/缺必填） | 400 | `REJECTED` + `ERR_COMMAND_INVALID` |
 
 Multi 下项目级失败（根失效/会话失效）的 `/api/save` 响应**省略 `document.content`**：
 只返回 `dirty` / `baseVersion` / `revision` / `stale` 等状态，避免把草稿正文复制进错误响应；
@@ -238,6 +239,13 @@ Host 进程内弹窗（T3）→ 根身份复核 → `ProjectRuntime.addProject` 
 - **串行**：同一时刻只允许一个对话框（否则 409 `ERR_PICKER_BUSY`）。`requestId` 记录只在
   内存，Host 重启后查询 → 410 `ERR_PICK_REQUEST_GONE`。
 - **意图类失败统一 410**（过期 / 已用 / 不存在不加区分），避免把状态码变成探测面。
+- **输入不合法是 400**：项目名为空 / 过长（>64）/ 含控制字符、缺必填参数，一律
+  `400 ERR_COMMAND_INVALID`，零副作用（不建项目、不写配置、不发 grant）。同一个
+  错误码在命令分派路径上也映射 400——不接受"同一个码因端点不同而给出两种状态"。
+- **监听失败即释放锁**：`server.listen()` 失败（如 `EADDRINUSE`）时 `createShellServer()`
+  先关闭本次自建的 `FileProjectStore`（只释放 `workspace.lock`）再抛错。否则调用方
+  拿不到句柄去 `close()`，同进程换端口重试会被自己的锁挡住（`ERR_STORE_LOCKED`）。
+  不删除配置、墓碑或项目文件，也不触碰其他进程/其他服务的监听。
 - **写请求必须带 `Origin`**：浏览器对 POST 一律发送 `Origin`（含同源），缺失即 403；
   这与「Origin 可选」的通用规则不同，只对本端点生效。
 
@@ -246,7 +254,7 @@ Host 进程内弹窗（T3）→ 根身份复核 → `ProjectRuntime.addProject` 
 | 平台 / 环境 | 实现 | 行为 |
 |---|---|---|
 | Windows | `windows-powershell.ts` | `execFile` + 固定参数数组（`-NoProfile -NonInteractive -STA -ExecutionPolicy Bypass -Command <常量脚本>`）+ `shell: false`，**无任何字符串插值**；退出码 0/1/2 → `picked` / `cancelled` / `unavailable` |
-| 任意平台 + TTY | `stdin-prompt.ts` | 交互式提示读一行；`isTTY !== true` 即 `unavailable` |
+| 任意平台 + TTY | `stdin-prompt.ts` | 交互式提示读一行；`isTTY !== true` 即 `unavailable`。受 `timeoutMs` 约束：超时立即返回 `timeout` 并 abort（关闭 readline、移除输入监听器），迟到输入不再产生结果 |
 | 非 TTY / 未支持平台 | `createUnavailablePicker()` | 恒定 `unavailable` → 501，**不猜测路径** |
 
 Windows 路径以 Base64 回传（避免编码/换行污染），解码失败一律 `unavailable`，不做启发式补救。

@@ -205,6 +205,11 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_PROJECT_DUPLICATE_ROOT':
     case 'ERR_PROJECT_NESTED_ROOT':
       return 400;
+    // 输入本身不合法（名称过长/含控制字符/缺必填参数）：这是**客户端错误**，
+    // 不是"服务端无法处理"（422）。UX-02B-03-R1 修正：此前落到默认 500，
+    // 会让"名字太长"看起来像 Host 内部故障，且掩盖了零副作用的事实。
+    case 'ERR_COMMAND_INVALID':
+      return 400;
     case 'ERR_PROJECT_NOT_FOUND':
       return 404;
     case 'ERR_SESSION_STALE':
@@ -1553,9 +1558,13 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
               ? 404
               : errorCode === 'ERR_PROJECT_REQUIRED'
                 ? 400
-                : status === 'UNKNOWN'
-                  ? 202
-                  : 422;
+                : // 与 `httpStatusOfDomainError` 保持一致：输入不合法是 400，
+                  // 不是 422（同一个错误码不能因为走的端点不同而给出两种状态）。
+                  errorCode === 'ERR_COMMAND_INVALID'
+                  ? 400
+                  : status === 'UNKNOWN'
+                    ? 202
+                    : 422;
     sendJson(res, httpStatus, { status: 'REJECTED', errorCode, message: '命令被拒绝' });
   }
 
@@ -1574,10 +1583,37 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     });
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(options.port ?? DEFAULT_PORT, bindHost, () => resolve());
-  });
+  /**
+   * 监听失败（EADDRINUSE / EACCES / EADDRNOTAVAIL 等）必须**当场**释放本次创建的
+   * Host 资源（UX-02B-03-R1）。
+   *
+   * 为什么不能交给调用方：`createShellServer()` 抛错时不返回句柄，调用方拿不到
+   * `close()`，于是 Store 的单实例锁会挂在进程里直到退出——同进程内"换个端口重试"
+   * 会被自己的锁挡住（ERR_STORE_LOCKED），看起来像"存储坏了"。
+   *
+   * 边界：只关**本函数创建的**句柄（`managedFileStore` 仅在 `managedStore` 模式下
+   * 由 Host 自建；`options.managed` 注入的 Store 归调用方所有，不动）。`close()`
+   * 只释放锁，不删除配置、墓碑或项目文件；也不触碰其他进程/其他服务的监听。
+   */
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: unknown): void => reject(err);
+      server.once('error', onError);
+      server.listen(options.port ?? DEFAULT_PORT, bindHost, () => {
+        server.removeListener('error', onError);
+        resolve();
+      });
+    });
+  } catch (err) {
+    managedFileStore?.close();
+    managedFileStore = undefined;
+    // 未成功监听时 close() 的语义是"回调收到 ERR_SERVER_NOT_RUNNING"，不会抛；
+    // 必须给回调，否则错误会以 'error' 事件冒出来变成未捕获异常。
+    server.close(() => {
+      /* 未监听：无需等待任何连接排空 */
+    });
+    throw err;
+  }
 
   const address = server.address() as AddressInfo;
   const host = address.address === '::1' ? '[::1]' : address.address;
