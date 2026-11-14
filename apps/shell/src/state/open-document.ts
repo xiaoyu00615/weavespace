@@ -52,6 +52,12 @@ export interface DocumentOpener {
     projectId?: string | null,
     options?: OpenNodeOptions,
   ): Promise<OpenNodeResult>;
+  /**
+   * 手动刷新的**文档部分**（S11-UX-01A）：检查该项目下已打开文档的磁盘变化。
+   *
+   * 只做"检查 + 安全同步干净标签 + 报告有草稿的文件"，绝不丢草稿、绝不自动 reload。
+   */
+  refreshOpenTabs(projectId: string | null): Promise<OpenTabsRefreshReport>;
   /** 本地编辑发生：推进代次，使在途的磁盘读取失效。 */
   noteLocalEdit(docId: string): void;
   /** 标签关闭：丢弃该文档的编辑代次。 */
@@ -60,6 +66,19 @@ export interface DocumentOpener {
   reset(): void;
   /** 当前在途打开数（诊断/测试用）。 */
   pendingOpens(): number;
+}
+
+/** 一次"刷新项目"在文档层面的结果（UI 只据此拼提示，不据此改状态）。 */
+export interface OpenTabsRefreshReport {
+  projectId: string | null;
+  /** 实际检查过的文档数（有会话、可读磁盘）。 */
+  checked: number;
+  /** 已安全同步的干净标签数。 */
+  updated: number;
+  /** 有未保存草稿、但磁盘已变更的文档路径（只提示，**不改标签**）。 */
+  dirtyChanged: string[];
+  /** 无法检查（磁盘删除 / 权限 / Host 不可用）的文档路径。 */
+  failed: string[];
 }
 
 export interface OpenNodeOptions {
@@ -126,9 +145,28 @@ function canActivate(focus: FocusSnapshot, state: WorkspaceState): boolean {
   return (state.panes[state.focusedPane]?.docId ?? null) === focus.docId;
 }
 
+/** 单个标签刷新的结果；`skipped` 表示"这次不该动它"（有草稿 / 已在刷新 / 已关闭）。 */
+export type TabRefreshOutcome = 'updated' | 'unchanged' | 'skipped' | 'failed';
+
+/**
+ * 一段磁盘是否相对标签基线发生变化。
+ *
+ * 有草稿时必须比 `baseVersion` 而不是 `buffer`：用户一改动，buffer 就与磁盘不同，
+ * 拿 buffer 比会把"自己改的"误报成"外部改的"。
+ */
+function diskChangedAgainst(
+  tab: DocTab,
+  disk: { content: string; contentVersion: string },
+): boolean {
+  if (tab.baseVersion) return disk.contentVersion !== tab.baseVersion;
+  return disk.content !== tab.buffer;
+}
+
 export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
   /** 同一 (模式, 文档) 的并发打开合并为一次请求：不会各自在服务端造一个 View。 */
   const inFlight = new Map<string, Promise<OpenNodeResult>>();
+  /** 正在刷新的文档：连续点击刷新时让位，避免重复建临时 View。 */
+  const refreshing = new Set<string>();
 
   const tabOf = (docId: string): DocTab | undefined =>
     deps.getState().tabs.find((tab) => tab.docId === docId);
@@ -165,67 +203,78 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
   /**
    * 已有干净标签被再次点击：允许把磁盘上的新内容同步过来，但**不得**
    * 1) 覆盖请求期间的新编辑；2) 在服务端留下临时 View。
+   *
+   * 返回结果供"刷新整个项目"聚合提示用；单次点击可以忽略。
    */
-  async function refreshCleanTab(docId: string): Promise<void> {
+  async function refreshCleanTab(docId: string): Promise<TabRefreshOutcome> {
     const tab = tabOf(docId);
     // 有草稿就不刷新：Core 也不会在 dirty 时刷新，回填只会覆盖输入（既有行为）
-    if (!tab || tab.mode !== 'live' || tab.dirty || !tab.sessionId || !tab.viewId) return;
+    if (!tab || tab.mode !== 'live' || tab.dirty || !tab.sessionId || !tab.viewId) return 'skipped';
+    // 同一文档已在刷新中：第二次点击直接让位，避免重复建临时 View
+    if (refreshing.has(docId)) return 'skipped';
+    refreshing.add(docId);
 
-    const captured = {
-      owner: { projectId: tab.projectId, docId, sessionId: tab.sessionId },
-      mode: tab.mode,
-      editEpoch: deps.editEpochs.of(docId),
-      revision: tab.revision,
-      baseVersion: tab.baseVersion,
-      buffer: tab.buffer,
-      dirty: tab.dirty,
-    };
-
-    const client = deps.clientFor('live');
-    let outcome;
     try {
-      // 用 open 让 Core 重新核对磁盘并（必要时）推进基线；它同时会新建一个 View，
-      // 因此下面必须在**所有分支**把它释放掉——标签自己的 viewId 才是被管理的那个。
-      outcome = await client.openDocument(tab.path, tab.projectId ?? undefined);
-    } catch {
-      return;
-    }
-
-    const tempSessionId = outcome.document?.sessionId ?? null;
-    const tempViewId = outcome.document?.viewId ?? null;
-
-    if (outcome.status === 'APPLIED' && outcome.document) {
-      const doc = outcome.document;
-      const latest = tabOf(docId);
-      const current = {
-        owner: {
-          projectId: latest?.projectId ?? null,
-          docId: latest?.docId ?? '',
-          sessionId: latest?.sessionId ?? null,
-          exists: Boolean(latest),
-        },
-        mode: latest?.mode ?? captured.mode,
+      const captured = {
+        owner: { projectId: tab.projectId, docId, sessionId: tab.sessionId },
+        mode: tab.mode,
         editEpoch: deps.editEpochs.of(docId),
-        revision: latest?.revision ?? -1,
-        baseVersion: latest?.baseVersion ?? null,
-        buffer: latest?.buffer ?? '',
-        dirty: latest?.dirty ?? false,
+        revision: tab.revision,
+        baseVersion: tab.baseVersion,
+        buffer: tab.buffer,
+        dirty: tab.dirty,
       };
 
-      const allowed =
-        deps.getMode() === captured.mode &&
-        canApplyDiskRefresh({
-          captured,
-          current,
-          incoming: {
-            sessionId: doc.sessionId,
-            revision: doc.revision,
-            baseVersion: doc.baseVersion,
-            content: doc.content,
-          },
-        });
+      const client = deps.clientFor('live');
+      let outcome;
+      try {
+        // 用 open 让 Core 重新核对磁盘并（必要时）推进基线；它同时会新建一个 View，
+        // 因此下面必须在**所有分支**把它释放掉——标签自己的 viewId 才是被管理的那个。
+        outcome = await client.openDocument(tab.path, tab.projectId ?? undefined);
+      } catch {
+        return 'failed';
+      }
 
-      if (allowed) {
+      const tempSessionId = outcome.document?.sessionId ?? null;
+      const tempViewId = outcome.document?.viewId ?? null;
+
+      try {
+        if (outcome.status !== 'APPLIED' || !outcome.document) return 'failed';
+        const doc = outcome.document;
+        const latest = tabOf(docId);
+        const current = {
+          owner: {
+            projectId: latest?.projectId ?? null,
+            docId: latest?.docId ?? '',
+            sessionId: latest?.sessionId ?? null,
+            exists: Boolean(latest),
+          },
+          mode: latest?.mode ?? captured.mode,
+          editEpoch: deps.editEpochs.of(docId),
+          revision: latest?.revision ?? -1,
+          baseVersion: latest?.baseVersion ?? null,
+          buffer: latest?.buffer ?? '',
+          dirty: latest?.dirty ?? false,
+        };
+
+        const allowed =
+          deps.getMode() === captured.mode &&
+          canApplyDiskRefresh({
+            captured,
+            current,
+            incoming: {
+              sessionId: doc.sessionId,
+              revision: doc.revision,
+              baseVersion: doc.baseVersion,
+              content: doc.content,
+            },
+          });
+
+        if (!allowed) {
+          // 期间发生了编辑 / 保存 / 关闭 / 切模式：这次读取已过期，宁可丢弃也不回写
+          return latest ? 'unchanged' : 'skipped';
+        }
+
         deps.dispatch({
           type: 'TAB_PATCH',
           docId,
@@ -238,10 +287,79 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
           },
         });
         deps.dispatch({ type: 'NOTICE', message: '检测到磁盘变化：已同步最新内容与版本' });
+        return 'updated';
+      } finally {
+        // 临时 View 必须在所有分支释放（成功、失败、标签已关闭都算）
+        await releaseView(client, tempSessionId, tempViewId, tab.viewId);
       }
+    } finally {
+      refreshing.delete(docId);
+    }
+  }
+
+  /** 单项目刷新结果之上的聚合提示由调用方（Provider）负责，这里只报事实。 */
+  async function refreshOpenTabsInternal(projectId: string | null): Promise<OpenTabsRefreshReport> {
+    const report: OpenTabsRefreshReport = {
+      projectId,
+      checked: 0,
+      updated: 0,
+      dirtyChanged: [],
+      failed: [],
+    };
+
+    // 快照目标：刷新期间新开 / 关闭的标签不参与本轮（每个 docId 仍在循环内重新校验）
+    const targets = deps
+      .getState()
+      .tabs.filter((tab) => tab.mode === 'live' && tab.projectId === projectId)
+      .map((tab) => tab.docId);
+
+    for (const docId of targets) {
+      // 用户已切走工作区：剩下的检查都属于上一个工作区，连请求都不该再发
+      if (deps.getMode() !== 'live') break;
+
+      const tab = tabOf(docId);
+      // 期间被关闭 / 会话没建立：跳过，绝不复活也不凭空造会话
+      if (!tab || tab.mode !== 'live' || tab.projectId !== projectId) continue;
+      if (!tab.sessionId || !tab.viewId) {
+        report.failed.push(tab.path);
+        continue;
+      }
+
+      report.checked += 1;
+
+      // 先只读检查：无论干净还是有草稿，都不写盘、不动会话
+      let disk: { content: string; contentVersion: string };
+      try {
+        const outcome = await deps.clientFor('live').readDisk(tab.sessionId, tab.viewId);
+        if (outcome.status !== 'APPLIED') {
+          report.failed.push(tab.path);
+          continue;
+        }
+        disk = { content: outcome.content, contentVersion: outcome.contentVersion };
+      } catch {
+        report.failed.push(tab.path);
+        continue;
+      }
+
+      // 期间用户改了 / 存了 / 关了：这次读取已过期，不再据此决策
+      const stillThere = tabOf(docId);
+      if (!stillThere || stillThere.sessionId !== tab.sessionId) continue;
+
+      if (!diskChangedAgainst(stillThere, disk)) continue;
+
+      if (stillThere.dirty) {
+        // 有草稿：只报告"外部改过"，绝不自动 reload（那会丢掉草稿）
+        report.dirtyChanged.push(stillThere.path);
+        continue;
+      }
+
+      // 干净标签：复用既有安全回填路径（内部还有 canApplyDiskRefresh 二次把关）
+      const outcome = await refreshCleanTab(docId);
+      if (outcome === 'updated') report.updated += 1;
+      else if (outcome === 'failed') report.failed.push(tab.path);
     }
 
-    await releaseView(client, tempSessionId, tempViewId, tab.viewId);
+    return report;
   }
 
   async function createTab(
@@ -389,6 +507,10 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
 
     noteLocalEdit(docId) {
       deps.editEpochs.bump(docId);
+    },
+
+    async refreshOpenTabs(projectId) {
+      return await refreshOpenTabsInternal(projectId);
     },
 
     forget(docId) {

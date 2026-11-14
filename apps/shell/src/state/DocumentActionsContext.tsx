@@ -52,7 +52,13 @@ export interface DocumentActions {
   closeTab(docId: string): Promise<void>;
   /** 切换 demo/live；有未保存修改时拒绝。 */
   switchMode(mode: ClientMode): Promise<void>;
-  /** 重新拉取资源：Multi 只刷新指定项目，Legacy 刷新单项目树。 */
+  /**
+   * 重新拉取资源：Multi 只刷新指定项目，Legacy 刷新单项目树。
+   *
+   * S11-UX-01A：除文件树外，还要检查**该项目**下已打开文档的磁盘变化——
+   * 干净标签安全同步内容和版本基线；有草稿的只提示存在外部修改，绝不动草稿、
+   * 绝不自动 reload。刷新不改变活动文档、焦点窗格与分屏结构。
+   */
   reloadResources(projectId?: string): Promise<void>;
   /** 切换"当前项目"：只改焦点，不动标签 / 队列 / 草稿。 */
   switchProject(projectId: string): Promise<void>;
@@ -110,6 +116,27 @@ function safeLocalStorage(): Storage | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 手动刷新的提示文案（S11-UX-01A）。
+ *
+ * 文件树结果与文档层结果必须**合并成一条**：`NOTICE` 只有一行，分开派发会互相覆盖，
+ * 用户就看不到"哪些文件有外部修改但被草稿挡住"这个关键信息。
+ */
+function refreshNotice(
+  base: string,
+  updated: number,
+  dirtyChanged: readonly string[],
+  failed: readonly string[],
+): string {
+  const parts = [base];
+  if (updated > 0) parts.push(`${updated} 个已打开文件已同步磁盘变化`);
+  if (dirtyChanged.length > 0) {
+    parts.push(`${dirtyChanged.join('、')} 在磁盘上已被修改，但存在未保存草稿，未自动覆盖`);
+  }
+  if (failed.length > 0) parts.push(`${failed.join('、')} 检查失败（磁盘不可读）`);
+  return parts.join('；');
 }
 
 export function DocumentActionsProvider({ children }: { children: ReactNode }) {
@@ -587,39 +614,52 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
 
       async reloadResources(projectId?: string) {
         if (stateRef.current.mode !== 'live') return;
-        if (projectId) {
+        const multi = stateRef.current.workspaceMode === 'multi';
+        // Legacy 的标签没有项目身份（projectId === null），Multi 按项目限定
+        const target = multi ? (projectId ?? stateRef.current.activeProjectId ?? null) : null;
+
+        if (multi) {
+          // 没有活动项目时没有"要刷新哪一份"的答案：宁可不刷，也不猜
+          if (!target) return;
           // 只刷新指定项目，绝不覆盖其他项目的资源树（G2-01）
-          const ok = await loadProjectResources(loadDeps, projectId);
-          if (ok) {
-            dispatch({
-              type: 'NOTICE',
-              message: `已刷新项目 ${projectName(projectId) ?? projectId} 的文件树`,
-            });
-          }
+          const ok = await loadProjectResources(loadDeps, target);
+          // 失败 / 不可用的提示由 loadProjectResources 自己给出，这里不再叠一条
+          if (!ok) return;
+          const report = await opener.refreshOpenTabs(target);
+          dispatch({
+            type: 'NOTICE',
+            message: refreshNotice(
+              `已刷新项目 ${projectName(target) ?? target} 的文件树`,
+              report.updated,
+              report.dirtyChanged,
+              report.failed,
+            ),
+          });
           return;
         }
-        if (stateRef.current.workspaceMode === 'multi') {
-          // 未指定项目：只刷新当前项目，避免把别的项目一起重写
-          const active = stateRef.current.activeProjectId;
-          if (active) {
-            await loadProjectResources(loadDeps, active);
-            dispatch({
-              type: 'NOTICE',
-              message: `已刷新项目 ${projectName(active) ?? active} 的文件树`,
-            });
-          }
-          return;
-        }
+
         dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
+        let files = 0;
         try {
           const nodes = await clientFor('live').listResources();
           dispatch({ type: 'SET_RESOURCES', nodes });
-          dispatch({ type: 'NOTICE', message: `已刷新资源树（${countFiles(nodes)} 个文件）` });
+          files = countFiles(nodes);
         } catch {
           dispatch({ type: 'NOTICE', message: '刷新失败：无法连接本地服务' });
+          return;
         } finally {
           dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
         }
+        const report = await opener.refreshOpenTabs(null);
+        dispatch({
+          type: 'NOTICE',
+          message: refreshNotice(
+            `已刷新资源树（${files} 个文件）`,
+            report.updated,
+            report.dirtyChanged,
+            report.failed,
+          ),
+        });
       },
 
       async switchProject(projectId: string) {
