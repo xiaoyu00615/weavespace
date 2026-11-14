@@ -32,7 +32,7 @@ import {
   refreshProject,
   type RefreshProjectResult,
 } from '../../apps/shell/src/state/refresh-project.ts';
-import { createLoadEpoch } from '../../apps/shell/src/state/workspace-load.ts';
+import { createLoadEpoch, loadProjectResources } from '../../apps/shell/src/state/workspace-load.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import type {
   ClientMode,
@@ -909,5 +909,39 @@ test('R1-L08 Legacy 文档刷新在途切 Demo：返回后不得写提示或资�
     assert.equal(result.cancelled, true, '文档刷新返回后也要重新校验，不能只看请求发出时');
     assert.deepEqual(h.state.resources, [], '不得把旧资源树写回 Demo');
     assert.equal(h.state.notice, noticeAfterSwitch, '不得覆盖当前提示');
+  });
+});
+
+test('R2-01 旧刷新的 finally 不得清除新一代同项目的加载标记', async () => {
+  await withMulti(async (h) => {
+    // 旧一代手动刷新：卡在资源树请求上
+    const oldGate = h.gates.listResources.arm();
+    const oldRefresh = h.refresh('project-a');
+    await oldGate.entered;
+
+    // 推进代次（Demo → Live 往返），并真的发起一次新的同项目加载
+    h.setMode('demo');
+    h.setMode('live');
+    const newGate = h.gates.listResources.arm();
+    const newLoad = loadProjectResources(
+      { getState: () => h.state, dispatch: h.dispatch, clientFor: () => h.client },
+      'project-a',
+    );
+    await newGate.entered;
+    assert.equal(h.state.loadingByProject['project-a'], true, '新一代已处于加载中');
+
+    // 放行旧请求：它已过期，绝不能把新一代的标记改回 false
+    oldGate.release();
+    await oldRefresh;
+    assert.equal(
+      h.state.loadingByProject['project-a'],
+      true,
+      '旧请求不得清除新一代的加载标记（否则 spinner 被提前关掉）',
+    );
+
+    // 新一代自己收尾
+    newGate.release();
+    await newLoad;
+    assert.equal(h.state.loadingByProject['project-a'], false, '新一代加载结束后自己清理');
   });
 });

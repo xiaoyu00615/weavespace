@@ -114,6 +114,8 @@ export async function refreshProject(
         // 沿用既有取消机制：过期代次不得再派发 SET_PROJECT_RESOURCES / SET_PROJECTS /
         // 加载状态或 NOTICE（loadProjectResources 内部每个 await 后都会自检）
         isCancelled: () => !stillValid(),
+        // 取消后不要清理 loading：标记可能已经属于新一代对同一个项目的加载（UX-01A-R2）
+        preserveLoadingOnCancel: true,
       },
       target as string,
     );

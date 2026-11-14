@@ -29,6 +29,16 @@ export interface WorkspaceLoadDeps {
    * 不传 = 永不取消，保持既有调用点的语义。
    */
   isCancelled?: () => boolean;
+  /**
+   * 取消后是否**保留**加载标记（UX-01A-R2）。
+   *
+   * 手动刷新会为同一个项目反复发起加载：旧请求被取消后，标记可能已经属于更新一代的
+   * 同一个 `projectId`，它的 `SET_PROJECT_LOADING(false)` 会把新一代刚点亮的 `true` 关掉。
+   * 传 `true` 表示"取消后不要碰标记"（归属已转移）。
+   *
+   * **默认不传**：S11-C 恢复被交互打断时仍按既有语义清零，避免 spinner 永久卡住。
+   */
+  preserveLoadingOnCancel?: boolean;
 }
 
 export interface LoadedWorkspace {
@@ -98,9 +108,14 @@ function cancellationOf(deps: WorkspaceLoadDeps): () => boolean {
  *   否则 spinner 会永久卡住；这**不是**旧工作区数据，`false` 本来就是默认值；
  * - 已取消且用户已经切到别的工作区：一个 dispatch 都不发。切模式时归约已经清空项目级
  *   标记，宿主也会在切换点清掉全局标记，迟到的加载状态绝不能落到新工作区上。
+ * - **例外（UX-01A-R2）**：调用方声明 `preserveLoadingOnCancel` 时不清理。手动刷新这类
+ *   "同一目标可能被新一代重复加载"的调用方，旧请求的 `false` 会把新一代刚点亮的
+ *   `true` 关掉；此时标记的归属已转移，旧请求无权改动。
  */
 function mayClearLoading(deps: WorkspaceLoadDeps, cancelled: () => boolean): boolean {
-  return !cancelled() || deps.getState().mode === 'live';
+  if (!cancelled()) return true;
+  if (deps.preserveLoadingOnCancel) return false;
+  return deps.getState().mode === 'live';
 }
 
 /** 文件计数（提示文案用）。 */
