@@ -1108,7 +1108,10 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         if (!identity) throw new HttpError(404, 'ERR_DOCUMENT_NOT_FOUND', '会话不存在');
         assertProjectAssertion(identity, body.projectId);
         // G-DRAFT（ADR-023 §2）：关闭视图只操作 Host 内存（views / sessions），
-        // 不触碰磁盘，因此不要求项目 grant；dirty 保护仍由 closeView 自身执行。
+        // 不触碰磁盘，因此 Multi 不要求项目 grant；dirty 保护仍由 closeView 自身执行。
+        // Legacy 例外：没有 viewId 绑定（viewId 非必填），读取授权是唯一的门，
+        // 必须保持基线 `d6bc5e6` 的行为——否则撤销 read 授权后仍能关掉别人的视图。
+        if (mode === 'legacy') authorizeRead(sessionId);
         const closed = await document.closeView(viewId);
         if (!closed.closed) {
           // 未保存内容不得静默丢弃：明确拒绝，并保留会话（暂无 discard 契约）

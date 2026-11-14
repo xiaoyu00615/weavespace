@@ -579,3 +579,129 @@ test('R1-10 Multi 的 G-DRAFT 只认 actor + session + viewId，不依赖项目 
     { permissionWrapper: () => toggle.service },
   );
 });
+
+/* ------------------------------------------------------------------ *
+ * 6. Legacy `POST /api/close` 的读取授权（UX-02B-01-R2）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 基线 `d6bc5e6` 的 `/api/close` 在关闭 View 前做了项目资源的 read 授权检查。
+ * UX-02B-01 为 G-DRAFT 把这层检查整体移除，于是 Legacy 在 read grant 被撤销后
+ * 仍能关闭 View —— Legacy 没有 viewId 绑定，读取授权是唯一的门，必须恢复；
+ * 但 Multi 的关闭只操作 Host 内存，不能因为项目失效/授权撤销而拒绝。
+ */
+test('R2-01 Legacy 撤销 read 授权后 POST /api/close 必须 403 且 View 不得关闭', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'ws-ux02b01r2-legacy-'));
+  const root = join(base, 'root');
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, 'a.md'), '# A\n', 'utf8');
+
+  const toggle = wrappingPermission(
+    createPermissionService([
+      { actorId: 'local-user', action: 'read', scope: '' },
+      { actorId: 'local-user', action: 'write', scope: '' },
+    ]),
+  );
+  const server = await createShellServer({
+    rootDir: root,
+    port: 0,
+    permissionWrapper: () => toggle.service,
+  });
+
+  const post = async (path: string, body: unknown): Promise<ApiResponse> => {
+    const res = await fetch(`${server.url}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+  const read = async (sessionId: string): Promise<ApiResponse> => {
+    const res = await fetch(`${server.url}/api/document?sessionId=${sessionId}`);
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+
+  try {
+    const opened = await post('/api/open', { path: 'a.md' });
+    assert.equal(opened.status, 200);
+    const sessionId = opened.body.document.sessionId as string;
+    const viewId = opened.body.document.viewId as string;
+
+    toggle.denyReads(true);
+    try {
+      const closed = await post('/api/close', { sessionId, viewId });
+      assert.equal(closed.status, 403, 'Legacy 关闭视图前必须仍执行 read 授权检查');
+      assert.equal(closed.body.errorCode, 'ERR_PERMISSION_DENIED');
+    } finally {
+      toggle.denyReads(false);
+    }
+
+    // 关键：View 没有被关闭（会话与视图仍可读回）
+    const stillReadable = await read(sessionId);
+    assert.equal(stillReadable.status, 200, '被拒绝的关闭请求不得悄悄关掉视图');
+
+    // 授权恢复后仍能正常关闭，且第二次关闭因视图不存在而拒绝
+    const closed = await post('/api/close', { sessionId, viewId });
+    assert.equal(closed.status, 200);
+    assert.equal(closed.body.status, 'APPLIED');
+    const again = await post('/api/close', { sessionId, viewId });
+    assert.equal(again.status, 403, '视图已关闭，重复关闭必须被视图绑定校验拒绝');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+    await server.close();
+  }
+});
+
+test('R2-02 Multi 的 POST /api/close 不受项目失效/授权撤销影响，dirty 仍 409', async () => {
+  const toggle = wrappingPermission(createPermissionService([]));
+  await withManaged(
+    async (h) => {
+      // 项目 A：一个干净视图（用于"授权被撤销"）、一个 dirty 视图
+      await writeFile(join(h.rootA, 'docs', 'only-a.md'), '# only A\n', 'utf8');
+      const cleanA = await h.open('project-a', 'docs/only-a.md');
+      const dirtyA = await h.open('project-a', 'a.md');
+      assert.equal(cleanA.status, 200);
+      assert.equal(dirtyA.status, 200);
+      const cleanASession = cleanA.body.document.sessionId as string;
+      const cleanAView = cleanA.body.document.viewId as string;
+      const dirtyASession = dirtyA.body.document.sessionId as string;
+      const dirtyAView = dirtyA.body.document.viewId as string;
+      await h.post('/api/edit', { sessionId: dirtyASession, viewId: dirtyAView, buffer: '# keep me\n' });
+
+      // 项目 B：干净视图，用于"项目根失效"
+      const b = await h.runtime.addProject({ name: '项目 B', rootDir: join(h.base, 'project-b') });
+      const cleanB = await h.open(b.projectId, 'a.md');
+      assert.equal(cleanB.status, 200);
+      const cleanBSession = cleanB.body.document.sessionId as string;
+      const cleanBView = cleanB.body.document.viewId as string;
+
+      toggle.denyReads(true);
+      try {
+        // 授权被撤销 ≠ 视图不可关闭（G-DRAFT 只看 actor + session + viewId）
+        const revoked = await h.post('/api/close', { sessionId: cleanASession, viewId: cleanAView });
+        assert.equal(revoked.status, 200, `实际 ${revoked.status}/${JSON.stringify(revoked.body)}`);
+        assert.equal(revoked.body.status, 'APPLIED');
+
+        // dirty 保护不变：不因授权撤销而静默丢草稿
+        const dirty = await h.post('/api/close', { sessionId: dirtyASession, viewId: dirtyAView });
+        assert.equal(dirty.status, 409);
+        assert.equal(dirty.body.errorCode, 'ERR_DOCUMENT_DIRTY');
+        const draft = await h.api(`/api/document?sessionId=${dirtyASession}&viewId=${dirtyAView}`);
+        assert.equal(draft.body.document.content, '# keep me\n');
+
+        // 项目根失效同样不影响干净视图的关闭
+        await rm(join(h.base, 'project-b'), { recursive: true, force: true });
+        const failed = await h.post('/api/close', { sessionId: cleanBSession, viewId: cleanBView });
+        assert.equal(failed.status, 200, `实际 ${failed.status}/${JSON.stringify(failed.body)}`);
+        assert.equal(failed.body.status, 'APPLIED');
+
+        // 伪造 viewId 仍被拒绝（G-DRAFT 未放宽归属校验）
+        const forged = await h.post('/api/close', { sessionId: dirtyASession, viewId: 'view-forged' });
+        assert.equal(forged.status, 403);
+      } finally {
+        toggle.denyReads(false);
+      }
+    },
+    { permissionWrapper: () => toggle.service },
+  );
+});
