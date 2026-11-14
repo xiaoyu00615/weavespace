@@ -72,6 +72,23 @@ function domainError(errorCode: string, message: string, extra?: Record<string, 
   return Object.assign(new Error(message), { errorCode, ...extra });
 }
 
+/**
+ * 配置里每一条撤销都必须在日志里有**同一行**的证据（projectId + opId + seq）。
+ *
+ * 只比较"日志最大序号"是不够的：日志被截断成"表头 + 较早的几条墓碑"时，
+ * 最大序号可能仍然覆盖配置声明的最晚撤销，但中间/末尾的证据已经没了。
+ * 反方向不做要求——墓碑允许领先配置一个序号（配置补写失败时的合法滞后）。
+ */
+function unmatchedRevocations(
+  revoked: readonly ConfigRevokedEntry[],
+  log: LogReadResult,
+): ConfigRevokedEntry[] {
+  if (revoked.length === 0) return [];
+  if (log.status !== 'ok') return [...revoked];
+  const present = new Set(log.entries.map((entry) => `${entry.seq}\u0000${entry.projectId}\u0000${entry.opId}`));
+  return revoked.filter((entry) => !present.has(`${entry.revokedAtSeq}\u0000${entry.projectId}\u0000${entry.opId}`));
+}
+
 function commitError(commitState: 'not-committed' | 'unknown', cause: unknown): Error {
   return Object.assign(
     new Error(commitState === 'not-committed' ? '撤销未被持久化（确认未写入）' : '撤销写入结果不确定'),
@@ -211,7 +228,12 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
    * 顺序不可调换：先判配置来源，再判日志可证性，最后才决定"能不能授权"。
    * **配置 checksum 通过不足以授权**——它无法证明撤销集合完整。
    */
-  function loadFromDisk(): { projects: readonly StoredProjectRecord[]; config: ConfigState; state: StoreLoadState } {
+  function loadFromDisk(): {
+    projects: readonly StoredProjectRecord[];
+    config: ConfigState;
+    state: StoreLoadState;
+    logLastSeq: number;
+  } {
     const primaryText = io.readText(CONFIG_PATH);
     const backupText = io.readText(BACKUP_PATH);
     const logText = io.readText(LOG_PATH);
@@ -239,6 +261,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
           commitSeq: 0,
           notes: ['首次初始化：已写入空配置与日志头'],
         },
+        logLastSeq: 0,
       };
     }
 
@@ -275,10 +298,12 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     } else if (logStatus === 'broken') {
       notes.push(`撤销日志不可信：${log.reason ?? '未知原因'}`);
     } else {
-      // 日志可读：核对它与配置的序号关系
-      const maxRevokedSeq = configRevoked.reduce((max, entry) => Math.max(max, entry.revokedAtSeq), 0);
-      if (maxRevokedSeq > log.lastSeq) {
-        notes.push('配置声明的撤销在日志中不存在：撤销集合不可证');
+      // 日志可读：逐条核对配置声明的撤销是否都有对应墓碑（projectId + opId + seq）
+      const unmatched = unmatchedRevocations(configRevoked, log);
+      if (unmatched.length > 0) {
+        notes.push(
+          `配置声明的 ${unmatched.length} 条撤销在日志中缺少对应墓碑（projectId/opId/seq 不匹配）：撤销集合不可证`,
+        );
       } else if (log.lastSeq > commitSeq + 1) {
         notes.push(`日志序号(${log.lastSeq})领先配置(${commitSeq})超过一个，无法解释`);
       } else {
@@ -334,6 +359,8 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       projects: visible,
       config,
       state: { integrity, diskTrusted, mutationsAllowed, log: logStatus, configSource, commitSeq, notes },
+      // 已验证的日志前缀（加载期看到的最后一行），运行期只允许往前走
+      logLastSeq: log.status === 'ok' ? log.lastSeq : 0,
     };
   }
 
@@ -341,62 +368,88 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
   state = loaded.state;
   current = loaded.config;
   projects = loaded.projects;
+  /**
+   * 运行期已确认过的日志前缀上界：日志只允许增长，任何回退都是证据丢失。
+   * 仅靠"日志最大序号与配置对账"抓不到这种情况（截断后配置仍可能自洽）。
+   */
+  let verifiedLastSeq = loaded.logLastSeq;
 
   function assertOpen(): void {
     if (closed) throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, 'Store 已关闭');
   }
 
+  /** 进入不可证状态：全局拒盘 + 禁止变更（不重建日志、不覆盖任何证据）。 */
+  function enterRestricted(reason: string): void {
+    state = {
+      ...state,
+      integrity: 'RECOVERY_RESTRICTED',
+      diskTrusted: false,
+      mutationsAllowed: false,
+      notes: [...state.notes, reason],
+    };
+  }
+
+  function restrict(reason: string): never {
+    enterRestricted(reason);
+    throw domainError(ERROR_CODES.ERR_STORE_RESTRICTED, reason);
+  }
+
   /**
-   * 写入前的日志可信性复核（P0-03）。
+   * 写入前的日志可信性复核（P0-03 / R2）。
    *
    * 加载时可信不代表写入时仍可信：进程运行期间日志可能被删除、截断或改写。
    * 先复核再提交，避免"用一条伪造的完整链"覆盖掉丢失的撤销历史。
    *
-   * 只有**从未发生过事务**（`commitSeq === 0` 且无撤销）时，日志缺失才等价于
-   * 首次初始化，允许补写日志头；一旦有历史，缺失/断裂一律 fail-closed。
+   * 三条独立的证据检查（缺一不可）：
+   * 1. 日志本身可读（缺失/空文件/断裂 → 不可证）；
+   * 2. 日志前缀不得回退到运行期已确认的位置之下；
+   * 3. `config.revoked[]` 的每一条都要在日志里有 projectId + opId + seq 完全对应的墓碑。
+   *
+   * 只有**从未发生过事务**（`commitSeq === 0` 且无撤销）时，日志缺失/空文件才等价于
+   * 首次初始化，允许补写日志头；一旦有历史，缺失/断裂/截断一律 fail-closed。
    */
   function revalidateLog(): LogReadResult {
-    let log = readLog(io.readText(LOG_PATH));
+    const log = readLog(io.readText(LOG_PATH));
     const hasHistory = current.commitSeq > 0 || current.revoked.length > 0;
     const emptyFile = log.status === 'ok' && !log.hasHeader;
     const lost = log.status === 'missing' && hasHistory;
     const corrupt = log.status === 'broken' || (emptyFile && hasHistory);
 
-    if (lost || corrupt) {
-      state = {
-        ...state,
-        integrity: 'RECOVERY_RESTRICTED',
-        diskTrusted: false,
-        mutationsAllowed: false,
-        notes: [...state.notes, '写入前复核失败：撤销日志缺失或不可信，拒绝继续提交'],
-      };
-      throw domainError(ERROR_CODES.ERR_STORE_RESTRICTED, '撤销日志缺失或不可信，拒绝写入（需人工修复）');
+    if (lost || corrupt) restrict('写入前复核失败：撤销日志缺失或不可信，拒绝继续提交');
+
+    // 前缀回退：日志只能增长。截断到表头（或丢掉尾部）都没有证据支持
+    if (log.lastSeq < verifiedLastSeq) {
+      restrict(
+        `写入前复核失败：撤销日志前缀回退（已确认到 ${verifiedLastSeq}，当前只有 ${log.lastSeq}），拒绝继续提交`,
+      );
     }
 
-    if (log.status === 'missing' || emptyFile) {
-      materializeLogHeader();
-      log = { ...log, status: 'ok', hasHeader: true };
+    // 逐条对账：截断成"表头 + 较早的墓碑"时，最大序号仍可能自洽，但证据已缺失
+    const unmatched = unmatchedRevocations(current.revoked, log);
+    if (unmatched.length > 0) {
+      restrict(
+        `写入前复核失败：配置声明的 ${unmatched.length} 条撤销在日志中缺少对应墓碑，拒绝继续提交`,
+      );
     }
 
     // 日志领先配置超过一个序号：无法解释为"上一次移除的已知滞后"，按不一致处理
     if (log.lastSeq > current.commitSeq + 1) {
-      state = {
-        ...state,
-        integrity: 'RECOVERY_RESTRICTED',
-        diskTrusted: false,
-        mutationsAllowed: false,
-        notes: [...state.notes, '日志序号与配置不一致，拒绝继续提交'],
-      };
-      throw domainError(ERROR_CODES.ERR_STORE_RESTRICTED, '撤销日志与配置序号不一致，拒绝写入');
+      restrict('写入前复核失败：撤销日志与配置序号不一致，拒绝写入');
+    }
+
+    if (log.status === 'missing' || emptyFile) {
+      // 仅无历史事务的冷启动会走到这里：重建日志头不等于伪造证据
+      materializeLogHeader();
+      return { ...log, status: 'ok', hasHeader: true };
     }
     return log;
   }
 
-  function assertMutationsAllowed(): void {
+  function assertMutationsAllowed(): LogReadResult {
     if (!state.mutationsAllowed || !state.diskTrusted) {
       throw domainError(ERROR_CODES.ERR_STORE_RESTRICTED, '存储处于受限状态，禁止变更（需重启或人工修复）');
     }
-    revalidateLog();
+    return revalidateLog();
   }
 
   function assertProjectKnown(projectId: string): ConfigState['projects'][number] {
@@ -478,45 +531,66 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
     async commitRevoke(input) {
       assertOpen();
-      assertMutationsAllowed();
+      const logNow = assertMutationsAllowed();
       assertProjectKnown(input.projectId);
 
-      // 复核在 assertMutationsAllowed 里已完成；这里拿到的是"已补头、序号自洽"的状态
-      const logNow: LogReadResult = revalidateLog();
       const seq = Math.max(current.commitSeq, logNow.lastSeq) + 1;
+      const at = clock().toISOString();
 
       // ---- step 1：墓碑 + fsync（提交点）----
+      //
+      // 失败语义（ADR-022 §3.1.1 / §4.0）：
+      // - 确认零字节写入 → `not-committed`，零变更、可重试；
+      // - 行已完整可读但 fsync 未确认 → **重新 fsync 同一文件**（绝不重复追加墓碑）：
+      //   成功才视为提交；仍失败 → `unknown`（目标项目拒盘，不恢复 ACTIVE）；
+      // - 日志尾部损坏/消失 → 日志不可证 → 全局 fail-closed + `unknown`。
       try {
         appendRevocation(io, {
           dir,
           seq,
           projectId: input.projectId,
           opId: input.opId,
-          at: clock().toISOString(),
+          at,
           prevHash: logNow.lastHash,
           needsHeader: !logNow.hasHeader,
         });
       } catch (err) {
-        const definitelyNotWritten = err instanceof StoreIoError && err.committedBytes === 0;
-        if (definitelyNotWritten) throw commitError('not-committed', err);
-
-        // 结果不确定：只能核对日志尾部（ADR-022 §3.1.1）
-        const verify = readLog(io.readText(LOG_PATH));
-        if (verify.status === 'ok' && verify.entries.some((entry) => entry.opId === input.opId)) {
-          // 已落盘 → 继续提交
-        } else if (verify.status === 'ok') {
+        if (err instanceof StoreIoError && err.committedBytes === 0) {
+          // 打开失败 / 0 字节写入：这是唯一能断言"没有落盘"的证据
           throw commitError('not-committed', err);
-        } else {
-          state = {
-            ...state,
-            integrity: 'RECOVERY_RESTRICTED',
-            diskTrusted: false,
-            mutationsAllowed: false,
-            notes: [...state.notes, '撤销写入结果无法判定：禁止全部磁盘访问'],
-          };
+        }
+
+        const verify = readLog(io.readText(LOG_PATH));
+        if (verify.status !== 'ok') {
+          // 尾部损坏或日志消失：撤销集合不再可证 —— 全局拒盘，且不得抛"未写入"
+          enterRestricted('撤销写入结果不可判定：撤销日志无法核对，禁止全部磁盘访问');
           throw commitError('unknown', err);
         }
+
+        const own = verify.entries.find(
+          (entry) => entry.opId === input.opId && entry.projectId === input.projectId,
+        );
+        if (!own) {
+          // 这一行确实没有出现（整行未写入）：可以按"未提交"处理
+          throw commitError('not-committed', err);
+        }
+
+        // 行完整可读 ≠ 持久化已确认：只补 fsync，不重写、不追加
+        try {
+          io.fsyncPath(LOG_PATH);
+        } catch (syncErr) {
+          // 无法同步确认：保持 UNKNOWN。目标项目由 Runtime 拒盘，这里不恢复任何权限。
+          state = {
+            ...state,
+            integrity: 'DEGRADED',
+            mutationsAllowed: false,
+            notes: [...state.notes, '撤销墓碑已写入但重新同步失败：持久化结论未知，拒绝后续变更'],
+          };
+          throw commitError('unknown', syncErr);
+        }
       }
+
+      verifiedLastSeq = Math.max(verifiedLastSeq, seq);
 
       // ---- step 3：补写配置（失败不回滚）----
       const next: ConfigState = {

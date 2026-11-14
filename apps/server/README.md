@@ -176,6 +176,17 @@ Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它�
   重启后同名目录必然得到新 id。
 - **写前复核**：add/rename/revoke 在提交前重新校验日志——缺失/断裂/空文件（且有历史事务）
   一律拒绝并进入 `RECOVERY_RESTRICTED`，绝不补写一条伪造的新链。
+- **撤销提交点的证据强度（UX-02B-02-R2）**：`append + fsync` 抛错时不许把"日志里能看到
+  本次 opId"当成已提交。
+  - 确认零字节写入 → `ERR_PERSIST_FAILED`，零变更、可重试；
+  - 行完整可读但同步未确认 → **只对同一文件重新 fsync**（绝不重复追加墓碑）：
+    成功才算提交；仍失败 → `ERR_PROJECT_REVOKE_UNKNOWN`，该项目拒盘、保持
+    `REVOKE_UNKNOWN`（不恢复 ACTIVE），Store 转 `DEGRADED` 并停止后续变更；
+  - 尾部损坏 / 日志消失 → 日志不可证，`RECOVERY_RESTRICTED` + 全部项目拒盘。
+- **日志前缀对账（UX-02B-02-R2）**：`config.revoked[]` 的每一条都必须在日志里有
+  `projectId + opId + seq` 完全对应的墓碑（不只比最大序号）；日志前缀只允许增长，
+  运行期已确认的位置不得回退。任一不满足即 `RECOVERY_RESTRICTED`，不重建链、不覆盖证据。
+  合法的"墓碑领先配置一个序号"仍然接受。
 - **授权凭据**：只有 `grantSource === 'os-dialog'` 且 `grantedAt`/`canonicalRoot`/`rootToken`
   齐备、且与当前根身份一致的记录才发 G-DISK；缺失或 `unspecified` 一律 UNAVAILABLE。
   本轮没有任何生产路径能产生可信记录（选择器属于 02B-03）。

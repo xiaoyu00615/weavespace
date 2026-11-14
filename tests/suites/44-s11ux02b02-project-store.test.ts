@@ -606,7 +606,7 @@ test('S-15 R-15 墓碑确认未写入（0 字节）→ 零变更、可重试', a
   }
 });
 
-test('S-16 R-15b 墓碑已写入但 fsync 报错 → 核对日志后按已撤销继续', async () => {
+test('S-16 R-15b 墓碑已写入但追加报错 → 证据核对 + 重新 fsync 成功 → 撤销生效', async () => {
   const dir = await newDir();
   const rootDir = await mkdtemp(join(tmpdir(), 'ws-store-root-'));
   try {
@@ -619,9 +619,17 @@ test('S-16 R-15b 墓碑已写入但 fsync 报错 → 核对日志后按已撤销
 
     plan.append = 'after-write'; // 行已落盘，但调用方拿到错误
     const outcome = await ctx.runtime.removeProject('a');
-    assert.equal(outcome.outcome, 'revoked', '日志命中本次 opId 即视为撤销生效');
+    assert.equal(outcome.outcome, 'revoked', '行完整可读且重新 fsync 成功才视为提交');
     assert.equal(ctx.runtime.stateOf('a'), 'REMOVED');
     assert.equal(grantsFor(permission, 'a'), 0);
+
+    // 证据核对后只补 fsync，绝不重复追加同一墓碑
+    const logText = (await readText(dir, LOG_FILE)) ?? '';
+    assert.equal(
+      logText.split((outcome as { opId: string }).opId).length - 1,
+      1,
+      '墓碑只能有一行',
+    );
 
     store.close();
     const reopened = restart(dir);
@@ -952,7 +960,7 @@ test('S-26 受限状态下 G-DISK 全拒、变更 503，草稿端点不受影响
   }
 });
 
-test('S-27 日志 fsync 报错但行已写入 → 核对尾部命中，按已撤销提交', async () => {
+test('S-27 日志 fsync 持续失败 → 持久化未确认，保持 UNKNOWN 且不重复追加墓碑', async () => {
   const dir = await newDir();
   const rootDir = await mkdtemp(join(tmpdir(), 'ws-store-root-'));
   try {
@@ -964,12 +972,24 @@ test('S-27 日志 fsync 报错但行已写入 → 核对尾部命中，按已撤
     const ctx = runtimeOver(store, permission);
     assert.equal(grantsFor(permission, 'a'), 2);
 
-    plan.fsyncLog = true; // append 成功，fsync 失败：持久化结论不确定
-    const outcome = await ctx.runtime.removeProject('a');
-    assert.equal(outcome.outcome, 'revoked');
-    assert.equal(ctx.runtime.stateOf('a'), 'REMOVED');
+    plan.fsyncLog = true; // append 成功，fsync（含重新同步）失败：持久化结论不确定
+    await assert.rejects(
+      () => ctx.runtime.removeProject('a'),
+      (err: { errorCode?: string }) => err.errorCode === 'ERR_PROJECT_REVOKE_UNKNOWN',
+      '仅"墓碑可读"不能证明持久化提交成功',
+    );
+    assert.equal(ctx.runtime.stateOf('a'), 'REVOKE_UNKNOWN', '不得据此恢复 ACTIVE');
     assert.equal(grantsFor(permission, 'a'), 0);
-    assert.equal(store.loadState().integrity, 'OK', '证据命中即视为提交成功，不进入 DEGRADED');
+    assert.equal(store.loadState().integrity, 'DEGRADED');
+    assert.equal(store.loadState().mutationsAllowed, false);
+
+    // 不重复追加墓碑，也不补写配置
+    const logText = (await readText(dir, LOG_FILE)) ?? '';
+    assert.equal(logText.split('"opId":"op-').length - 1, 1, '墓碑只能有一行');
+    assert.equal((await readJson(dir, CONFIG_FILE))?.commitSeq, 1);
+
+    plan.fsyncLog = false;
+    assert.equal(ctx.runtime.stateOf('a'), 'REVOKE_UNKNOWN', '故障解除也不自动恢复');
   } finally {
     await rm(rootDir, { recursive: true, force: true });
     await rm(dir, { recursive: true, force: true });
