@@ -134,6 +134,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_DOCUMENT_VERSION_CONFLICT':
     case 'ERR_PROJECT_QUIESCING':
     case 'ERR_PROJECT_BUSY':
+    case 'ERR_STORE_LOCKED':
+    case 'ERR_STORE_ID_REUSED':
       return 409;
     case 'ERR_PERMISSION_DENIED':
     case 'ERR_PATH_OUTSIDE_ROOT':
@@ -153,6 +155,7 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_ROOT_CHANGED':
     case 'ERR_ROOT_IDENTITY_UNSUPPORTED':
     case 'ERR_PROJECT_UNAVAILABLE':
+    case 'ERR_STORE_RESTRICTED':
       return 503;
     case 'ERR_PROJECT_REQUIRED':
     case 'ERR_PROJECT_CONFIG_INVALID':
@@ -210,6 +213,9 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_PROJECT_BUSY: '项目当前有其他变更或未结束的操作',
   ERR_PROJECT_REVOKE_UNKNOWN: '项目撤销结果待核对，磁盘访问被拒绝（草稿仍可读取）',
   ERR_PERSIST_FAILED: '变更未被持久化，状态未改变，可重试',
+  ERR_STORE_LOCKED: '工作区存储已被另一个实例占用',
+  ERR_STORE_RESTRICTED: '工作区存储处于受限状态，暂不接受变更（需重启或人工修复）',
+  ERR_STORE_ID_REUSED: '项目标识已签发过，不能复用',
   ERR_SESSION_STALE: '会话已失效（项目不可用），草稿仍保留',
 };
 

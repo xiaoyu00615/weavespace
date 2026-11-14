@@ -77,6 +77,21 @@ export const ERROR_CODES = {
    */
   ERR_PROJECT_REVOKE_UNKNOWN: 'ERR_PROJECT_REVOKE_UNKNOWN',
   /**
+   * 多项目（UX-02B-02）：工作区存储目录已被另一个实例持有（`workspace.lock`）。
+   * 不得并行写同一份配置；第二个实例必须拒绝启动托管模式。
+   */
+  ERR_STORE_LOCKED: 'ERR_STORE_LOCKED',
+  /**
+   * 多项目（UX-02B-02）：存储处于受限状态（`RECOVERY_RESTRICTED` / `DEGRADED`），
+   * 变更一律拒绝；G-DISK 是否可用由 `diskTrusted` 单独决定。
+   */
+  ERR_STORE_RESTRICTED: 'ERR_STORE_RESTRICTED',
+  /**
+   * 多项目（UX-02B-02）：`projectId` 已签发过（含已撤销）。id 永不复用，
+   * 调用方必须重新签发而不是复用旧标识。
+   */
+  ERR_STORE_ID_REUSED: 'ERR_STORE_ID_REUSED',
+  /**
    * 多项目（G1）：会话已失效（所属项目根不可用），磁盘访问被拒绝。
    * 草稿仍保留，可经授权读取；不得自动迁移或丢弃。
    */

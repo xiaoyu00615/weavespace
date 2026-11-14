@@ -27,6 +27,7 @@ import { ERROR_CODES, type ErrorCode } from '../../../packages/contracts/index.t
 import type { DocumentService } from '../../../packages/document/index.ts';
 import type { PermissionService } from '../../../packages/permission/index.ts';
 import { createLocalProvider, type StorageProvider } from '../../../packages/storage/index.ts';
+import type { OpOutcome, StoreLoadState, StoreRevokeReceipt, StoredProjectRecord } from './store/types.ts';
 import {
   inspectProjectRoot,
   type ProjectHandle,
@@ -48,12 +49,13 @@ export type ProjectLifecycle =
   | 'REMOVED'
   | 'UNAVAILABLE';
 
-/** 持久化条目（只含身份与显示名；不含任何授权令牌的副本）。 */
-export interface StoredProject {
-  readonly projectId: string;
-  readonly name: string;
-  readonly rootDir: string;
-}
+/**
+ * 持久化条目：身份 + 显示名 + 授权时确认的根身份。
+ *
+ * `canonicalRoot` / `rootToken` 来自配置 v2；加载时必须与当前 inspect 结果比对，
+ * 不一致即 UNAVAILABLE（**不 adopt、不改写配置**，ADR-022 §3.2）。
+ */
+export type StoredProject = StoredProjectRecord;
 
 /**
  * `commit*` 的失败契约（ADR-022 §3.1.1）。
@@ -64,10 +66,13 @@ export interface StoredProject {
 export type StoreCommitState = 'not-committed' | 'unknown';
 
 /**
- * 最小持久化端口（UX-02B-01 只有 fake）。
+ * 持久化端口（UX-02B-02 起有真实实现 `store/file-store.ts`）。
  *
- * 刻意不定义 `commitSeq` / 墓碑 / 备份：把它们塞进端口而不实现，会让"调用顺序对了"
- * 看起来像"持久化安全已经做完"。02B-02 会以同样的顺序接入真实实现。
+ * 除提交点外还暴露三件"只有真实 Store 才知道"的事实：
+ * - `loadState()`：撤销集合是否可证 → 决定能不能发任何 G-DISK 授权；
+ * - `queryOp()`：`opId` 的持久证据（只读磁盘）；
+ * - `markDegraded()`：墓碑已生效但配置补写失败。
+ * 三者都是可选的，fake Store 缺省视为"完全可信"，因此 UX-02B-01 的既有测试不受影响。
  */
 export interface ProjectStore {
   /**
@@ -82,9 +87,29 @@ export interface ProjectStore {
    * 撤销提交点。失败时**必须**尽量带上 `commitState`：
    * - `'not-committed'`：可以断言没有写入（打开失败 / 0 字节写入）；
    * - `'unknown'` 或缺省：无法排除已落盘 → Runtime 按已撤销保守处理。
+   *
+   * 成功时返回回执：`configPersisted === false` 表示墓碑已生效但配置补写失败
+   * （`REVOKED_PENDING_CONFIG`）——项目已不可访问，**不得回滚、不得重新授权**。
    */
-  commitRevoke(input: { projectId: string; opId: string }): Promise<void>;
+  commitRevoke(input: { projectId: string; opId: string }): Promise<void | StoreRevokeReceipt>;
+  /** 加载时的完整性与受限状态；缺省视为 `diskTrusted: true`。 */
+  loadState?(): StoreLoadState;
+  /** `opId` 的最终结果（只读磁盘；证据缺失即 `unknown`）。 */
+  queryOp?(opId: string): OpOutcome;
+  markDegraded?(reason: string): void;
+  close?(): void;
 }
+
+/** fake Store（无 store 元数据）时的默认判定：与 02B-01 的行为完全一致。 */
+const TRUSTED_STORE_STATE: StoreLoadState = {
+  integrity: 'OK',
+  diskTrusted: true,
+  mutationsAllowed: true,
+  log: 'ok',
+  configSource: 'primary',
+  commitSeq: 0,
+  notes: [],
+};
 
 export interface ProjectRuntimeDeps {
   actorId: string;
@@ -112,6 +137,12 @@ export interface RemoveOutcome {
   readonly outcome: 'revoked';
   readonly projectId: string;
   readonly opId: string;
+  /**
+   * 墓碑 + 配置都落盘 = true；墓碑已生效但配置补写失败 = false
+   * （`REVOKED_PENDING_CONFIG`：项目已不可访问，重启后按墓碑补齐）。
+   * fake Store 不返回回执时按 true 处理。
+   */
+  readonly configPersisted?: boolean;
 }
 
 export interface RemoveBlocked {
@@ -235,6 +266,37 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
   const issuedIds = new Set<string>();
   /** 已撤销的记录，仅用于诊断与测试断言（不含路径）。 */
   const removed = new Set<string>();
+  /**
+   * 内存级拒盘黑名单（ADR-022 §4.4 最危险的一格）。
+   *
+   * 用于"墓碑已持久化、但运行期 COMMIT 抛错"：此时不能假定授权已经收回，
+   * 因此直接把该项目拉黑，任何 G-DISK 一律拒绝，直到进程重启。
+   */
+  const diskDenied = new Set<string>();
+
+  // ---- 持久化的可信度（真实 Store 才提供；fake 缺省 = 完全可信）----
+  let storeState: StoreLoadState = deps.store.loadState?.() ?? TRUSTED_STORE_STATE;
+
+  function refreshStoreState(): StoreLoadState {
+    const next = deps.store.loadState?.();
+    if (next) storeState = next;
+    return storeState;
+  }
+
+  /**
+   * 变更前必须确认存储仍然可写：`RECOVERY_RESTRICTED` / `DEGRADED` 一律拒绝。
+   * 这道门与"项目级"无关，因此放在签发 id / 触碰磁盘之前。
+   */
+  function assertStoreWritable(): void {
+    const current = refreshStoreState();
+    if (!current.diskTrusted || !current.mutationsAllowed) {
+      throw domainError(
+        ERROR_CODES.ERR_STORE_RESTRICTED,
+        '存储处于受限状态（撤销集合不可证或需重启），拒绝一切变更',
+        { integrity: current.integrity, notes: current.notes },
+      );
+    }
+  }
 
   let revision = 0;
   let mutating = false;
@@ -338,8 +400,21 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     deps.permission.revoke({ actorId: deps.actorId, action: 'write', scope: '', providerId });
   }
 
-  /** 构造一个 READY 条目；根不可用时返回 UNAVAILABLE 条目且**不建 Provider**。 */
-  function buildEntry(input: { projectId: string; name: string; rootDir: string }): Entry {
+  /** 构造一个 READY 条目；根不可用或存储不可信时返回 UNAVAILABLE 且**不建 Provider**。 */
+  function buildEntry(
+    input: { projectId: string; name: string; rootDir: string },
+    trustDisk = true,
+  ): Entry {
+    if (!trustDisk) {
+      // 撤销集合不可证：条目保留用于诊断与草稿救援，但不建 Provider、不发 grant
+      return {
+        projectId: input.projectId,
+        name: input.name,
+        rootDir: input.rootDir,
+        state: 'UNAVAILABLE',
+        reason: undefined,
+      };
+    }
     const inspection = inspect(input.rootDir);
     if (inspection.status !== 'READY') {
       return {
@@ -384,10 +459,23 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
   }
 
   // ---- 启动装载（唯一一次读 store）----
+  //
+  // `diskTrusted === false` 时一律不建 Provider、不发 grant（ADR-022 §3.2）：
+  // 配置里有这个项目不能证明它没被撤销过。
   for (const stored of deps.store.load()) {
     issuedIds.add(stored.projectId);
-    const entry = buildEntry(stored);
+    const entry = buildEntry(stored, storeState.diskTrusted);
     entries.set(entry.projectId, entry);
+
+    // 持久化的根身份与当前 inspect 结果必须一致：不一致即 UNAVAILABLE，
+    // 不 adopt、不改写配置（这正是"根被移动过"与"新目录同名"的区分点）。
+    if (entry.state === 'ACTIVE' && entry.handle) {
+      if (stored.canonicalRoot && stored.canonicalRoot !== entry.handle.canonicalRoot) {
+        downgrade(entry, 'CANONICAL_CHANGED');
+      } else if (stored.rootToken && stored.rootToken !== entry.handle.rootToken) {
+        downgrade(entry, 'ROOT_TOKEN_CHANGED');
+      }
+    }
     if (entry.state === 'ACTIVE' && entry.handle) {
       providers.set(entry.handle.providerId, entry.handle.provider);
       grantProject(entry.projectId);
@@ -545,7 +633,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
         throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
       }
       // 撤销结果不可证优先于"不可用"：告诉调用方真正的原因，而不是笼统的根失效
-      if (entry.state === 'REVOKE_UNKNOWN') throw revokeUnknownError(projectId);
+      if (entry.state === 'REVOKE_UNKNOWN' || diskDenied.has(projectId)) throw revokeUnknownError(projectId);
       if (entry.state === 'QUIESCING' || entry.state === 'REMOVING') {
         throw domainError(ERROR_CODES.ERR_PROJECT_QUIESCING, '项目正在移除中，磁盘操作被拒绝');
       }
@@ -563,7 +651,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       // 准入判定与计数在同一同步块内完成：不存在"判完到 +1 之间被插队"的窗口
       const entry = entries.get(projectId);
       if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
-      if (entry.state === 'REVOKE_UNKNOWN') throw revokeUnknownError(projectId);
+      if (entry.state === 'REVOKE_UNKNOWN' || diskDenied.has(projectId)) throw revokeUnknownError(projectId);
       if (entry.state === 'QUIESCING' || entry.state === 'REMOVING') {
         throw domainError(ERROR_CODES.ERR_PROJECT_QUIESCING, '项目正在移除中，磁盘操作被拒绝');
       }
@@ -612,6 +700,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
 
     async addProject(input) {
       if (mutating) throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '已有变更事务在执行');
+      assertStoreWritable();
       const name = assertName(input.name);
       // 根形态不合法（UNC/重解析点/不存在/ino 不可用）在 inspect 里收敛为具体 reason
       const inspection = inspect(input.rootDir);
@@ -626,9 +715,17 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       const opId = `op-${randomUUID()}`;
       mutating = true;
       try {
-        // 提交点：先持久化，再让内存生效（添加是"多给一份权限"，必须先有证据）
-        await deps.store.commitAdd({ projectId, name, rootDir: inspection.literalRoot, opId });
-        const entry = buildEntry({ projectId, name, rootDir: inspection.literalRoot });
+        // 提交点：先持久化，再让内存生效（添加是"多给一份权限"，必须先有证据）。
+        // 持久化失败时这里抛错，下面三行（entries / provider / grant）都不会执行。
+        await deps.store.commitAdd({
+          projectId,
+          name,
+          rootDir: inspection.literalRoot,
+          canonicalRoot: inspection.canonicalRoot,
+          rootToken: inspection.rootToken,
+          opId,
+        });
+        const entry = buildEntry({ projectId, name, rootDir: inspection.literalRoot }, refreshStoreState().diskTrusted);
         entries.set(projectId, entry);
         issuedIds.add(projectId);
         if (entry.state === 'ACTIVE' && entry.handle) {
@@ -644,6 +741,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
 
     async renameProject(projectId, name) {
       if (mutating) throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '已有变更事务在执行');
+      assertStoreWritable();
       const entry = entries.get(projectId);
       if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
       // 撤销结果不可证的项目不再接受任何变更：连显示名都不改，
@@ -671,6 +769,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
         );
       }
       if (mutating) throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '已有变更事务在执行');
+      assertStoreWritable();
       const entry = entries.get(projectId);
       if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
       // 上一次撤销的提交结果还不可证：不允许再提交一次（会伪造第二条持久证据）
@@ -697,23 +796,50 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
           return { outcome: 'aborted', blockedBy };
         }
 
-        // ---- 提交点（本轮是 fake；02B-02 换成墓碑 fsync）----
+        // ---- 提交点：墓碑 fsync（真实 Store）；fake Store 只有内存提交 ----
         entry.state = 'REMOVING';
         const opId = `op-${randomUUID()}`;
+        let receipt: StoreRevokeReceipt | undefined;
         try {
-          await deps.store.commitRevoke({ projectId, opId });
+          const result = await deps.store.commitRevoke({ projectId, opId });
+          if (result) receipt = result;
         } catch (err) {
           throw applyCommitFailure(entry, projectId, previousState, err);
         }
 
-        // ---- 同步提交：立即切断访问权 ----
-        entries.delete(projectId);
-        removed.add(projectId);
-        revokeProject(projectId);
-        providers.delete(`local:${projectId}`);
-        deps.document.markProjectStale(projectId, 'PROJECT_REMOVED');
-        revision += 1;
-        return { outcome: 'revoked', projectId, opId };
+        // ---- 同步提交（无 await）：立即切断访问权 ----
+        // §4.4 最危险的一格：墓碑已生效但这里抛错，绝不能留下"磁盘已撤销、内存仍授权"。
+        // 兜底顺序：拉黑 → 删条目 → 删 Provider → 强制重试 revoke → DEGRADED。
+        try {
+          entries.delete(projectId);
+          removed.add(projectId);
+          revokeProject(projectId);
+          providers.delete(`local:${projectId}`);
+          deps.document.markProjectStale(projectId, 'PROJECT_REMOVED');
+          revision += 1;
+        } catch {
+          diskDenied.add(projectId);
+          entries.delete(projectId);
+          providers.delete(`local:${projectId}`);
+          try {
+            revokeProject(projectId);
+          } catch {
+            // 仍失败：黑名单已经是最后一道门，任何 G-DISK 都会在 assertUsable 处被拒
+          }
+          deps.store.markDegraded?.('运行期提交失败：该项目已按内存黑名单拒绝磁盘访问');
+          throw revokeUnknownError(projectId);
+        }
+
+        if (receipt && receipt.configPersisted === false) {
+          // 墓碑已生效，配置补写失败：项目已不可访问，不回滚也不重新授权
+          deps.store.markDegraded?.('REVOKED_PENDING_CONFIG：撤销已生效但配置补写失败');
+        }
+        return {
+          outcome: 'revoked',
+          projectId,
+          opId,
+          ...(receipt ? { configPersisted: receipt.configPersisted } : {}),
+        };
       } finally {
         mutating = false;
       }

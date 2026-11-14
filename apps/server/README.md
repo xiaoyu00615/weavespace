@@ -141,6 +141,36 @@ Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它�
   `read` 授权判定，不放宽。
 - 撤销只动内存与 Store：**不删除、不移动任何项目目录内容**。
 
+## 存储 v2（UX-02B-02）
+
+真实实现位于 `src/store/`（`io.ts` / `config.ts` / `revocation-log.ts` / `file-store.ts`）。
+**本轮不暴露任何 HTTP 变更端点，也不接 `--workspace-store` 启动参数**——没有本机选择器
+（ADR-021 T3）之前，动态添加项目不得对网页开放；Store 目前只由内部接线与测试构造。
+
+存储目录中的文件：
+
+| 文件 | 作用 |
+|---|---|
+| `workspace.json` | 配置 v2：`commitSeq` / `issuedIds` / `revoked[]` / `projects[].createdByOp` / `checksum` |
+| `workspace.json.bak` | **上一版**配置（写新配置前复制），用于主文件损坏时回退 |
+| `revocations.jsonl` | 撤销墓碑：`{seq, projectId, at, opId, prevHash, hash}`，首行为日志头，hash 链校验 |
+| `workspace.lock` | 单实例锁（pid + host + startedAt + token）；陈旧锁可接管，正常关闭即释放 |
+
+- **两种提交点**：添加/重命名 = 配置 `rename` 成功；移除 = 墓碑 `fsync` 成功。
+  之后配置补写失败只返回 `configPersisted: false` 并 `DEGRADED`，**不回滚、不重新授权**。
+- **写入结果不确定**：只有 `StoreIoError.committedBytes === 0`（打开失败 / 0 字节）才判
+  "确认未写入"；否则一律读日志尾部核对——命中本次 `opId` → 视为已撤销；确认没有 → 未写入；
+  日志断裂/不可读 → `RECOVERY_RESTRICTED`（全拒）。
+- **加载判定**（撤销集合是否可证是唯一判据，配置 `checksum` 通过不代表可授权）：
+  首次初始化 / 冷启动（`commitSeq === 0` 且无撤销）→ 正常；主配置损坏但日志完整 →
+  回退 `.bak`，可读但禁变更；主配置与备份都损坏 → 空表 + 全拒；日志缺失且配置声称
+  有变更历史 → 全拒；日志链断裂 → 全拒；墓碑领先配置一个序号 → 视为已知滞后，按墓碑补齐。
+- **`opId` 查询**（`store.queryOp`）：只认 `createdByOp` / `revoked[].opId` / 可信墓碑行；
+  证据缺失即 `unknown`，不按 `projectId` 是否存在推断。
+- **诚实的能力声明**：Windows 上 `fsync(文件)` + `rename` 只能做到"尽可能原子"，
+  目录项无法 fsync，因此**不保证断电后 rename 一定可见**；单实例锁只防同机双写。
+  上述两点是已知限制，不是"已保证"。
+
 ## 安全边界
 
 - **绑定地址**：只接受 `127.0.0.1` / `::1` / `localhost`；`0.0.0.0`、`::`、`192.168.x.x` 等
