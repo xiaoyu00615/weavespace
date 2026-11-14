@@ -8,11 +8,13 @@
  * 约定：
  * - 层级只由 `depth` 决定，**绝不**从文件名或路径字符串里猜层级；
  * - `depth` 0 = 项目根自己，1 = 项目根的直接子项，依次递归；
- * - 每级缩进 18px，引导线落在缩进列的中线（9px）上，与箭头/图标列严格对齐；
+ * - 每级缩进 18px，引导线落在缩进列的中线（6.5px）上，与箭头/图标列严格对齐；
+ * - 祖先是本层末项时，它的后代不再画这条竖线（见 `tree-trails.ts`）；
  * - 叶子行没有箭头，但保留同宽占位，保证文件名起点一致。
  */
 import type { ReactNode } from 'react';
 import type { ResourceNodeState } from '../state/types';
+import { ancestorGuides, type TreeTrails } from './tree-trails';
 
 /** 每一级的缩进步长（px）。行内计算与 CSS 都必须用这个值。 */
 export const TREE_INDENT = 18;
@@ -23,18 +25,31 @@ const ICON_SIZE = 15;
 /**
  * 缩进列 + 树状引导线。
  *
- * `last` 决定引导线的收尾方式：同级最后一项只画"上半段竖线 + 横线"（└），
+ * `last` 决定**自己**这一列的收尾方式：同级最后一项只画"上半段竖线 + 横线"（└），
  * 其余画"整段竖线 + 横线"（├），这样最后一项下方不会拖着一条悬空竖线。
+ *
+ * `trails` 决定**祖先列**是否继续：祖先已是本层末项时只留空白占位，不画线；
+ * 占位仍然存在，所以缩进宽度与图标列不受影响。
  */
-export function TreeIndent({ depth, last }: { depth: number; last?: boolean }) {
+export function TreeIndent({
+  depth,
+  last,
+  trails,
+}: {
+  depth: number;
+  last?: boolean;
+  trails?: TreeTrails;
+}) {
   if (depth <= 0) return null;
-  const guides = [];
-  for (let level = 1; level < depth; level += 1) {
-    guides.push(<span key={level} className="tree__guide" aria-hidden="true" />);
-  }
+  const guides = ancestorGuides(trails ?? [], depth);
   return (
     <span className="tree__indent" aria-hidden="true">
-      {guides}
+      {guides.map((guide, index) => (
+        <span
+          key={index}
+          className={guide === 'line' ? 'tree__guide' : 'tree__guide tree__guide--blank'}
+        />
+      ))}
       <span className={last ? 'tree__elbow tree__elbow--last' : 'tree__elbow'} />
     </span>
   );
@@ -111,6 +126,8 @@ export interface TreeRowProps {
   depth: number;
   /** 同级最后一项：决定引导线是否收尾。 */
   last: boolean;
+  /** 各祖先层是否还有后续兄弟：决定祖先竖线是否继续画。 */
+  trails?: TreeTrails;
   /** 文件夹才是可展开的；文件传 undefined。 */
   expanded?: boolean;
   selected?: boolean;
@@ -133,6 +150,7 @@ export function TreeRow({
   node,
   depth,
   last,
+  trails,
   expanded,
   selected,
   opened,
@@ -157,7 +175,7 @@ export function TreeRow({
         title={node.name}
         onClick={onActivate}
       >
-        <TreeIndent depth={depth} last={last} />
+        <TreeIndent depth={depth} last={last} trails={trails} />
         <TreeCaret expanded={isFolder ? expanded : undefined} />
         {isFolder ? <FolderGlyph open={expanded === true} /> : <FileGlyph extension={node.extension} />}
         <span className="tree__name">{node.name}</span>

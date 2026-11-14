@@ -23,21 +23,25 @@ import { useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 import type { ResourceNodeState } from '../state/types';
 import { FolderGlyph, TreeRow } from './FileTreeRow';
+import { descend, type TreeTrails } from './tree-trails';
 
 /**
  * 一层的兄弟节点列表。
  *
  * `depth` 1 = 项目根的直接子项（箭头/图标列右移一级），依次递归；
- * `last` 让同层最后一项的引导线收尾，避免下方拖着一条悬空竖线。
+ * `last` 让同层最后一项的引导线收尾，避免下方拖着一条悬空竖线；
+ * `trails` 记录各祖先层是否还有后续兄弟，末项祖先的后代不再画那条竖线。
  */
 function TreeLevel({
   projectId,
   nodes,
   depth,
+  trails,
 }: {
   projectId: string;
   nodes: readonly ResourceNodeState[];
   depth: number;
+  trails: TreeTrails;
 }) {
   return (
     <ul className="tree__children">
@@ -48,6 +52,7 @@ function TreeLevel({
           node={node}
           depth={depth}
           last={index === nodes.length - 1}
+          trails={trails}
         />
       ))}
     </ul>
@@ -59,15 +64,19 @@ function TreeItem({
   node,
   depth,
   last,
+  trails,
 }: {
   projectId: string;
   node: ResourceNodeState;
   depth: number;
   last: boolean;
+  trails: TreeTrails;
 }) {
   const { state, dispatch } = useWorkspace();
   const actions = useDocumentActions();
   const quick = useQuickFile();
+  // 子层要继承"我这一列是否还有后续兄弟"
+  const childTrails = descend(trails, last);
 
   if (node.kind === 'folder') {
     const expanded = state.expandedByProject[projectId]?.[node.id] ?? false;
@@ -76,12 +85,13 @@ function TreeItem({
         node={node}
         depth={depth}
         last={last}
+        trails={trails}
         expanded={expanded}
         onActivate={() => dispatch({ type: 'TOGGLE_PROJECT_NODE', projectId, path: node.id })}
       >
         {/* 折叠时整棵后代都不渲染：不是靠 CSS 隐藏 */}
         {expanded && node.children && node.children.length > 0 && (
-          <TreeLevel projectId={projectId} nodes={node.children} depth={depth + 1} />
+          <TreeLevel projectId={projectId} nodes={node.children} depth={depth + 1} trails={childTrails} />
         )}
       </TreeRow>
     );
@@ -96,6 +106,7 @@ function TreeItem({
       node={node}
       depth={depth}
       last={last}
+      trails={trails}
       selected={selected}
       opened={Boolean(tab)}
       dirty={tab?.dirty ?? false}
@@ -173,7 +184,7 @@ function ProjectSection({ project }: { project: ProjectSummary }) {
             <p className="project__meta">该项目下没有可编辑的文本文件</p>
           )}
           {ready && nodes.length > 0 && (
-            <TreeLevel projectId={project.projectId} nodes={nodes} depth={1} />
+            <TreeLevel projectId={project.projectId} nodes={nodes} depth={1} trails={[]} />
           )}
           <p className="project__meta">
             {ready ? `${fileCount} 个文件` : '磁盘访问已被拒绝'}

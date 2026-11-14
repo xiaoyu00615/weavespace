@@ -15,9 +15,20 @@ import { useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
 import type { ResourceNodeState } from '../state/types';
 import { TreeRow } from './FileTreeRow';
+import { descend, type TreeTrails } from './tree-trails';
 
 /** 文件行：点击后由动作层决定「演示读取」还是「经 Core 打开」。 */
-function FileItem({ node, depth, last }: { node: ResourceNodeState; depth: number; last: boolean }) {
+function FileItem({
+  node,
+  depth,
+  last,
+  trails,
+}: {
+  node: ResourceNodeState;
+  depth: number;
+  last: boolean;
+  trails: TreeTrails;
+}) {
   const { state } = useWorkspace();
   const actions = useDocumentActions();
   const quick = useQuickFile();
@@ -30,6 +41,7 @@ function FileItem({ node, depth, last }: { node: ResourceNodeState; depth: numbe
       node={node}
       depth={depth}
       last={last}
+      trails={trails}
       selected={selected}
       opened={Boolean(tab)}
       dirty={tab?.dirty ?? false}
@@ -42,7 +54,17 @@ function FileItem({ node, depth, last }: { node: ResourceNodeState; depth: numbe
   );
 }
 
-function FolderItem({ node, depth, last }: { node: ResourceNodeState; depth: number; last: boolean }) {
+function FolderItem({
+  node,
+  depth,
+  last,
+  trails,
+}: {
+  node: ResourceNodeState;
+  depth: number;
+  last: boolean;
+  trails: TreeTrails;
+}) {
   const { state, dispatch } = useWorkspace();
   const expanded = state.expanded[node.id] ?? false;
 
@@ -51,25 +73,46 @@ function FolderItem({ node, depth, last }: { node: ResourceNodeState; depth: num
       node={node}
       depth={depth}
       last={last}
+      trails={trails}
       expanded={expanded}
       onActivate={() => dispatch({ type: 'TOGGLE_NODE', path: node.id })}
     >
-      {/* 折叠时后代整棵不渲染 */}
+      {/* 折叠时后代整棵不渲染；子层继承"我这一列是否还有后续兄弟" */}
       {expanded && node.children && node.children.length > 0 && (
-        <TreeLevel nodes={node.children} depth={depth + 1} />
+        <TreeLevel nodes={node.children} depth={depth + 1} trails={descend(trails, last)} />
       )}
     </TreeRow>
   );
 }
 
-function TreeLevel({ nodes, depth }: { nodes: readonly ResourceNodeState[]; depth: number }) {
+function TreeLevel({
+  nodes,
+  depth,
+  trails,
+}: {
+  nodes: readonly ResourceNodeState[];
+  depth: number;
+  trails: TreeTrails;
+}) {
   return (
     <ul className="tree__children">
       {nodes.map((node, index) =>
         node.kind === 'folder' ? (
-          <FolderItem key={node.id} node={node} depth={depth} last={index === nodes.length - 1} />
+          <FolderItem
+            key={node.id}
+            node={node}
+            depth={depth}
+            last={index === nodes.length - 1}
+            trails={trails}
+          />
         ) : (
-          <FileItem key={node.id} node={node} depth={depth} last={index === nodes.length - 1} />
+          <FileItem
+            key={node.id}
+            node={node}
+            depth={depth}
+            last={index === nodes.length - 1}
+            trails={trails}
+          />
         ),
       )}
     </ul>
@@ -138,8 +181,15 @@ export function ProjectTree() {
       </header>
 
       <ul className="tree__root">
-        <TreeRow node={rootNode} depth={0} last expanded={rootOpen} onActivate={() => setRootOpen((v) => !v)}>
-          {rootOpen && nodes.length > 0 && <TreeLevel nodes={nodes} depth={1} />}
+        <TreeRow
+          node={rootNode}
+          depth={0}
+          last
+          trails={[]}
+          expanded={rootOpen}
+          onActivate={() => setRootOpen((v) => !v)}
+        >
+          {rootOpen && nodes.length > 0 && <TreeLevel nodes={nodes} depth={1} trails={[]} />}
         </TreeRow>
       </ul>
 

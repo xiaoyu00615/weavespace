@@ -260,6 +260,11 @@ button {
   border-left: 1px solid var(--tree-line);
 }
 
+/* 祖先已是本层末项（└）时，后代这一列只占位不画线：宽度不变，缩进与图标列不位移 */
+.tree__guide--blank::before {
+  content: none;
+}
+
 /* └：最后一项只画上半段竖线 + 一截横线，下方不留悬空线 */
 .tree__elbow::after {
   content: '';
