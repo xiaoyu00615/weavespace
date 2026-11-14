@@ -65,7 +65,7 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 | GET | `/api/projects` | Multi：`{projects:[{projectId,name,status,reason?}]}`；Legacy：404 |
 | GET | `/api/resources` | 授权范围内的可编辑文本文件树；Legacy 无需参数，Multi 必须 `?projectId=` |
 | POST | `/api/open` | Legacy `{path}` / Multi `{projectId,path}` → 经 CommandBus 建立会话 |
-| GET | `/api/document` | `?sessionId&viewId` → 按会话实际资源重新授权后读取正文 |
+| GET | `/api/document` | `?sessionId&viewId` → **G-DRAFT**：按 actor + 会话 + 视图归属读回内存正文（不碰磁盘） |
 | POST | `/api/edit` | `{sessionId, buffer, expectedVersion?}` → `document.applyEdit` |
 | POST | `/api/save` | `{sessionId, expectedVersion}` → `document.save` 条件保存 |
 | POST | `/api/close` | `{sessionId, viewId}` → 关闭视图（未保存则拒绝） |
@@ -90,6 +90,8 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 | **未获授权的项目** | 403 | `REJECTED` + `ERR_PERMISSION_DENIED` |
 | **会话已失效且项目仍不可用** | 409 / 503 | `REJECTED` + `ERR_SESSION_STALE` / `ERR_PROJECT_UNAVAILABLE` |
 | **Multi 会话接口缺 `viewId`** | 400 | `REJECTED` + `ERR_COMMAND_INVALID` |
+| **项目正在移除（屏障内）** | 409 | `REJECTED` + `ERR_PROJECT_QUIESCING` |
+| **移除前置条件不满足 / 并发变更** | 409 | `REJECTED` + `ERR_PROJECT_BUSY` |
 
 Multi 下项目级失败（根失效/会话失效）的 `/api/save` 响应**省略 `document.content`**：
 只返回 `dirty` / `baseVersion` / `revision` / `stale` 等状态，避免把草稿正文复制进错误响应；
@@ -102,6 +104,26 @@ Multi 下项目级失败（根失效/会话失效）的 `/api/save` 响应**省�
 未预期异常不再回传原始 `message`（Storage 的根错误消息含本机绝对路径）：
 已知领域错误码按语义映射状态并使用固定文案，未知异常收敛为 `500 / ERR_COMMAND_INTERNAL / 内部错误`。
 因此响应体中不会出现 `rootDir`、`canonicalRoot` 或任何盘符路径。
+
+## 托管模式（UX-02B-01）
+
+`createShellServer({ managed })` 把项目权威交给 `src/project-runtime.ts` 的 `ProjectRuntime`：
+Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它持有，Host 只负责使用，
+**不存在第二套项目表**。
+
+- **没有 CLI 入口**：`main.ts` 不提供该参数，托管模式只能由测试/内部接线注入；
+  真实持久化（配置 v2 / 墓碑 / 崩溃恢复）属于 UX-02B-02，在那之前不存在生产可达的撤销路径。
+- `ProjectStore.durability === 'memory'` 时 `removeProject()` 直接拒绝，
+  只有显式 `allowEphemeralRevocation: true`（仅测试）才执行。
+- 项目级屏障：`QUIESCING` 期间所有 G-DISK 操作 409 `ERR_PROJECT_QUIESCING`；
+  每个已准入操作计入 `activeDiskOps`，屏障 `drain` 到 0 后再由 Host 复检
+  （活动 View / dirty / SAVING / OUTCOME_UNKNOWN / CONFLICT / FAILED）。
+  复检不通过即 abort：Provider、grant、正文、revision 一律不动。
+- **G-DRAFT 与 G-DISK 分离**：`GET /api/document` 与 `POST /api/close` 只凭
+  actor + session + viewId，不查项目 grant —— 项目被撤销或根失效后，
+  磁盘权限已收回，但用户仍可取回自己的内存草稿、关闭自己的视图；
+  `POST /api/close` 的 dirty 保护保持不变。
+- 撤销只动内存与 Store：**不删除、不移动任何项目目录内容**。
 
 ## 安全边界
 

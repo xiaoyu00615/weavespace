@@ -187,6 +187,31 @@ export interface DocumentService {
   markProjectStale(projectId: string, reason: string): number;
   /** 标记单个会话失效；仅用于 Host 已经判定该会话的磁盘门禁失败时。 */
   markSessionStale(sessionId: string, reason: string): boolean;
+  /**
+   * 项目级会话概览（只读，UX-02B-01）。
+   *
+   * 供 Host 的移除门禁使用：**唯一**数据来源是本服务内部的 `sessions`/`views`，
+   * 因此不需要第二套"打开标签数"记账，也不采信客户端上报。
+   * 只统计，不改变任何会话状态（不置 stale、不动 dirty/revision）。
+   */
+  projectSessionStats(projectId: string): ProjectSessionStats;
+}
+
+/** 项目级会话概览：每一项都来自 Host 内存，与六态状态机同源。 */
+export interface ProjectSessionStats {
+  /** 该项目的会话总数（含无 View 的历史会话）。 */
+  readonly sessions: number;
+  /** 仍有活动 View 的会话数（>0 表示用户还开着标签/窗格）。 */
+  readonly activeViews: number;
+  readonly dirty: number;
+  /** `state === 'SAVING'`。 */
+  readonly saving: number;
+  /** `state === 'OUTCOME_UNKNOWN'`。 */
+  readonly unknown: number;
+  /** `state` 为 `CONFLICT` 或 `FAILED`：上次落盘没有干净结论。 */
+  readonly conflicted: number;
+  /** 无 View、不 dirty、`state === 'CLEAN'`：不阻止项目移除。 */
+  readonly cleanIdle: number;
 }
 
 export interface DocumentEvent {
@@ -765,6 +790,30 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
         detail: { reason, projectId: session.projectId, dirty: session.dirty, revision: session.revision },
       });
       return true;
+    },
+
+    projectSessionStats(projectId: string): ProjectSessionStats {
+      const stats = {
+        sessions: 0,
+        activeViews: 0,
+        dirty: 0,
+        saving: 0,
+        unknown: 0,
+        conflicted: 0,
+        cleanIdle: 0,
+      };
+      for (const session of sessions.values()) {
+        if (session.projectId !== projectId) continue;
+        stats.sessions += 1;
+        const hasView = session.views.size > 0;
+        if (hasView) stats.activeViews += 1;
+        if (session.dirty) stats.dirty += 1;
+        if (session.state === 'SAVING') stats.saving += 1;
+        if (session.state === 'OUTCOME_UNKNOWN') stats.unknown += 1;
+        if (session.state === 'CONFLICT' || session.state === 'FAILED') stats.conflicted += 1;
+        if (!hasView && !session.dirty && session.state === 'CLEAN') stats.cleanIdle += 1;
+      }
+      return Object.freeze(stats);
     },
 
     drainEvents() {

@@ -9,6 +9,7 @@ export {
   type DocumentService,
   type DocumentServiceOptions,
   type OpenSessionInput,
+  type ProjectSessionStats,
   type ReconcileResult,
   type Serializer,
   type ViewHandle,

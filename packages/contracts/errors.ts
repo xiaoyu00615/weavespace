@@ -57,6 +57,16 @@ export const ERROR_CODES = {
   /** 多项目（G1）：项目根互相嵌套。 */
   ERR_PROJECT_NESTED_ROOT: 'ERR_PROJECT_NESTED_ROOT',
   /**
+   * 多项目（UX-02B）：该项目正处在移除屏障内（QUIESCING/REMOVING），
+   * 期间所有 G-DISK 操作一律拒绝，防止把新的字节写进一个正在撤销的项目。
+   */
+  ERR_PROJECT_QUIESCING: 'ERR_PROJECT_QUIESCING',
+  /**
+   * 多项目（UX-02B）：项目级互斥未获取，或移除前置条件不满足
+   * （仍有活动 View / dirty / SAVING / OUTCOME_UNKNOWN / CONFLICT / FAILED / 在途磁盘操作）。
+   */
+  ERR_PROJECT_BUSY: 'ERR_PROJECT_BUSY',
+  /**
    * 多项目（G1）：会话已失效（所属项目根不可用），磁盘访问被拒绝。
    * 草稿仍保留，可经授权读取；不得自动迁移或丢弃。
    */
