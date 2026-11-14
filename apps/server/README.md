@@ -10,9 +10,31 @@ node apps/server/src/main.ts <项目根目录> [端口]                    # Leg
 node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi 多项目
 ```
 
-- 只绑定 `127.0.0.1`；端口默认 `5177`。
+- 只绑定 `127.0.0.1`；端口优先取命令行，其次 `WS_PORT`，默认 `5177`。端口可省略
+  （`--workspace <file>` 后不写端口即用默认端口，UX-00 起支持）。
 - 项目根 / 工作区配置**只能**来自启动参数，请求无法指定；同时给出两者直接拒绝
   （`ERR_PROJECT_CONFIG_INVALID`）。
+
+### 启动参数规则（UX-00）
+
+参数解析在 `src/startup-args.ts`（纯函数，`tests/suites/39-*` 覆盖），`main.ts` 只做
+「解析 → 建服务」。全部非法参数都以 `exit 2` + 单行说明结束，不打印堆栈：
+
+| 输入 | 结果 |
+|---|---|
+| `<root>` / `<root> <port>` | Legacy |
+| `--workspace <file>` / `--workspace=<file>` | Multi，端口可省略 |
+| `<port> --workspace <file>` | Multi（端口可写在选项前） |
+| `--workspace <file> <port>` | Multi |
+| 无参数 | `ERR_STARTUP_NO_TARGET` + 用法 |
+| `--workspace` 缺值 / 空值 / 后面跟着另一个选项 | `ERR_STARTUP_WORKSPACE_MISSING_VALUE` |
+| 同时给项目根与 `--workspace`、重复指定 `--workspace`、Multi 下多个位置参数 | `ERR_STARTUP_MODE_CONFLICT` |
+| 未知 `--xxx` 选项 | `ERR_STARTUP_UNKNOWN_OPTION` |
+| 端口非整数 / 越界（`>65535`） | `ERR_STARTUP_INVALID_PORT` |
+
+端口允许 `0`（交给系统分配临时端口，便于并行起实例）。`--workspace` 出现的**次数**决定
+是否 Multi，与是否带端口无关——这正是 UX-00 修复的缺陷：此前不带端口时 `--workspace`
+会被静默丢弃并因"缺少项目根"退出。
 - **Multi 模式的身份命名空间**（G1-04）：
   `providerId = local:<projectId>`、`resourceId = doc:<projectId>/<relativePath>`；
   Legacy 保持 `local` / `doc:<relativePath>` 不变。
