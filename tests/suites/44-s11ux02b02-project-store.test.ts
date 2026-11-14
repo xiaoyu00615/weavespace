@@ -33,6 +33,7 @@ import {
 } from '../../apps/server/src/project-runtime.ts';
 import { createDocumentService } from '../../packages/document/index.ts';
 import { createPermissionService, type PermissionService } from '../../packages/permission/index.ts';
+import { inspectProjectRoot } from '../../packages/project-registry/index.ts';
 import { createShellServer } from '../../apps/server/src/server.ts';
 
 /* ------------------------------- 基础设施 ------------------------------- */
@@ -120,8 +121,29 @@ function runtimeOver(
     document: createDocumentService(),
     permission,
     store,
+    // 授权凭据是发 G-DISK 的唯一依据（P0-04）：测试显式声明"已由选择器确认"
+    grantSource: 'os-dialog',
   });
   return { runtime, permission, store, state: () => store.loadState() };
+}
+
+/**
+ * 写入一条**授权凭据完整**的记录（等价于 02B-03 的选择器确认）。
+ * 只有这种记录才能在 Runtime 装载时换来 G-DISK 授权。
+ */
+async function trustedAdd(
+  store: FileProjectStore,
+  input: { projectId: string; name: string; rootDir: string; opId: string },
+): Promise<void> {
+  const inspected = inspectProjectRoot(input.rootDir);
+  assert.equal(inspected.status, 'READY', `测试根必须可用: ${input.rootDir}`);
+  await store.commitAdd({
+    ...input,
+    canonicalRoot: inspected.canonicalRoot,
+    rootToken: inspected.rootToken,
+    grantedAt: new Date().toISOString(),
+    grantSource: 'os-dialog',
+  });
 }
 
 function grantsFor(permission: PermissionService, projectId: string): number {
@@ -559,7 +581,7 @@ test('S-15 R-15 墓碑确认未写入（0 字节）→ 零变更、可重试', a
   try {
     const plan: FaultPlan = {};
     const store = open(dir, ioWith(plan));
-    await store.commitAdd({ projectId: 'a', name: 'A', rootDir, canonicalRoot: rootDir, opId: 'op-add' });
+    await trustedAdd(store, { projectId: 'a', name: 'A', rootDir, opId: 'op-add' });
 
     const permission = createPermissionService([]);
     const ctx = runtimeOver(store, permission);
@@ -590,7 +612,7 @@ test('S-16 R-15b 墓碑已写入但 fsync 报错 → 核对日志后按已撤销
   try {
     const plan: FaultPlan = {};
     const store = open(dir, ioWith(plan));
-    await store.commitAdd({ projectId: 'a', name: 'A', rootDir, canonicalRoot: rootDir, opId: 'op-add' });
+    await trustedAdd(store, { projectId: 'a', name: 'A', rootDir, opId: 'op-add' });
 
     const permission = createPermissionService([]);
     const ctx = runtimeOver(store, permission);
@@ -621,7 +643,7 @@ test('S-17 R-16 墓碑成功、配置写失败 → 立即不可访问，重启�
   try {
     const plan: FaultPlan = {};
     const store = open(dir, ioWith(plan));
-    await store.commitAdd({ projectId: 'a', name: 'A', rootDir, canonicalRoot: rootDir, opId: 'op-add' });
+    await trustedAdd(store, { projectId: 'a', name: 'A', rootDir, opId: 'op-add' });
 
     const permission = createPermissionService([]);
     const ctx = runtimeOver(store, permission);
@@ -657,7 +679,7 @@ test('S-18 配置写入成功但运行期提交异常 → 黑名单拒盘且 DEG
   const rootDir = await mkdtemp(join(tmpdir(), 'ws-store-root-'));
   try {
     const store = open(dir);
-    await store.commitAdd({ projectId: 'a', name: 'A', rootDir, canonicalRoot: rootDir, opId: 'op-add' });
+    await trustedAdd(store, { projectId: 'a', name: 'A', rootDir, opId: 'op-add' });
 
     // revoke 抛错：模拟 §4.4 "墓碑已有、COMMIT 抛错"
     let remainingFailures = 1;
@@ -936,7 +958,7 @@ test('S-27 日志 fsync 报错但行已写入 → 核对尾部命中，按已撤
   try {
     const plan: FaultPlan = {};
     const store = open(dir, ioWith(plan));
-    await store.commitAdd({ projectId: 'a', name: 'A', rootDir, canonicalRoot: rootDir, opId: 'op-add' });
+    await trustedAdd(store, { projectId: 'a', name: 'A', rootDir, opId: 'op-add' });
 
     const permission = createPermissionService([]);
     const ctx = runtimeOver(store, permission);
@@ -961,8 +983,8 @@ test('S-28 项目 A 的撤销失败不影响项目 B 的权限与可读性', asy
   try {
     const plan: FaultPlan = {};
     const store = open(dir, ioWith(plan));
-    await store.commitAdd({ projectId: 'a', name: 'A', rootDir: rootA, canonicalRoot: rootA, opId: 'op-a' });
-    await store.commitAdd({ projectId: 'b', name: 'B', rootDir: rootB, canonicalRoot: rootB, opId: 'op-b' });
+    await trustedAdd(store, { projectId: 'a', name: 'A', rootDir: rootA, opId: 'op-a' });
+    await trustedAdd(store, { projectId: 'b', name: 'B', rootDir: rootB, opId: 'op-b' });
 
     const permission = createPermissionService([]);
     const ctx = runtimeOver(store, permission);

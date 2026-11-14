@@ -167,6 +167,20 @@ Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它�
   有变更历史 → 全拒；日志链断裂 → 全拒；墓碑领先配置一个序号 → 视为已知滞后，按墓碑补齐。
 - **`opId` 查询**（`store.queryOp`）：只认 `createdByOp` / `revoked[].opId` / 可信墓碑行；
   证据缺失即 `unknown`，不按 `projectId` 是否存在推断。
+### 授权与准入加固（UX-02B-02-R1）
+
+- **全局拒盘**：`assertUsable` / `withDiskOp` 每次都重新读取 Store 的 `diskTrusted`；
+  日志在运行期被删除/截断/断裂后，**所有**项目的 G-DISK 一律 503
+  `ERR_STORE_RESTRICTED`，已发出的 grant 不能成为绕过门禁的路径；G-DRAFT 不受影响。
+- **id 账本**：Runtime 启动时继承 `store.issuedIds()`（含已撤销），不再只从活动项目重建；
+  重启后同名目录必然得到新 id。
+- **写前复核**：add/rename/revoke 在提交前重新校验日志——缺失/断裂/空文件（且有历史事务）
+  一律拒绝并进入 `RECOVERY_RESTRICTED`，绝不补写一条伪造的新链。
+- **授权凭据**：只有 `grantSource === 'os-dialog'` 且 `grantedAt`/`canonicalRoot`/`rootToken`
+  齐备、且与当前根身份一致的记录才发 G-DISK；缺失或 `unspecified` 一律 UNAVAILABLE。
+  本轮没有任何生产路径能产生可信记录（选择器属于 02B-03）。
+- **加载期根独立性**：配置里的重复根/嵌套根按配置顺序只授权第一个，其余降级为
+  UNAVAILABLE。
 - **诚实的能力声明**：Windows 上 `fsync(文件)` + `rename` 只能做到"尽可能原子"，
   目录项无法 fsync，因此**不保证断电后 rename 一定可见**；单实例锁只防同机双写。
   上述两点是已知限制，不是"已保证"。

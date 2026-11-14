@@ -47,10 +47,18 @@ export interface FileStoreOptions {
   readonly clock?: () => Date;
 }
 
+/**
+ * 允许落盘的授权来源；只有 `os-dialog`（本机选择器）会被 Runtime 当作可信凭据。
+ * 未知来源一律拒绝写入，避免"某种字符串"被误读成授权。
+ */
+const KNOWN_GRANT_SOURCES: readonly string[] = ['os-dialog', 'unspecified'];
+
 export interface FileProjectStore {
   readonly durability: 'durable';
   load(): readonly StoredProjectRecord[];
   loadState(): StoreLoadState;
+  /** 历史签发集合（含已撤销）：Runtime 重启时继承，保证 id 不复用。 */
+  issuedIds(): readonly string[];
   commitAdd(entry: StoredProjectRecord & { readonly opId: string }): Promise<void>;
   commitRename(input: { projectId: string; name: string; opId: string }): Promise<void>;
   commitRevoke(input: { projectId: string; opId: string }): Promise<StoreRevokeReceipt>;
@@ -338,10 +346,57 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     if (closed) throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, 'Store 已关闭');
   }
 
+  /**
+   * 写入前的日志可信性复核（P0-03）。
+   *
+   * 加载时可信不代表写入时仍可信：进程运行期间日志可能被删除、截断或改写。
+   * 先复核再提交，避免"用一条伪造的完整链"覆盖掉丢失的撤销历史。
+   *
+   * 只有**从未发生过事务**（`commitSeq === 0` 且无撤销）时，日志缺失才等价于
+   * 首次初始化，允许补写日志头；一旦有历史，缺失/断裂一律 fail-closed。
+   */
+  function revalidateLog(): LogReadResult {
+    let log = readLog(io.readText(LOG_PATH));
+    const hasHistory = current.commitSeq > 0 || current.revoked.length > 0;
+    const emptyFile = log.status === 'ok' && !log.hasHeader;
+    const lost = log.status === 'missing' && hasHistory;
+    const corrupt = log.status === 'broken' || (emptyFile && hasHistory);
+
+    if (lost || corrupt) {
+      state = {
+        ...state,
+        integrity: 'RECOVERY_RESTRICTED',
+        diskTrusted: false,
+        mutationsAllowed: false,
+        notes: [...state.notes, '写入前复核失败：撤销日志缺失或不可信，拒绝继续提交'],
+      };
+      throw domainError(ERROR_CODES.ERR_STORE_RESTRICTED, '撤销日志缺失或不可信，拒绝写入（需人工修复）');
+    }
+
+    if (log.status === 'missing' || emptyFile) {
+      materializeLogHeader();
+      log = { ...log, status: 'ok', hasHeader: true };
+    }
+
+    // 日志领先配置超过一个序号：无法解释为"上一次移除的已知滞后"，按不一致处理
+    if (log.lastSeq > current.commitSeq + 1) {
+      state = {
+        ...state,
+        integrity: 'RECOVERY_RESTRICTED',
+        diskTrusted: false,
+        mutationsAllowed: false,
+        notes: [...state.notes, '日志序号与配置不一致，拒绝继续提交'],
+      };
+      throw domainError(ERROR_CODES.ERR_STORE_RESTRICTED, '撤销日志与配置序号不一致，拒绝写入');
+    }
+    return log;
+  }
+
   function assertMutationsAllowed(): void {
     if (!state.mutationsAllowed || !state.diskTrusted) {
       throw domainError(ERROR_CODES.ERR_STORE_RESTRICTED, '存储处于受限状态，禁止变更（需重启或人工修复）');
     }
+    revalidateLog();
   }
 
   function assertProjectKnown(projectId: string): ConfigState['projects'][number] {
@@ -370,6 +425,10 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     async commitAdd(entry) {
       assertOpen();
       assertMutationsAllowed();
+      if (entry.grantSource !== undefined && !KNOWN_GRANT_SOURCES.includes(entry.grantSource)) {
+        // 非法来源不得落盘：它能被误读成"某种授权"，却永远不该换来权限
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, `非法的授权来源: ${entry.grantSource}`);
+      }
       if (current.issuedIds.includes(entry.projectId) || current.projects.some((p) => p.projectId === entry.projectId)) {
         // id 一旦签发（含已撤销）就永不复用；调用方必须重新签发
         throw domainError(ERROR_CODES.ERR_STORE_ID_REUSED, `projectId 已签发过，不得复用: ${entry.projectId}`);
@@ -422,8 +481,9 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       assertMutationsAllowed();
       assertProjectKnown(input.projectId);
 
-      const logNow: LogReadResult = readLog(io.readText(LOG_PATH));
-      const seq = Math.max(current.commitSeq, logNow.status === 'ok' ? logNow.lastSeq : 0) + 1;
+      // 复核在 assertMutationsAllowed 里已完成；这里拿到的是"已补头、序号自洽"的状态
+      const logNow: LogReadResult = revalidateLog();
+      const seq = Math.max(current.commitSeq, logNow.lastSeq) + 1;
 
       // ---- step 1：墓碑 + fsync（提交点）----
       try {
@@ -482,6 +542,10 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         };
         return { configPersisted: false };
       }
+    },
+
+    issuedIds() {
+      return current.issuedIds;
     },
 
     queryOp(opId) {

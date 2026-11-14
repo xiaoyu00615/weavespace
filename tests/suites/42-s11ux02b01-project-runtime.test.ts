@@ -28,7 +28,11 @@ import {
   type ProjectSessionStats,
 } from '../../packages/document/index.ts';
 import { createPermissionService, type PermissionService } from '../../packages/permission/index.ts';
-import { createProjectRegistry, type WorkspaceConfig } from '../../packages/project-registry/index.ts';
+import {
+  createProjectRegistry,
+  inspectProjectRoot,
+  type WorkspaceConfig,
+} from '../../packages/project-registry/index.ts';
 import { createLocalProvider, type StorageProvider } from '../../packages/storage/index.ts';
 
 interface ApiResponse {
@@ -57,7 +61,9 @@ class FakeStore implements ProjectStore {
 
   async commitAdd(entry: StoredProject & { opId: string }): Promise<void> {
     this.calls.push(`add:${entry.projectId}:${entry.opId}`);
-    this.projects.push({ projectId: entry.projectId, name: entry.name, rootDir: entry.rootDir });
+    // 保留授权凭据：真实 Store 会把它们落盘，fake 必须等价，否则装载后无法判定授权
+    const { opId: _opId, ...rest } = entry;
+    this.projects.push({ ...rest });
   }
 
   async commitRename(input: { projectId: string; name: string; opId: string }): Promise<void> {
@@ -110,7 +116,20 @@ async function withManaged(fn: (ctx: ManagedCtx) => Promise<void>, options: Mana
   await writeFile(join(rootA, 'docs', 'only-a.md'), '# only A\n', 'utf8');
   await writeFile(join(rootB, 'a.md'), '# B\n', 'utf8');
 
-  const store = new FakeStore([{ projectId: 'project-a', name: '项目 A', rootDir: rootA }]);
+  // 授权凭据是装载期发放 G-DISK 的唯一依据（P0-04）：测试必须给出完整可信记录
+  const inspectedA = inspectProjectRoot(rootA);
+  assert.equal(inspectedA.status, 'READY');
+  const store = new FakeStore([
+    {
+      projectId: 'project-a',
+      name: '项目 A',
+      rootDir: rootA,
+      canonicalRoot: inspectedA.canonicalRoot,
+      rootToken: inspectedA.rootToken,
+      grantedAt: new Date().toISOString(),
+      grantSource: 'os-dialog',
+    },
+  ]);
   let runtime: ProjectRuntime | undefined;
   let documentRef: DocumentService | undefined;
   let permissionRef: PermissionService | undefined;
@@ -125,6 +144,7 @@ async function withManaged(fn: (ctx: ManagedCtx) => Promise<void>, options: Mana
         runtime = createProjectRuntime({
           ...deps,
           store,
+          grantSource: 'os-dialog',
           allowEphemeralRevocation: true,
           ...(options.providerFactory ? { providerFactory: options.providerFactory } : {}),
         });
@@ -356,12 +376,25 @@ test('D-A-06 [UNIT] SAVING / OUTCOME_UNKNOWN / CONFLICT / DIRTY 各自单独阻�
         markProjectStale: () => 0,
       } as unknown as DocumentService;
       const permission = createPermissionService([]);
-      const store = new FakeStore([{ projectId: 'p', name: 'P', rootDir: root }]);
+      const inspected = inspectProjectRoot(root);
+      assert.equal(inspected.status, 'READY');
+      const store = new FakeStore([
+        {
+          projectId: 'p',
+          name: 'P',
+          rootDir: root,
+          canonicalRoot: inspected.canonicalRoot,
+          rootToken: inspected.rootToken,
+          grantedAt: new Date().toISOString(),
+          grantSource: 'os-dialog',
+        },
+      ]);
       const runtime = createProjectRuntime({
         actorId: 'local-user',
         document,
         permission,
         store,
+        grantSource: 'os-dialog',
         allowEphemeralRevocation: true,
       });
 

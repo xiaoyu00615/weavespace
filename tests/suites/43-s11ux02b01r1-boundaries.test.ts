@@ -31,7 +31,7 @@ import {
   type DocumentService,
 } from '../../packages/document/index.ts';
 import { createPermissionService, type PermissionService } from '../../packages/permission/index.ts';
-import { validateWorkspaceConfig } from '../../packages/project-registry/index.ts';
+import { inspectProjectRoot, validateWorkspaceConfig } from '../../packages/project-registry/index.ts';
 
 interface ApiResponse {
   status: number;
@@ -67,7 +67,8 @@ class ScriptedStore implements ProjectStore {
 
   async commitAdd(entry: StoredProject & { opId: string }): Promise<void> {
     this.calls.push(`add:${entry.projectId}`);
-    this.projects.push({ projectId: entry.projectId, name: entry.name, rootDir: entry.rootDir });
+    const { opId: _opId, ...rest } = entry;
+    this.projects.push({ ...rest });
   }
 
   async commitRename(input: { projectId: string; name: string; opId: string }): Promise<void> {
@@ -145,7 +146,21 @@ async function withManaged(fn: (ctx: ManagedCtx) => Promise<void>, options: Mana
   }
   await writeFile(join(rootA, 'a.md'), '# A\n', 'utf8');
 
-  const store = options.store ?? new ScriptedStore([{ projectId: 'project-a', name: '项目 A', rootDir: rootA }]);
+  const inspectedA = inspectProjectRoot(rootA);
+  assert.equal(inspectedA.status, 'READY');
+  const store =
+    options.store ??
+    new ScriptedStore([
+      {
+        projectId: 'project-a',
+        name: '项目 A',
+        rootDir: rootA,
+        canonicalRoot: inspectedA.canonicalRoot,
+        rootToken: inspectedA.rootToken,
+        grantedAt: new Date().toISOString(),
+        grantSource: 'os-dialog',
+      },
+    ]);
   let runtime: ProjectRuntime | undefined;
   let documentRef: DocumentService | undefined;
   let permissionRef: PermissionService | undefined;
@@ -156,7 +171,12 @@ async function withManaged(fn: (ctx: ManagedCtx) => Promise<void>, options: Mana
       create: (deps) => {
         documentRef = deps.document;
         permissionRef = deps.permission;
-        runtime = createProjectRuntime({ ...deps, store, allowEphemeralRevocation: true });
+        runtime = createProjectRuntime({
+          ...deps,
+          store,
+          grantSource: 'os-dialog',
+          allowEphemeralRevocation: true,
+        });
         return runtime;
       },
     },
@@ -315,12 +335,25 @@ test('R1-04 根不可用的项目仍占用其注册身份：同路径/父目录/
   await mkdir(child, { recursive: true });
   await writeFile(join(rootA, 'a.md'), '# A\n', 'utf8');
 
-  const store = new ScriptedStore([{ projectId: 'a', name: 'A', rootDir: rootA }]);
+  const inspectedRoot = inspectProjectRoot(rootA);
+  assert.equal(inspectedRoot.status, 'READY');
+  const store = new ScriptedStore([
+    {
+      projectId: 'a',
+      name: 'A',
+      rootDir: rootA,
+      canonicalRoot: inspectedRoot.canonicalRoot,
+      rootToken: inspectedRoot.rootToken,
+      grantedAt: new Date().toISOString(),
+      grantSource: 'os-dialog',
+    },
+  ]);
   const runtime = createProjectRuntime({
     actorId: 'local-user',
     document: createDocumentService(),
     permission: createPermissionService([]),
     store,
+    grantSource: 'os-dialog',
     allowEphemeralRevocation: true,
   });
 

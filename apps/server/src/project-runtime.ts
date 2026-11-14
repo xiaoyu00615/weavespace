@@ -96,6 +96,11 @@ export interface ProjectStore {
   loadState?(): StoreLoadState;
   /** `opId` 的最终结果（只读磁盘；证据缺失即 `unknown`）。 */
   queryOp?(opId: string): OpOutcome;
+  /**
+   * 已签发过的 id（含已撤销）。Runtime 启动时**必须**继承它，
+   * 否则重启后会把旧 id 当成"从未签发"而重新分配（P0-02）。
+   */
+  issuedIds?(): readonly string[];
   markDegraded?(reason: string): void;
   close?(): void;
 }
@@ -110,6 +115,17 @@ const TRUSTED_STORE_STATE: StoreLoadState = {
   commitSeq: 0,
   notes: [],
 };
+
+/**
+ * 唯一可信的授权来源。
+ *
+ * 02B-03 的本机选择器才会写出这个值；本轮没有任何生产路径能产生它，
+ * 因此"托管模式里出现可读项目"只可能来自测试注入或未来的选择器确认。
+ */
+export const TRUSTED_GRANT_SOURCE = 'os-dialog';
+
+/** 允许落盘的授权来源；其余一律视为非法配置（不进入可信集合）。 */
+const KNOWN_GRANT_SOURCES: readonly string[] = [TRUSTED_GRANT_SOURCE, 'unspecified'];
 
 export interface ProjectRuntimeDeps {
   actorId: string;
@@ -131,6 +147,14 @@ export interface ProjectRuntimeDeps {
   allowEphemeralRevocation?: boolean;
   /** 排空在途磁盘操作的等待上限；超时即 abort（零变更）。 */
   quiesceTimeoutMs?: number;
+  /**
+   * 本次运行期签发的授权来源。
+   *
+   * 缺省 `'unspecified'`：条目照常登记，但**不发放任何 G-DISK 授权**。
+   * 只有本机选择器（02B-03）确认过的 `'os-dialog'` 才会写入可信凭据。
+   * 这是防止"内存里加一个项目就等于授权"的最后一道口子。
+   */
+  grantSource?: string;
 }
 
 export interface RemoveOutcome {
@@ -264,6 +288,14 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
   const providers = new Map<string, StorageProvider>();
   /** 已签发过的 id（含已撤销）：永不复用。 */
   const issuedIds = new Set<string>();
+  /**
+   * 重启后先继承持久化的已签发 id（P0-02）。
+   *
+   * 只从"当前活动项目"重建会让已撤销的 id 看起来从未存在，重启后同名目录
+   * 会拿到同一个 id —— 旧会话、旧快照、旧墓碑都可能因此"碰巧命中"新项目。
+   * 这里**不猜测**：只认 Store 交出的账本，fake Store 没有该方法时退化为旧行为。
+   */
+  for (const id of deps.store.issuedIds?.() ?? []) issuedIds.add(id);
   /** 已撤销的记录，仅用于诊断与测试断言（不含路径）。 */
   const removed = new Set<string>();
   /**
@@ -296,6 +328,40 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
         { integrity: current.integrity, notes: current.notes },
       );
     }
+  }
+
+  /**
+   * 全局磁盘门禁（P0-01）：Store 的 `diskTrusted` 一旦为 false，**所有**项目都拒绝。
+   *
+   * 每次准入都重新读取（而不是只在启动时读一次）：运行期日志被删除/截断/断裂后，
+   * 已经发出的 grant 仍然存在，若只靠启动快照就会成为绕过门禁的路径。
+   */
+  function assertGlobalDiskTrust(): void {
+    if (refreshStoreState().diskTrusted) return;
+    throw domainError(
+      ERROR_CODES.ERR_STORE_RESTRICTED,
+      '工作区存储的撤销集合不可证，拒绝全部磁盘访问（草稿仍可读）',
+      { integrity: storeState.integrity },
+    );
+  }
+
+  /**
+   * 授权凭据是否完整可信（P0-04）。
+   *
+   * 只有本机选择器确认过的记录才允许发 G-DISK：`grantSource === 'os-dialog'`，
+   * 且 `grantedAt` / `canonicalRoot` / `rootToken` 齐备。缺任何一项都按"未授权"处理，
+   * 不允许用"看起来像项目"来替代授权证据（ADR-021 §5）。
+   */
+  function isTrustedGrant(record: StoredProject): boolean {
+    return (
+      record.grantSource === TRUSTED_GRANT_SOURCE &&
+      typeof record.grantedAt === 'string' &&
+      record.grantedAt !== '' &&
+      typeof record.canonicalRoot === 'string' &&
+      record.canonicalRoot !== '' &&
+      typeof record.rootToken === 'string' &&
+      record.rootToken !== ''
+    );
   }
 
   let revision = 0;
@@ -372,6 +438,14 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     providers.delete(`local:${entry.projectId}`);
   }
 
+  /** 无具体原因的拒盘（配置层面自相矛盾，例如两个项目抢同一个根）。 */
+  function denyEntry(entry: Entry): void {
+    entry.state = 'UNAVAILABLE';
+    entry.reason = undefined;
+    entry.handle = undefined;
+    providers.delete(`local:${entry.projectId}`);
+  }
+
   function unavailableError(projectId: string, reason: ProjectUnavailableReason | undefined): Error {
     return domainError(
       ERROR_CODES.ERR_PROJECT_UNAVAILABLE,
@@ -400,57 +474,48 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     deps.permission.revoke({ actorId: deps.actorId, action: 'write', scope: '', providerId });
   }
 
-  /** 构造一个 READY 条目；根不可用或存储不可信时返回 UNAVAILABLE 且**不建 Provider**。 */
-  function buildEntry(
-    input: { projectId: string; name: string; rootDir: string },
-    trustDisk = true,
-  ): Entry {
+  /**
+   * 构造一个条目：只有"存储可信 + 授权凭据完整 + 根可用"三者同时成立才是 ACTIVE。
+   *
+   * `UNAVAILABLE` 的三种来源必须区分清楚，但对外都只是"不能碰磁盘"：
+   * - 存储不可信（撤销集合不可证）→ P0-01 的全局拒盘；
+   * - 授权凭据缺失/来源不可信（P0-04）→ 没有证据就不发权限；
+   * - 根身份不可用 → 沿用原有的 reason。
+   */
+  function buildEntry(record: StoredProject, trustDisk = true): Entry {
+    const base = { projectId: record.projectId, name: record.name, rootDir: record.rootDir };
     if (!trustDisk) {
       // 撤销集合不可证：条目保留用于诊断与草稿救援，但不建 Provider、不发 grant
-      return {
-        projectId: input.projectId,
-        name: input.name,
-        rootDir: input.rootDir,
-        state: 'UNAVAILABLE',
-        reason: undefined,
-      };
+      return { ...base, state: 'UNAVAILABLE' };
     }
-    const inspection = inspect(input.rootDir);
+    if (!isTrustedGrant(record)) {
+      // 缺 grantSource/grantedAt/canonicalRoot/rootToken 或来源不可信：一律不发权限
+      return { ...base, state: 'UNAVAILABLE' };
+    }
+    const inspection = inspect(record.rootDir);
     if (inspection.status !== 'READY') {
-      return {
-        projectId: input.projectId,
-        name: input.name,
-        rootDir: input.rootDir,
-        state: 'UNAVAILABLE',
-        reason: inspection.reason,
-      };
+      return { ...base, state: 'UNAVAILABLE', reason: inspection.reason };
     }
     let provider: StorageProvider;
     try {
       provider = factory({
-        projectId: input.projectId,
-        providerId: `local:${input.projectId}`,
-        rootDir: input.rootDir,
+        projectId: record.projectId,
+        providerId: `local:${record.projectId}`,
+        rootDir: record.rootDir,
       });
     } catch {
-      return {
-        projectId: input.projectId,
-        name: input.name,
-        rootDir: input.rootDir,
-        state: 'UNAVAILABLE',
-        reason: 'IO_ERROR',
-      };
+      return { ...base, state: 'UNAVAILABLE', reason: 'IO_ERROR' };
     }
     const handle: ProjectHandle = {
-      projectId: input.projectId,
-      providerId: `local:${input.projectId}`,
-      rootDir: input.rootDir,
+      projectId: record.projectId,
+      providerId: `local:${record.projectId}`,
+      rootDir: record.rootDir,
       canonicalRoot: inspection.canonicalRoot,
       rootToken: inspection.rootToken,
       provider,
     };
     return {
-      ...input,
+      ...base,
       state: 'ACTIVE',
       canonicalRoot: inspection.canonicalRoot,
       rootToken: inspection.rootToken,
@@ -462,7 +527,8 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
   //
   // `diskTrusted === false` 时一律不建 Provider、不发 grant（ADR-022 §3.2）：
   // 配置里有这个项目不能证明它没被撤销过。
-  for (const stored of deps.store.load()) {
+  const loaded = deps.store.load();
+  for (const stored of loaded) {
     issuedIds.add(stored.projectId);
     const entry = buildEntry(stored, storeState.diskTrusted);
     entries.set(entry.projectId, entry);
@@ -476,6 +542,29 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
         downgrade(entry, 'ROOT_TOKEN_CHANGED');
       }
     }
+  }
+
+  // ---- 加载期根独立性（P1）----
+  //
+  // 配置可能自带重复根/嵌套根（v1 手写、v2 被外部改写）。运行期 add 有
+  // `assertRootAdmissible` 拦着，装载期却会全部授权 —— 那等于让"一个目录两个项目"
+  // 各自拿到读写权限。这里按**配置顺序**取第一个，后续冲突条目一律降级为 UNAVAILABLE。
+  const occupiedRoots: string[] = [];
+  for (const entry of entries.values()) {
+    if (entry.state !== 'ACTIVE' || !entry.handle) continue;
+    const root = entry.handle.canonicalRoot;
+    const conflicts = occupiedRoots.some(
+      (other) => foldForCompare(other) === foldForCompare(root) || isNested(other, root),
+    );
+    if (conflicts) {
+      // 不是"根变了"，而是"配置里两个项目抢同一个根"：不给 reason 以免误报原因
+      denyEntry(entry);
+      continue;
+    }
+    occupiedRoots.push(root);
+  }
+
+  for (const entry of entries.values()) {
     if (entry.state === 'ACTIVE' && entry.handle) {
       providers.set(entry.handle.providerId, entry.handle.provider);
       grantProject(entry.projectId);
@@ -587,6 +676,12 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     err: unknown,
   ): Error {
     const commitState = (err as { commitState?: StoreCommitState } | undefined)?.commitState;
+    // 提交前的可信性复核失败（日志缺失/断裂/无法核对）：零变更，
+    // 但**必须**把 Store 的受限结论原样抛给调用方，不能降级成"可重试的持久化失败"。
+    if ((err as { errorCode?: string } | undefined)?.errorCode === ERROR_CODES.ERR_STORE_RESTRICTED) {
+      entry.state = previousState;
+      return err instanceof Error ? err : domainError(ERROR_CODES.ERR_STORE_RESTRICTED, '存储处于受限状态');
+    }
     if (commitState === 'not-committed') {
       entry.state = previousState;
       return domainError(
@@ -628,6 +723,9 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     },
 
     assertUsable(projectId) {
+      // 全局可信优先：撤销集合一旦不可证，任何项目都不许再碰磁盘，
+      // 已发出的 grant 也不能成为绕过这道门的路径（ADR-022 §3.2）。
+      assertGlobalDiskTrust();
       const entry = entries.get(projectId);
       if (!entry) {
         throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
@@ -649,6 +747,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
 
     async withDiskOp(projectId, fn) {
       // 准入判定与计数在同一同步块内完成：不存在"判完到 +1 之间被插队"的窗口
+      assertGlobalDiskTrust();
       const entry = entries.get(projectId);
       if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
       if (entry.state === 'REVOKE_UNKNOWN' || diskDenied.has(projectId)) throw revokeUnknownError(projectId);
@@ -713,19 +812,27 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
 
       const projectId = issueProjectId(name);
       const opId = `op-${randomUUID()}`;
+      const grantSource = deps.grantSource ?? 'unspecified';
+      if (!KNOWN_GRANT_SOURCES.includes(grantSource)) {
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, `非法的授权来源: ${grantSource}`);
+      }
+      // 授权凭据与记录一起写入：缺任何一项，重启后该条目都不会拿到 G-DISK（P0-04）
+      const record: StoredProject = {
+        projectId,
+        name,
+        rootDir: inspection.literalRoot,
+        canonicalRoot: inspection.canonicalRoot,
+        rootToken: inspection.rootToken,
+        grantedAt: new Date().toISOString(),
+        grantSource,
+        createdByOp: opId,
+      };
       mutating = true;
       try {
         // 提交点：先持久化，再让内存生效（添加是"多给一份权限"，必须先有证据）。
         // 持久化失败时这里抛错，下面三行（entries / provider / grant）都不会执行。
-        await deps.store.commitAdd({
-          projectId,
-          name,
-          rootDir: inspection.literalRoot,
-          canonicalRoot: inspection.canonicalRoot,
-          rootToken: inspection.rootToken,
-          opId,
-        });
-        const entry = buildEntry({ projectId, name, rootDir: inspection.literalRoot }, refreshStoreState().diskTrusted);
+        await deps.store.commitAdd({ ...record, opId });
+        const entry = buildEntry(record, refreshStoreState().diskTrusted);
         entries.set(projectId, entry);
         issuedIds.add(projectId);
         if (entry.state === 'ACTIVE' && entry.handle) {
