@@ -182,9 +182,11 @@ Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它�
   - 行完整可读但同步未确认 → **只对同一文件重新 fsync**（绝不重复追加墓碑）：
     成功才算提交；仍失败 → `ERR_PROJECT_REVOKE_UNKNOWN`，该项目拒盘、保持
     `REVOKE_UNKNOWN`（不恢复 ACTIVE），Store 转 `DEGRADED` 并停止后续变更；
-  - 尾部损坏 / 日志消失 → 日志不可证，`RECOVERY_RESTRICTED` + 全部项目拒盘。
+  - 日志无法读取（读 I/O 异常）/ 尾部损坏 / 日志消失 → 日志不可证，
+    `RECOVERY_RESTRICTED` + 全部项目拒盘；读取失败**不得**当成"没有撤销"。
 - **日志前缀对账（UX-02B-02-R2）**：`config.revoked[]` 的每一条都必须在日志里有
-  `projectId + opId + seq` 完全对应的墓碑（不只比最大序号）；日志前缀只允许增长，
+  `projectId + opId + seq` 完全对应的墓碑（不只比最大序号）；日志必须能被读到，
+  且前缀只允许增长，
   运行期已确认的位置不得回退。任一不满足即 `RECOVERY_RESTRICTED`，不重建链、不覆盖证据。
   合法的"墓碑领先配置一个序号"仍然接受。
 - **授权凭据**：只有 `grantSource === 'os-dialog'` 且 `grantedAt`/`canonicalRoot`/`rootToken`

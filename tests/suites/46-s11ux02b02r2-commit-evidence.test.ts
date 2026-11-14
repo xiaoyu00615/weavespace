@@ -30,6 +30,7 @@ import {
 } from '../../apps/server/src/store/index.ts';
 import { headerLine, revocationLine } from '../../apps/server/src/store/revocation-log.ts';
 import { createProjectRuntime, type ProjectRuntime } from '../../apps/server/src/project-runtime.ts';
+import { createShellServer } from '../../apps/server/src/server.ts';
 import { createDocumentService } from '../../packages/document/index.ts';
 import { createPermissionService, type PermissionService } from '../../packages/permission/index.ts';
 import { inspectProjectRoot } from '../../packages/project-registry/index.ts';
@@ -51,6 +52,13 @@ interface FaultPlan {
   fsyncLog?: boolean;
   /** 配置 rename 阶段报错（墓碑已生效，配置补写失败）。 */
   rename?: boolean;
+  /** 撤销日志的 readText 抛 StoreIoError('read')：读取本身不可完成。 */
+  readLog?: boolean;
+  /**
+   * 追加异常发生后再让日志读取失败：复现"墓碑可能已写入、但证据核对读不到"的叠加故障。
+   * 追加之前的复核仍然正常，否则根本进不到追加阶段。
+   */
+  readLogAfterAppend?: boolean;
 }
 
 function ioWith(plan: FaultPlan): StoreIo {
@@ -61,6 +69,8 @@ function ioWith(plan: FaultPlan): StoreIo {
       if (plan.append === 'zero') throw new StoreIoError('append-log', 0);
       if (plan.append === 'after-write') {
         base.appendText(path, text);
+        // 叠加故障：行已落盘，但随后的证据核对读不到日志
+        if (plan.readLogAfterAppend) plan.readLog = true;
         throw new StoreIoError('append-log', text.length);
       }
       if (plan.append === 'half') {
@@ -77,6 +87,13 @@ function ioWith(plan: FaultPlan): StoreIo {
     rename(from, to) {
       if (plan.rename) throw new StoreIoError('rename-config', 0);
       base.rename(from, to);
+    },
+    readText(path) {
+      // 与真实 I/O 层一致：错误信息只带错误码，不带本机路径
+      if (plan.readLog && path.endsWith(LOG_FILE)) {
+        throw new StoreIoError('read', undefined, '读取失败: EIO');
+      }
+      return base.readText(path);
     },
   };
 }
@@ -556,6 +573,173 @@ test('R2-09 合法"墓碑领先配置一个序号"仍可加载并继续提交', 
   } finally {
     await rm(rootA, { recursive: true, force: true });
     await rm(rootB, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/* ------------- R3：日志读取本身不可完成（I/O 异常） ------------- */
+
+test('R3-01 运行期日志读取抛 I/O 异常 → 全局拒盘（含未参与撤销的项目）', async () => {
+  const dir = await newDir();
+  const rootA = await newRoot('a');
+  const rootB = await newRoot('b');
+  await writeFile(join(rootA, 'a.md'), '# A\n', 'utf8');
+  await writeFile(join(rootB, 'b.md'), '# B\n', 'utf8');
+
+  const plan: FaultPlan = {};
+  const store = open(dir, ioWith(plan));
+  let runtimeRef: ProjectRuntime | undefined;
+  const server = await createShellServer({
+    port: 0,
+    managed: {
+      create: (deps) => {
+        runtimeRef = createProjectRuntime({ ...deps, store, grantSource: 'os-dialog' });
+        return runtimeRef;
+      },
+    },
+  });
+
+  const api = async (path: string, init?: RequestInit) => {
+    const res = await fetch(`${server.url}${path}`, init);
+    return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+  };
+  const post = (path: string, body: unknown) =>
+    api(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  try {
+    const runtime = runtimeRef as ProjectRuntime;
+    const a = await runtime.addProject({ name: 'A', rootDir: rootA });
+    const b = await runtime.addProject({ name: 'B', rootDir: rootB });
+
+    // 前置：正常状态下 B 可读，并留下一个会话用于验证 G-DRAFT
+    const before = await api(`/api/resources?projectId=${b.projectId}`);
+    assert.equal(before.status, 200, `实际 ${before.status}`);
+    const opened = await post('/api/open', { projectId: b.projectId, path: 'b.md' });
+    assert.equal(opened.status, 200);
+    const sessionId = (opened.body.document as Record<string, unknown>).sessionId as string;
+    const viewId = (opened.body.document as Record<string, unknown>).viewId as string;
+
+    // 日志读取不可完成：不得当成"日志可信"
+    plan.readLog = true;
+    await assert.rejects(
+      () => runtime.removeProject(a.projectId),
+      (err: { errorCode?: string }) => err.errorCode === 'ERR_STORE_RESTRICTED',
+      '读不到日志就不能视为日志可信',
+    );
+
+    const state = store.loadState();
+    assert.equal(state.diskTrusted, false);
+    assert.equal(state.mutationsAllowed, false);
+    assert.equal(state.integrity, 'RECOVERY_RESTRICTED');
+
+    // 全局门禁：A、B 都不得再碰磁盘（已发出的 grant 不是旁路）
+    for (const projectId of [a.projectId, b.projectId]) {
+      const resources = await api(`/api/resources?projectId=${projectId}`);
+      assert.equal(resources.status, 503, `实际 ${resources.status}`);
+      assert.equal(resources.body.errorCode, 'ERR_STORE_RESTRICTED');
+      assert.equal(
+        JSON.stringify(resources.body).includes(dir),
+        false,
+        '错误响应不得包含本机绝对路径',
+      );
+    }
+    const reopen = await post('/api/open', { projectId: b.projectId, path: 'b.md' });
+    assert.equal(reopen.status, 503, `实际 ${reopen.status}`);
+    assert.equal(
+      JSON.stringify(reopen.body).includes(rootB),
+      false,
+      '错误响应不得包含项目根路径',
+    );
+
+    // G-DRAFT 不受影响：草稿仍可读
+    const draft = await api(`/api/document?sessionId=${sessionId}&viewId=${viewId}`);
+    assert.equal(draft.status, 200, `实际 ${draft.status}`);
+  } finally {
+    await server.close();
+    store.close();
+    await rm(rootA, { recursive: true, force: true });
+    await rm(rootB, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('R3-02 追加异常后的恢复性读取失败 → 目标项目 UNKNOWN + 全部项目拒盘', async () => {
+  const dir = await newDir();
+  const rootA = await newRoot('a');
+  const rootB = await newRoot('b');
+  try {
+    const plan: FaultPlan = {};
+    const store = open(dir, ioWith(plan));
+    const ctx = runtimeOver(store);
+    const a = await ctx.runtime.addProject({ name: 'A', rootDir: rootA });
+    const b = await ctx.runtime.addProject({ name: 'B', rootDir: rootB });
+
+    plan.append = 'after-write'; // 墓碑已写入，追加调用报错
+    plan.readLogAfterAppend = true; // 随后的证据核对读不到日志（追加前的复核仍正常）
+
+    await assert.rejects(
+      () => ctx.runtime.removeProject(a.projectId),
+      (err: { errorCode?: string }) => err.errorCode === 'ERR_PROJECT_REVOKE_UNKNOWN',
+      '撤销可能已经发生 → 必须是 UNKNOWN，而不是"未写入"',
+    );
+
+    assert.equal(ctx.runtime.stateOf(a.projectId), 'REVOKE_UNKNOWN', '不得回滚 ACTIVE');
+    assert.equal(grantsFor(ctx.permission, a.projectId), 0);
+    assert.equal(store.loadState().diskTrusted, false);
+    assert.equal(store.loadState().integrity, 'RECOVERY_RESTRICTED');
+    assert.equal(store.loadState().mutationsAllowed, false);
+    assert.throws(
+      () => ctx.runtime.assertUsable(b.projectId),
+      (err: { errorCode?: string }) => err.errorCode === 'ERR_STORE_RESTRICTED',
+      'B 的 G-DISK 也必须被拒',
+    );
+
+    // 不重复追加墓碑：用真实文件系统复核（绕过注入层）
+    const log = (await readText(dir, LOG_FILE)) ?? '';
+    assert.equal(countOf(log, '"opId":"op-'), 1, '只允许一行墓碑');
+
+    plan.append = undefined;
+    plan.readLog = false;
+    assert.equal(ctx.runtime.stateOf(a.projectId), 'REVOKE_UNKNOWN', '故障解除也不自动恢复');
+    assert.equal(grantsFor(ctx.permission, a.projectId), 0);
+    store.close();
+  } finally {
+    await rm(rootA, { recursive: true, force: true });
+    await rm(rootB, { recursive: true, force: true });
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('R3-03 正常的日志读取、撤销与重启不受新检查影响', async () => {
+  const dir = await newDir();
+  const rootA = await newRoot('a');
+  try {
+    const plan: FaultPlan = {};
+    const store = open(dir, ioWith(plan));
+    const ctx = runtimeOver(store);
+    const a = await ctx.runtime.addProject({ name: 'A', rootDir: rootA });
+
+    const removed = await ctx.runtime.removeProject(a.projectId);
+    assert.equal(removed.outcome, 'revoked');
+    assert.equal(store.loadState().diskTrusted, true);
+    assert.equal(store.loadState().integrity, 'OK');
+    store.close();
+
+    const reopened = open(dir);
+    try {
+      assert.equal(reopened.loadState().diskTrusted, true);
+      assert.equal(reopened.loadState().integrity, 'OK');
+      assert.deepEqual(reopened.load(), []);
+      assert.equal(reopened.queryOp((removed as { opId: string }).opId), 'revoked');
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    await rm(rootA, { recursive: true, force: true });
     await rm(dir, { recursive: true, force: true });
   }
 });

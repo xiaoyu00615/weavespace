@@ -395,21 +395,40 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
   }
 
   /**
-   * 写入前的日志可信性复核（P0-03 / R2）。
+   * 读取撤销日志；I/O 不可完成时返回 `undefined`。
+   *
+   * **读取失败不等价于"没有日志"或"没有撤销"**：把它当成空结果，正是
+   * "证据已经读不到、却继续往后追加"的入口。调用方必须据此进入不可证状态。
+   * 注意错误信息里不带本机路径（StoreIoError 只记录阶段与错误码）。
+   */
+  function readLogSafe(): LogReadResult | undefined {
+    let text: string | undefined;
+    try {
+      text = io.readText(LOG_PATH);
+    } catch {
+      return undefined;
+    }
+    return readLog(text);
+  }
+
+  /**
+   * 写入前的日志可信性复核（P0-03 / R2 / R3）。
    *
    * 加载时可信不代表写入时仍可信：进程运行期间日志可能被删除、截断或改写。
    * 先复核再提交，避免"用一条伪造的完整链"覆盖掉丢失的撤销历史。
    *
-   * 三条独立的证据检查（缺一不可）：
-   * 1. 日志本身可读（缺失/空文件/断裂 → 不可证）；
-   * 2. 日志前缀不得回退到运行期已确认的位置之下；
-   * 3. `config.revoked[]` 的每一条都要在日志里有 projectId + opId + seq 完全对应的墓碑。
+   * 四条独立的证据检查（缺一不可）：
+   * 1. 日志**能被读到**（读取抛错 → 不可证，不得当成空日志）；
+   * 2. 日志本身可读（缺失/空文件/断裂 → 不可证）；
+   * 3. 日志前缀不得回退到运行期已确认的位置之下；
+   * 4. `config.revoked[]` 的每一条都要在日志里有 projectId + opId + seq 完全对应的墓碑。
    *
    * 只有**从未发生过事务**（`commitSeq === 0` 且无撤销）时，日志缺失/空文件才等价于
    * 首次初始化，允许补写日志头；一旦有历史，缺失/断裂/截断一律 fail-closed。
    */
   function revalidateLog(): LogReadResult {
-    const log = readLog(io.readText(LOG_PATH));
+    const log = readLogSafe();
+    if (!log) restrict('写入前复核失败：撤销日志无法读取，拒绝继续提交');
     const hasHistory = current.commitSeq > 0 || current.revoked.length > 0;
     const emptyFile = log.status === 'ok' && !log.hasHeader;
     const lost = log.status === 'missing' && hasHistory;
@@ -560,7 +579,13 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
           throw commitError('not-committed', err);
         }
 
-        const verify = readLog(io.readText(LOG_PATH));
+        // 读取不到日志就无法核对：既不能判"未写入"，也不能判"已写入"
+        const verify = readLogSafe();
+        if (!verify) {
+          // 撤销可能已经发生 → 保留 UNKNOWN；同时全局拒盘（不重建日志、不重复追加）
+          enterRestricted('撤销写入结果不可判定：撤销日志无法读取，禁止全部磁盘访问');
+          throw commitError('unknown', err);
+        }
         if (verify.status !== 'ok') {
           // 尾部损坏或日志消失：撤销集合不再可证 —— 全局拒盘，且不得抛"未写入"
           enterRestricted('撤销写入结果不可判定：撤销日志无法核对，禁止全部磁盘访问');
