@@ -17,6 +17,10 @@
  * 默认情况下（`store.durability === 'memory'`）`removeProject` 直接拒绝，
  * 只有显式 `allowEphemeralRevocation: true`（仅测试）才会执行，
  * 生产托管模式不存在能绕过持久化的撤销入口。
+ *
+ * 提交点失败只承认两种形态（ADR-022 §3.1.1）：**显式确认未写入**才可回滚；
+ * 其余（含未声明的异常）一律按"可能已落盘"处理，进入 `REVOKE_UNKNOWN` 并切断磁盘权限。
+ * 这不是真实恢复能力——证据核对仍属于 UX-02B-02。
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { ERROR_CODES, type ErrorCode } from '../../../packages/contracts/index.ts';
@@ -31,8 +35,18 @@ import {
   type RootInspection,
 } from '../../../packages/project-registry/index.ts';
 
-/** 项目在运行期的状态（ADR-023 §3）。 */
-export type ProjectLifecycle = 'ACTIVE' | 'QUIESCING' | 'REMOVING' | 'REMOVED' | 'UNAVAILABLE';
+/** 项目在运行期的状态（ADR-023 §3 + ADR-022 §3.1.1）。 */
+export type ProjectLifecycle =
+  | 'ACTIVE'
+  | 'QUIESCING'
+  | 'REMOVING'
+  /**
+   * 撤销提交点的写入结果不确定（ADR-022 §3.1.1）：既不能当"已撤销"提交，
+   * 也不能当"未发生"回滚。磁盘权限已切断，条目保留等待持久证据核对（02B-02）。
+   */
+  | 'REVOKE_UNKNOWN'
+  | 'REMOVED'
+  | 'UNAVAILABLE';
 
 /** 持久化条目（只含身份与显示名；不含任何授权令牌的副本）。 */
 export interface StoredProject {
@@ -40,6 +54,14 @@ export interface StoredProject {
   readonly name: string;
   readonly rootDir: string;
 }
+
+/**
+ * `commit*` 的失败契约（ADR-022 §3.1.1）。
+ *
+ * **只有**显式声明 `not-committed` 的异常才允许被当作"持久化没有发生"；
+ * `unknown` 或**未声明**一律视为"无法排除已落盘"——因为 fsync 报错并不等于没写进去。
+ */
+export type StoreCommitState = 'not-committed' | 'unknown';
 
 /**
  * 最小持久化端口（UX-02B-01 只有 fake）。
@@ -56,6 +78,11 @@ export interface ProjectStore {
   load(): readonly StoredProject[];
   commitAdd(entry: StoredProject & { readonly opId: string }): Promise<void>;
   commitRename(input: { projectId: string; name: string; opId: string }): Promise<void>;
+  /**
+   * 撤销提交点。失败时**必须**尽量带上 `commitState`：
+   * - `'not-committed'`：可以断言没有写入（打开失败 / 0 字节写入）；
+   * - `'unknown'` 或缺省：无法排除已落盘 → Runtime 按已撤销保守处理。
+   */
   commitRevoke(input: { projectId: string; opId: string }): Promise<void>;
 }
 
@@ -143,6 +170,11 @@ export interface ProjectRuntime {
 }
 
 const MAX_PROJECT_ID_LENGTH = 32;
+/**
+ * 与 `packages/project-registry/config.ts` 的 `PROJECT_ID_RE` 保持一致：
+ * 运行期签发的 id 会被持久化，并在下次启动时用同一条正则重新校验。
+ */
+const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const MAX_NAME_LENGTH = 64;
 const DEFAULT_QUIESCE_TIMEOUT_MS = 2_000;
 const WINDOWS = process.platform === 'win32';
@@ -170,7 +202,23 @@ interface Entry {
   readonly rootDir: string;
   state: ProjectLifecycle;
   reason?: ProjectUnavailableReason;
+  /**
+   * 注册时确认过的根身份。**不可用后仍然保留**：身份占用与身份摘要都不能因为
+   * "根暂时读不到"而释放，否则同一目录会被注册成第二个项目（见 `occupancyOf`）。
+   */
+  canonicalRoot?: string;
+  rootToken?: string;
   handle?: ProjectHandle;
+}
+
+/**
+ * 该项目占用中的根身份。
+ *
+ * 优先用注册时确认的规范根；启动即不可用的项目没有规范根，退化为配置里的字面根
+ * （已 resolve，不含占位符），仍然足以拒绝"同一路径/父目录/子目录"的重复注册。
+ */
+function occupancyOf(entry: Entry): string | undefined {
+  return entry.canonicalRoot ?? entry.rootDir;
 }
 
 export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
@@ -236,25 +284,30 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     if (!entry.handle) return;
     const inspection = inspect(entry.rootDir);
     if (inspection.status !== 'READY') {
-      entry.state = 'UNAVAILABLE';
-      entry.reason = inspection.reason;
-      entry.handle = undefined;
-      providers.delete(`local:${entry.projectId}`);
+      downgrade(entry, inspection.reason);
       return;
     }
     if (inspection.canonicalRoot !== entry.handle.canonicalRoot) {
-      entry.state = 'UNAVAILABLE';
-      entry.reason = 'CANONICAL_CHANGED';
-      entry.handle = undefined;
-      providers.delete(`local:${entry.projectId}`);
+      downgrade(entry, 'CANONICAL_CHANGED');
       return;
     }
     if (inspection.rootToken !== entry.handle.rootToken) {
-      entry.state = 'UNAVAILABLE';
-      entry.reason = 'ROOT_TOKEN_CHANGED';
-      entry.handle = undefined;
-      providers.delete(`local:${entry.projectId}`);
+      downgrade(entry, 'ROOT_TOKEN_CHANGED');
     }
+  }
+
+  /**
+   * 永久降级：释放 Provider，但**保留** `canonicalRoot` / `rootToken`。
+   *
+   * 保留身份证据是本轮修复的重点：只丢 `handle` 会让一次"根暂时读不到"
+   * 顺带释放掉目录占用，于是同一路径可以再注册一个新项目——那等于在项目身份
+   * 不确定的时候放开第二个身份。降级后不自动恢复（也不改写原始身份）。
+   */
+  function downgrade(entry: Entry, reason: ProjectUnavailableReason): void {
+    entry.state = 'UNAVAILABLE';
+    entry.reason = reason;
+    entry.handle = undefined;
+    providers.delete(`local:${entry.projectId}`);
   }
 
   function unavailableError(projectId: string, reason: ProjectUnavailableReason | undefined): Error {
@@ -262,6 +315,14 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       ERROR_CODES.ERR_PROJECT_UNAVAILABLE,
       `项目不可用: ${projectId}${reason ? `（${reason}）` : ''}`,
       { reason },
+    );
+  }
+
+  /** 撤销结果不可证：既不能读盘，也不能据"再来一次"伪造第二条证据。 */
+  function revokeUnknownError(projectId: string): Error {
+    return domainError(
+      ERROR_CODES.ERR_PROJECT_REVOKE_UNKNOWN,
+      `项目撤销结果待核对，磁盘访问被拒绝: ${projectId}`,
     );
   }
 
@@ -313,7 +374,13 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       rootToken: inspection.rootToken,
       provider,
     };
-    return { ...input, state: 'ACTIVE', handle };
+    return {
+      ...input,
+      state: 'ACTIVE',
+      canonicalRoot: inspection.canonicalRoot,
+      rootToken: inspection.rootToken,
+      handle,
+    };
   }
 
   // ---- 启动装载（唯一一次读 store）----
@@ -339,13 +406,25 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     return ascii === '' ? 'project' : ascii;
   }
 
-  /** 只在 `issuedIds` 之外签发；已撤销的 id 也不复用。 */
+  /**
+   * 只在 `issuedIds` 之外签发；已撤销的 id 也不复用。
+   *
+   * 长度是硬约束：`projectId` 会被写进持久化配置并在加载时用
+   * `PROJECT_ID_RE`（≤32 字符）再校验一次。直接拼 `${base}-${n}` 会让 32 字符的
+   * 词干变成 34 字符的 id —— 本次能签发、重启后无法加载。因此**截断词干**、
+   * 保留完整序号，并对每个候选做一次正则校验。
+   */
   function issueProjectId(name: string): string {
     const base = slugify(name);
-    if (!issuedIds.has(base)) return base;
+    if (!issuedIds.has(base) && PROJECT_ID_RE.test(base)) return base;
     for (let n = 2; n < 1000; n += 1) {
-      const candidate = `${base}-${n}`;
-      if (!issuedIds.has(candidate)) return candidate;
+      const suffix = `-${n}`;
+      const stem =
+        base.slice(0, Math.max(1, MAX_PROJECT_ID_LENGTH - suffix.length)).replace(/[-_]+$/, '') || 'project';
+      const candidate = `${stem}${suffix}`;
+      if (issuedIds.has(candidate)) continue;
+      if (!PROJECT_ID_RE.test(candidate)) continue;
+      return candidate;
     }
     // 理论不可达：仍要 fail-closed，不能悄悄复用
     throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '无法签发新的 projectId');
@@ -365,11 +444,17 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     return trimmed;
   }
 
-  /** 重复/嵌套判定：只与现存（非 REMOVED）条目比较。 */
+  /**
+   * 重复/嵌套判定：与**所有仍有身份的**条目比较，包括 `UNAVAILABLE` / `REVOKE_UNKNOWN`。
+   *
+   * 只看 `entry.handle` 会漏掉"根暂时读不到"的项目，从而允许把同一目录（或它的
+   * 父/子目录）注册成第二个项目——那会在项目身份不可证的时候凭空多出一个身份。
+   * 占用证据用 `occupancyOf`（注册时确认的规范根，退化到字面根），且不因降级而清除。
+   */
   function assertRootAdmissible(canonicalRoot: string, ignoreProjectId?: string): void {
     for (const entry of entries.values()) {
       if (entry.projectId === ignoreProjectId) continue;
-      const existing = entry.handle?.canonicalRoot;
+      const existing = occupancyOf(entry);
       if (!existing) continue;
       if (foldForCompare(existing) === foldForCompare(canonicalRoot)) {
         throw domainError(ERROR_CODES.ERR_PROJECT_DUPLICATE_ROOT, '该目录已作为项目注册');
@@ -396,12 +481,55 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     return blocked;
   }
 
+  /**
+   * 提交点失败的两分支处理（ADR-022 §3.1.1）。
+   *
+   * 关键点是**不能把"抛错"当成"没写"**：fsync 报错时内核可能已经落盘，也可能
+   * 只落了半行。因此：
+   * - `commitState === 'not-committed'`（唯一可断言的形态）→ 零变更、回原状态、可重试；
+   * - `'unknown'` 或未声明 → 按"已撤销"保守处理：立即切断磁盘权限、保留条目、
+   *   进入 `REVOKE_UNKNOWN`，等待持久证据核对（02B-02）。
+   *
+   * 后者不删除条目、不置 REMOVED：撤销是否生效尚未可证，两者都不能宣称。
+   */
+  function applyCommitFailure(
+    entry: Entry,
+    projectId: string,
+    previousState: ProjectLifecycle,
+    err: unknown,
+  ): Error {
+    const commitState = (err as { commitState?: StoreCommitState } | undefined)?.commitState;
+    if (commitState === 'not-committed') {
+      entry.state = previousState;
+      return domainError(
+        ERROR_CODES.ERR_PERSIST_FAILED,
+        '撤销未被持久化（确认未写入），状态与授权均未变化，可重试',
+        { commitState, projectId },
+      );
+    }
+    entry.state = 'REVOKE_UNKNOWN';
+    entry.reason = undefined;
+    entry.handle = undefined;
+    // 无法证明撤销未发生 → 不再授予任何磁盘权限（fail-closed）
+    revokeProject(projectId);
+    providers.delete(`local:${projectId}`);
+    deps.document.markProjectStale(projectId, 'REVOKE_UNKNOWN');
+    revision += 1;
+    return domainError(
+      ERROR_CODES.ERR_PROJECT_REVOKE_UNKNOWN,
+      '撤销提交结果不确定，已按已撤销保守处理：磁盘访问被拒绝，等待证据核对',
+      { commitState: commitState ?? 'unknown', projectId },
+    );
+  }
+
   const summaryOf = (entry: Entry): ProjectSummary =>
     Object.freeze({
       projectId: entry.projectId,
       name: entry.name,
-      // QUIESCING/REMOVING 对外仍是 READY：屏障是内部串行化，不是"项目坏了"
-      status: entry.state === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'READY',
+      // QUIESCING/REMOVING 对外仍是 READY：屏障是内部串行化，不是"项目坏了"。
+      // REVOKE_UNKNOWN 不是 READY：磁盘权限已切断，且撤销是否生效尚不可证。
+      status:
+        entry.state === 'UNAVAILABLE' || entry.state === 'REVOKE_UNKNOWN' ? 'UNAVAILABLE' : 'READY',
       ...(entry.state === 'UNAVAILABLE' && entry.reason ? { reason: entry.reason } : {}),
     });
 
@@ -416,6 +544,8 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       if (!entry) {
         throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
       }
+      // 撤销结果不可证优先于"不可用"：告诉调用方真正的原因，而不是笼统的根失效
+      if (entry.state === 'REVOKE_UNKNOWN') throw revokeUnknownError(projectId);
       if (entry.state === 'QUIESCING' || entry.state === 'REMOVING') {
         throw domainError(ERROR_CODES.ERR_PROJECT_QUIESCING, '项目正在移除中，磁盘操作被拒绝');
       }
@@ -433,6 +563,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       // 准入判定与计数在同一同步块内完成：不存在"判完到 +1 之间被插队"的窗口
       const entry = entries.get(projectId);
       if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
+      if (entry.state === 'REVOKE_UNKNOWN') throw revokeUnknownError(projectId);
       if (entry.state === 'QUIESCING' || entry.state === 'REMOVING') {
         throw domainError(ERROR_CODES.ERR_PROJECT_QUIESCING, '项目正在移除中，磁盘操作被拒绝');
       }
@@ -456,6 +587,10 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     workspaceKey() {
       if (entries.size === 0) return undefined;
       try {
+        // 身份摘要必须**按请求重算**：`/api/health` 是恢复记录匹配的唯一入口，
+        // 若只在 `list()` 里复核根身份，"删掉根之后先问健康检查"就会继续拿到
+        // 旧的 READY 摘要，客户端会据此认领一份已经不可用的恢复记录。
+        for (const entry of entries.values()) refreshEntry(entry);
         const lines = [...entries.values()].map((entry) =>
           entry.handle
             ? `multi\u0000${entry.projectId}\u0000${entry.handle.canonicalRoot}\u0000${entry.handle.rootToken}`
@@ -511,6 +646,9 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       if (mutating) throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '已有变更事务在执行');
       const entry = entries.get(projectId);
       if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
+      // 撤销结果不可证的项目不再接受任何变更：连显示名都不改，
+      // 避免留下"看起来还活着的项目"这种第二套真相。
+      if (entry.state === 'REVOKE_UNKNOWN') throw revokeUnknownError(projectId);
       const next = assertName(name);
       const opId = `op-${randomUUID()}`;
       mutating = true;
@@ -535,6 +673,8 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       if (mutating) throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '已有变更事务在执行');
       const entry = entries.get(projectId);
       if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
+      // 上一次撤销的提交结果还不可证：不允许再提交一次（会伪造第二条持久证据）
+      if (entry.state === 'REVOKE_UNKNOWN') throw revokeUnknownError(projectId);
 
       mutating = true;
       try {
@@ -551,15 +691,20 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
         const blockedBy: RemoveBlocker[] = drainFailure ? [drainFailure] : blockersOf(projectId);
 
         if (blockedBy.length > 0) {
-          // abort：Provider、grants、正文、revision 一律不动；恢复到进入前的状态
-          entry.state = previousState === 'QUIESCING' ? 'QUIESCING' : 'ACTIVE';
+          // abort：Provider、grants、正文、revision 一律不动；精确恢复到进入前的状态。
+          // 不能一律回 ACTIVE —— 一个根不可用的项目会因此被凭空"复活"出根身份。
+          entry.state = previousState;
           return { outcome: 'aborted', blockedBy };
         }
 
         // ---- 提交点（本轮是 fake；02B-02 换成墓碑 fsync）----
         entry.state = 'REMOVING';
         const opId = `op-${randomUUID()}`;
-        await deps.store.commitRevoke({ projectId, opId });
+        try {
+          await deps.store.commitRevoke({ projectId, opId });
+        } catch (err) {
+          throw applyCommitFailure(entry, projectId, previousState, err);
+        }
 
         // ---- 同步提交：立即切断访问权 ----
         entries.delete(projectId);

@@ -92,6 +92,7 @@ node apps/server/src/main.ts --workspace <workspace.json> [端口]    # Multi �
 | **Multi 会话接口缺 `viewId`** | 400 | `REJECTED` + `ERR_COMMAND_INVALID` |
 | **项目正在移除（屏障内）** | 409 | `REJECTED` + `ERR_PROJECT_QUIESCING` |
 | **移除前置条件不满足 / 并发变更** | 409 | `REJECTED` + `ERR_PROJECT_BUSY` |
+| **撤销结果待核对**（`REVOKE_UNKNOWN`） | 403 | `REJECTED` + `ERR_PROJECT_REVOKE_UNKNOWN`（草稿仍可读） |
 
 Multi 下项目级失败（根失效/会话失效）的 `/api/save` 响应**省略 `document.content`**：
 只返回 `dirty` / `baseVersion` / `revision` / `stale` 等状态，避免把草稿正文复制进错误响应；
@@ -118,11 +119,26 @@ Registry 条目、Provider 表、Permission grants 与 `workspaceKey` 全由它�
 - 项目级屏障：`QUIESCING` 期间所有 G-DISK 操作 409 `ERR_PROJECT_QUIESCING`；
   每个已准入操作计入 `activeDiskOps`，屏障 `drain` 到 0 后再由 Host 复检
   （活动 View / dirty / SAVING / OUTCOME_UNKNOWN / CONFLICT / FAILED）。
-  复检不通过即 abort：Provider、grant、正文、revision 一律不动。
-- **G-DRAFT 与 G-DISK 分离**：`GET /api/document` 与 `POST /api/close` 只凭
+  复检不通过即 abort：Provider、grant、正文、revision 一律不动（状态精确回到进入前）。
+- 撤销提交失败按**证据强度**分两支（ADR-022 §3.1.1）：
+  - Store 显式声明 `commitState: 'not-committed'`（打开失败 / 0 字节写入）→ 零变更、
+    回原状态、抛 `ERR_PERSIST_FAILED`，可安全重试；
+  - `'unknown'` 或**未声明** → 不能把"报错"当成"没写"：立即收回 grant、释放 Provider、
+    条目转 `REVOKE_UNKNOWN`，G-DISK 一律 403 `ERR_PROJECT_REVOKE_UNKNOWN`，
+    且**不再接受第二次撤销**（否则会伪造第二条持久证据）。证据核对属于 UX-02B-02。
+- `UNAVAILABLE` / `REVOKE_UNKNOWN` 的项目**仍占用**其注册时确认的根身份：
+  同一路径、父目录、子目录都不得再注册成新项目（不自动恢复、不改写原始身份）。
+- `workspaceKey` 在**每次** `/api/health` 时重算根身份：根被删除/替换后，即使没有
+  请求过 `/api/projects` 或 `/api/resources`，也不会继续返回旧的 READY 摘要。
+  Legacy 与静态 Multi 仍使用启动快照（行为不变）。
+- 由显示名派生的 `projectId` 在追加序号后仍满足 `^[a-z0-9][a-z0-9_-]{0,31}$`
+  （截断词干、保留完整序号），因此运行期签发的 id 一定能被下次启动的配置校验接受。
+- **G-DRAFT 与 G-DISK 分离**：Multi 的 `GET /api/document` 与 `POST /api/close` 只凭
   actor + session + viewId，不查项目 grant —— 项目被撤销或根失效后，
   磁盘权限已收回，但用户仍可取回自己的内存草稿、关闭自己的视图；
   `POST /api/close` 的 dirty 保护保持不变。
+  **Legacy 例外**：没有 viewId 绑定（viewId 非必填），`GET /api/document` 仍执行原有的
+  `read` 授权判定，不放宽。
 - 撤销只动内存与 Store：**不删除、不移动任何项目目录内容**。
 
 ## 安全边界

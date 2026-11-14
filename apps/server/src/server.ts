@@ -98,6 +98,14 @@ export interface ShellServerOptions {
    * 与 `rootDir` / `workspace` / `workspacePath` 互斥。
    */
   managed?: { create(deps: ManagedRuntimeDeps): ProjectRuntime };
+  /**
+   * 仅测试注入：**包裹**内置授权表的观察/拦截层。
+   *
+   * 生产代码仍然自己构造授权表（Legacy 的全项目授权、Multi 的逐项目 grant），
+   * 这里只能在其外面加一层观察，不能替换授权表内容，因此不会改变任何真实授权语义。
+   * 用途：验证 Legacy 的读取授权仍被强制执行、Multi 的 G-DRAFT 不依赖项目 grant。
+   */
+  permissionWrapper?: (inner: PermissionService) => PermissionService;
 }
 
 /** 托管模式下由 Host 提供给 Runtime 的依赖（Runtime 拥有 grants 与 Provider 表）。 */
@@ -130,6 +138,7 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_PERMISSION_DENIED':
     case 'ERR_PATH_OUTSIDE_ROOT':
     case 'ERR_RESOURCE_IDENTITY_CONFLICT':
+    case 'ERR_PROJECT_REVOKE_UNKNOWN':
       return 403;
     case 'ERR_RESOURCE_NOT_FOUND':
     case 'ERR_DOCUMENT_NOT_FOUND':
@@ -199,6 +208,8 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_PROJECT_NESTED_ROOT: '工作区配置中存在嵌套的项目根',
   ERR_PROJECT_QUIESCING: '项目正在移除中，暂不接受磁盘操作',
   ERR_PROJECT_BUSY: '项目当前有其他变更或未结束的操作',
+  ERR_PROJECT_REVOKE_UNKNOWN: '项目撤销结果待核对，磁盘访问被拒绝（草稿仍可读取）',
+  ERR_PERSIST_FAILED: '变更未被持久化，状态未改变，可重试',
   ERR_SESSION_STALE: '会话已失效（项目不可用），草稿仍保留',
 };
 
@@ -453,7 +464,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
    */
   const configuredProjectIds = (workspace?.projects ?? []).map((project) => project.projectId);
   const grantedProjectIds = new Set<string>(options.grantedProjects ?? configuredProjectIds);
-  const permission: PermissionService =
+  const basePermission: PermissionService =
     mode === 'legacy'
       ? createPermissionService([
           { actorId, action: 'read', scope: '' },
@@ -468,6 +479,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
               { actorId, action: 'write' as const, scope: '', providerId: `local:${projectId}` },
             ]),
           );
+  const permission: PermissionService = options.permissionWrapper
+    ? options.permissionWrapper(basePermission)
+    : basePermission;
 
   const document: DocumentService = createDocumentService();
 
@@ -562,8 +576,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     } catch (err) {
       const code = (err as { errorCode?: string }).errorCode;
       const reason = (err as { reason?: string }).reason;
-      if (code === 'ERR_PROJECT_UNAVAILABLE') {
-        document.markProjectStale(projectId, reason ?? 'PROJECT_UNAVAILABLE');
+      if (code === 'ERR_PROJECT_UNAVAILABLE' || code === 'ERR_PROJECT_REVOKE_UNKNOWN') {
+        // 两者都意味着"该项目不能再碰磁盘"，遗留会话一律转 STALE（草稿保留，G-DRAFT 仍可读）
+        const staleReason =
+          code === 'ERR_PROJECT_REVOKE_UNKNOWN' ? 'REVOKE_UNKNOWN' : reason ?? 'PROJECT_UNAVAILABLE';
+        document.markProjectStale(projectId, staleReason);
       }
       const known = typeof code === 'string' && code in ERROR_CODES ? (code as ErrorCode) : undefined;
       throw new HttpError(
@@ -815,8 +832,10 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       requireView(sessionId, viewId, mode === 'multi');
       assertProjectAssertion(identityOf(sessionId), url.searchParams.get('projectId'));
       // G-DRAFT（ADR-023 §2）：草稿是 Host 内存里的字节，不是磁盘访问。
-      // 归属已由 requireView（actor + session + viewId）确认，因此**不再**要求项目
-      // grant：项目被撤销/根失效时磁盘权限已收回，但用户仍须能取回自己的草稿。
+      // Multi：归属已由 requireView（actor + session + viewId）确认，因此**不再**要求
+      // 项目 grant —— 项目被撤销/根失效时磁盘权限已收回，但用户仍须能取回自己的草稿。
+      // Legacy：没有 viewId 绑定（viewId 非必填），读取授权仍是唯一的门，必须保持原样。
+      if (mode === 'legacy') authorizeRead(sessionId);
       sendJson(res, 200, { status: 'APPLIED', document: documentDto(sessionId, viewId ?? null) });
       return;
     }
@@ -1006,6 +1025,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         const projectLevel =
           outcome.errorCode === 'ERR_PROJECT_UNAVAILABLE' ||
           outcome.errorCode === 'ERR_PROJECT_NOT_FOUND' ||
+          outcome.errorCode === 'ERR_PROJECT_REVOKE_UNKNOWN' ||
           outcome.errorCode === 'ERR_SESSION_STALE' ||
           outcome.errorCode === 'ERR_ROOT_CHANGED' ||
           outcome.errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED';
@@ -1120,7 +1140,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       errorCode === 'ERR_PROJECT_QUIESCING' ||
       errorCode === 'ERR_PROJECT_BUSY'
         ? 409
-        : errorCode === 'ERR_PERMISSION_DENIED' || errorCode === 'ERR_RESOURCE_IDENTITY_CONFLICT'
+        : errorCode === 'ERR_PERMISSION_DENIED' ||
+            errorCode === 'ERR_RESOURCE_IDENTITY_CONFLICT' ||
+            errorCode === 'ERR_PROJECT_REVOKE_UNKNOWN'
           ? 403
           : errorCode === 'ERR_ROOT_CHANGED' ||
               errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED' ||

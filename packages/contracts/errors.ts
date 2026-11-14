@@ -67,6 +67,16 @@ export const ERROR_CODES = {
    */
   ERR_PROJECT_BUSY: 'ERR_PROJECT_BUSY',
   /**
+   * 多项目（UX-02B-01-R1）：撤销提交点**明确未写入**（打开失败 / 写入 0 字节即报错）。
+   * 零变更、可安全重试；不得据此断言"撤销失败等于什么都没发生"以外的任何结论。
+   */
+  ERR_PERSIST_FAILED: 'ERR_PERSIST_FAILED',
+  /**
+   * 多项目（UX-02B-01-R1）：撤销提交点的写入结果**不确定**（fsync 报错 / 部分写入 / 崩溃边缘）。
+   * 该项立即进入 `REVOKE_UNKNOWN`：G-DISK 一律 403，G-DRAFT 与关闭视图不受影响。
+   */
+  ERR_PROJECT_REVOKE_UNKNOWN: 'ERR_PROJECT_REVOKE_UNKNOWN',
+  /**
    * 多项目（G1）：会话已失效（所属项目根不可用），磁盘访问被拒绝。
    * 草稿仍保留，可经授权读取；不得自动迁移或丢弃。
    */
