@@ -4,6 +4,7 @@ import {
   beginLevel,
   emptyLevels,
   failLevel,
+  invalidateLevel,
   materializeTree,
   resetLevels,
   type TreeLevels,
@@ -424,6 +425,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           cursor: action.cursor,
           nextCursor: action.nextCursor,
           total: action.total,
+          snapshot: action.snapshot ?? null,
         }),
       );
       // 只在"首次拿到根层的第一页"时补默认展开；续页与刷新都不重置展开状态
@@ -434,7 +436,13 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case 'TREE_LEVEL_ERROR': {
       const levels = state.treeByProject[action.projectId] ?? emptyLevels();
-      return withTreeLevels(state, action.projectId, failLevel(levels, action.dir, action.errorCode));
+      // 目录在本轮分页中变了：旧游标/旧快照/已加载的那一页都不能再当作完整结果，
+      // 必须整层作废并显式提示"刷新"（R1-04）。其余失败仍保留内容供重试。
+      const next =
+        action.errorCode === 'ERR_DIR_CHANGED'
+          ? invalidateLevel(levels, action.dir, 'ERR_DIR_CHANGED')
+          : failLevel(levels, action.dir, action.errorCode);
+      return withTreeLevels(state, action.projectId, next);
     }
 
     case 'TREE_RESET':

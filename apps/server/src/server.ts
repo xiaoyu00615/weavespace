@@ -170,6 +170,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_STORE_LOCKED':
     case 'ERR_STORE_ID_REUSED':
     case 'ERR_PICKER_BUSY':
+    // 目录在本轮分页期间发生变化：客户端必须刷新整层，不能拿旧游标续页
+    case 'ERR_DIR_CHANGED':
       return 409;
     // 意图/请求凭据类：一律 410，避免用不同状态码区分"过期/已用/不存在"（可探测性）
     case 'ERR_INTENT_EXPIRED':
@@ -256,6 +258,8 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
    */
   ERR_DIR_UNREADABLE: '无法读取此文件夹',
   ERR_DIR_IS_LINK: '链接节点不能展开（避免越过项目根）',
+  /** 目录变化不是权限、不是越界：文案必须明确告诉用户"刷新"，不得含本机路径。 */
+  ERR_DIR_CHANGED: '目录已变化，请刷新',
   ERR_RESOURCE_NOT_FOUND: '资源不存在',
   ERR_DOCUMENT_NOT_FOUND: '文档会话不存在',
   ERR_STORAGE_IO: '存储访问失败',
@@ -332,6 +336,21 @@ function parseTreeCursor(raw: string | null): number | undefined {
     throw new HttpError(400, 'ERR_COMMAND_INVALID', 'cursor 不合法');
   }
   return Number(raw);
+}
+
+/**
+ * 目录快照标识（UX-02B-TREE-R1 / 契约 B.2.2）。
+ *
+ * 不透明字符串，客户端原样回传；这里只做**严格形状校验**，不解释内容。
+ * 非法值在读盘之前 400（零 IO）；合法但与当前目录不符由 `buildTreePage` 判 409。
+ * 缺省 null 表示"不带快照的旧客户端"，保持既有分页形状兼容。
+ */
+function parseTreeSnapshot(raw: string | null): string | null {
+  if (raw === null || raw === '') return null;
+  if (!/^[0-9a-f]{32}$/.test(raw)) {
+    throw new HttpError(400, 'ERR_COMMAND_INVALID', 'snapshot 不合法');
+  }
+  return raw;
 }
 
 /** 每页条数：缺省 200，范围 1–2000（契约 B.2.1）。它**不是**单层可见上限。 */
@@ -1189,13 +1208,18 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       const dir = parseTreeDir(url.searchParams.get('dir'));
       const cursor = parseTreeCursor(url.searchParams.get('cursor'));
       const limit = parseTreeLimit(url.searchParams.get('limit'));
+      const expectedSnapshot = parseTreeSnapshot(url.searchParams.get('snapshot'));
 
       try {
         const entries = await withDiskOp(treeProjectId, () =>
           treeProvider.readDir(dir === '' ? '.' : dir),
         );
         // 排序 → 切片 → nextCursor 全在纯函数里，便于直接断言"没有静默截断"
-        sendJson(res, 200, buildTreePage(entries, { projectId: treeProjectId, dir, cursor, limit }));
+        sendJson(
+          res,
+          200,
+          buildTreePage(entries, { projectId: treeProjectId, dir, cursor, limit, expectedSnapshot }),
+        );
       } catch (err) {
         if (err instanceof HttpError) throw err;
         const code = (err as { errorCode?: string }).errorCode;

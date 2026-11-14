@@ -36,7 +36,8 @@ import {
   type Autosave,
 } from './workspace-persistence';
 import { createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
-import { emptyLevels, normalizeDir } from '../components/tree-model.ts';
+import { emptyLevels } from '../components/tree-model.ts';
+import { createTreeLevelLoader, type TreeLoadIdentity } from './tree-load.ts';
 import { refreshProject } from './refresh-project';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
@@ -164,6 +165,29 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   const loadEpoch = useRef(createLoadEpoch());
 
   /**
+   * 逐层目录加载的编排器（UX-02B-TREE-R1）。
+   *
+   * 真正实现在 `tree-load.ts`（纯 TS、可确定性测试）：每次请求固定捕获
+   * 工作区身份 / 加载代次 / 项目 / 目录 / 该层请求代次，迟到响应一律不回填。
+   * 这里只注入宿主依赖，不复制任何编排逻辑。
+   */
+  const treeLoader = useRef(
+    createTreeLevelLoader({
+      identity: (): TreeLoadIdentity => ({
+        mode: stateRef.current.mode,
+        syncMode: modeRef.current,
+        workspaceKey: stateRef.current.workspaceKey,
+        epoch: loadEpoch.current.current(),
+        activeProjectId: stateRef.current.activeProjectId,
+      }),
+      levels: (projectKey: string) => stateRef.current.treeByProject[projectKey] ?? emptyLevels(),
+      listTree: (request) =>
+        clientFor('live').listTree(request.projectId, request.dir, request.cursor, undefined, request.snapshot),
+      dispatch,
+    }),
+  );
+
+  /**
    * 打开流程的编排器（G2-R1）：真实实现放在 `open-document.ts`，
    * 这里只注入宿主依赖，便于在 Node 里用真实 Host + reducer 验证时序。
    */
@@ -216,6 +240,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
     async (isCancelled: () => boolean = () => false) => {
       // 本次连接独占一代；恢复流程自带的代次与加载代次任一过期都算取消
       const cancelledByEpoch = loadEpoch.current.start();
+      // 重新连接等于换一份层表：上一代所有逐层请求立即失效（R1-02）
+      treeLoader.current.invalidateAll();
       const cancelled = () => isCancelled() || cancelledByEpoch();
       // 先探测 Host：连不上就**不要**把界面切进 live（否则会显示"真实文件"却空空如也）
       const probe = await liveClient.workspaceIdentity().catch(() => null);
@@ -413,42 +439,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
        * 同层已有在途请求时不重复发（单飞），迟到结果在切回 demo 后丢弃。
        */
       async loadTreeLevel(projectId, dir, append) {
-        if (stateRef.current.mode !== 'live') return;
-        const projectKey = projectId ?? '';
-        const levelDir = normalizeDir(dir);
-        const levels = stateRef.current.treeByProject[projectKey] ?? emptyLevels();
-        const current = levels[levelDir];
-        if (current?.status === 'loading') return;
-        const cursor = append ? (current?.nextCursor ?? null) : null;
-        if (append && !cursor) return;
-
-        dispatch({ type: 'TREE_LEVEL_BEGIN', projectId: projectKey, dir: levelDir, append });
-        try {
-          const outcome = await clientFor('live').listTree(projectId, levelDir, cursor);
-          // 用户已经切走：这个响应属于上一个工作区，一个 dispatch 都不能发
-          if (stateRef.current.mode !== 'live' || modeRef.current !== 'live') return;
-          if (outcome.status !== 'APPLIED') {
-            dispatch({
-              type: 'TREE_LEVEL_ERROR',
-              projectId: projectKey,
-              dir: levelDir,
-              errorCode: outcome.errorCode,
-            });
-            return;
-          }
-          dispatch({
-            type: 'TREE_LEVEL_PAGE',
-            projectId: projectKey,
-            dir: levelDir,
-            entries: outcome.entries,
-            cursor,
-            nextCursor: outcome.page.nextCursor,
-            total: outcome.page.total,
-          });
-        } catch {
-          if (stateRef.current.mode !== 'live') return;
-          dispatch({ type: 'TREE_LEVEL_ERROR', projectId: projectKey, dir: levelDir, errorCode: null });
-        }
+        // 归属判定、单飞、迟到响应丢弃全在 `tree-load.ts`（纯 TS，可确定性测试）
+        await treeLoader.current.load(projectId, dir, append);
       },
 
       async restoreWorkspace() {
@@ -609,6 +601,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         // 用户一旦要求切换，所有在途加载立即失效：连"收回服务端视图"的等待期间
         // 回来的结果也不属于新工作区（S11-C-R2）
         loadEpoch.current.cancel();
+        treeLoader.current.invalidateAll();
         // 尽量收回服务端视图，避免 live 会话在后台悬挂
         for (const tab of stateRef.current.tabs) {
           if (tab.mode === 'live' && tab.sessionId && tab.viewId) {
@@ -638,6 +631,13 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       },
 
       async reloadResources(projectId?: string) {
+        // 刷新只作废**目标项目**的层请求：其它项目正在展开的目录照常完成（R1-02）。
+        // Legacy 的层表键是 ''，与 loadWorkspace / refreshProject 的目标约定一致。
+        const target =
+          stateRef.current.workspaceMode === 'multi'
+            ? (projectId ?? stateRef.current.activeProjectId ?? '')
+            : '';
+        treeLoader.current.invalidateProject(target);
         // 编排（文件树 + 已打开文档 + 生命周期判定）都在 refresh-project.ts：
         // 这里只注入宿主依赖，保证测试驱动的是生产同一条链路（UX-01A-R1）
         await refreshProject(

@@ -174,6 +174,8 @@ export type WorkspaceAction =
       cursor: string | null;
       nextCursor: string | null;
       total: number;
+      /** 本轮分页的目录快照标识（可选，兼容旧版响应与既有夹具）。 */
+      snapshot?: string | null;
     }
   /** 该层加载失败：保留已加载条目，UI 显示"重试"。 */
   | { type: 'TREE_LEVEL_ERROR'; projectId: string; dir: string; errorCode: string | null }

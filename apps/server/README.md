@@ -107,11 +107,12 @@ node apps/server/src/main.ts --workspace-store <dir> [端口]         # Multi �
 | **输入不合法**（名称过长/含控制字符/缺必填） | 400 | `REJECTED` + `ERR_COMMAND_INVALID` |
 | **目录当前读不出来**（UX-02B-TREE） | 403 | `REJECTED` + `ERR_DIR_UNREADABLE`（"无法读取此文件夹"） |
 | **请求展开链接节点** | 400 | `REJECTED` + `ERR_DIR_IS_LINK` |
+| **本轮分页期间目录条目集合发生变化**（TREE-R1） | 409 | `REJECTED` + `ERR_DIR_CHANGED`（"目录已变化，请刷新"） |
 
 ## 逐层文件树 `GET /api/tree`（UX-02B-TREE）
 
 ```http
-GET /api/tree?projectId=project-a&dir=docs&cursor=200&limit=200
+GET /api/tree?projectId=project-a&dir=docs&cursor=200&limit=200&snapshot=<首轮快照>
 ```
 
 ```jsonc
@@ -122,7 +123,8 @@ GET /api/tree?projectId=project-a&dir=docs&cursor=200&limit=200
     { "id": "dir:project-a/docs/sub", "name": "sub", "kind": "folder", "extension": "", "relPath": "docs/sub" },
     { "id": "doc:project-a/docs/a.md", "name": "a.md", "kind": "file", "extension": ".md", "relPath": "docs/a.md" }
   ],
-  "page": { "limit": 200, "cursor": "200", "nextCursor": "400", "total": 423 }
+  "page": { "limit": 200, "cursor": "200", "nextCursor": "400", "total": 423,
+            "snapshot": "9f2c1ab0d5e84736c1b2a0f4e7d8c39015" }
 }
 ```
 
@@ -133,6 +135,13 @@ GET /api/tree?projectId=project-a&dir=docs&cursor=200&limit=200
   此时该层所有可枚举条目都已可见。`page.total` 是该层真实总数。
   排序是服务端全序（目录/链接在前 → `zh-Hans-CN` → 码点兜底），先排完再切片，
   因此分页不会漂移。
+- **目录快照（UX-02B-TREE-R1）**：`page.snapshot` 由服务端对"排序后的**整层**条目集合"
+  计算 SHA-256 摘要（32 位十六进制），与 `cursor` / `limit` 无关，静态目录的每一页同值。
+  续页必须把首轮的 `snapshot` 原样回传；服务端重算后不一致 →
+  `409 ERR_DIR_CHANGED`（"目录已变化，请刷新"），**绝不返回可能漏项的续页**。
+  第一页与不带该参数的旧客户端不做校验，保持兼容；参数格式非法 → `400 ERR_COMMAND_INVALID` 且零 IO。
+  Shell 收到 `ERR_DIR_CHANGED` 会整层作废（清空条目/游标/快照）并显示"目录已变化，请刷新"，
+  只提供"刷新"（从第一页重取），**不会**把它当成 `nextCursor === null` 的加载完成。
 - **三种节点**：`folder` / `file` / `link`，id 分别是 `dir:` / `doc:` / `link:` 命名空间。
   文件类型不决定是否显示；不支持预览的格式照样列出，由 Shell 的能力注册表决定能否打开。
   空目录正常返回 `entries: []`；`link`（符号链接 / junction / 重解析点）只显示、不跟随，

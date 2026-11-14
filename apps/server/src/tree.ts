@@ -4,6 +4,7 @@
  * 只做「路径 → 树」的映射，不做磁盘访问；排序固定为「目录在前、同名按字典序」，
  * 保证同一份磁盘内容每次返回的树结构一致（UI 展开状态才有稳定的 key）。
  */
+import { createHash } from 'node:crypto';
 
 export interface ResourceNodeDto {
   /** 稳定标识：文件为 `doc:<相对路径>`，目录为 `dir:<相对路径>`。 */
@@ -135,6 +136,13 @@ export interface TreePageMeta {
   nextCursor: string | null;
   /** 该层总条目数（不受 limit 影响）。 */
   total: number;
+  /**
+   * 本轮分页的目录快照标识（UX-02B-TREE-R1）。
+   *
+   * 由「排序后的整层条目集合」计算，与 `cursor` / `limit` 无关：静态目录的
+   * 每一页都拿到同一个值。续页必须原样回传，服务端据此发现集合变化。
+   */
+  snapshot: string;
 }
 
 export interface TreePageDto {
@@ -206,6 +214,32 @@ export interface BuildTreePageOptions {
   cursor?: number;
   /** 每页条数（调用方已校验范围）。 */
   limit?: number;
+  /** 客户端首轮分页带回的快照；不一致时抛 `ERR_DIR_CHANGED`。 */
+  expectedSnapshot?: string | null;
+}
+
+/**
+ * 目录快照标识（UX-02B-TREE-R1 / 契约 B.2.2）。
+ *
+ * 数字偏移游标无法保证跨页时条目集合不变：第一页之后插入一个排在前面的文件，
+ * 第二页按同样的偏移量取值就会漏掉原本位于边界的条目。这里对**排序后的整层
+ * 条目集合**（而非当前页）做 SHA-256，让"集合变了"成为可验证的事实。
+ *
+ * 纳入 level / projectId 是为了让快照只在同一目录、同一项目命名空间内有效，
+ * 不能把一个目录的快照拿到另一个目录去蒙混过关。返回值不含任何磁盘信息，
+ * 只是摘要；目录名本身仍在同一次响应的 `entries` 里，不额外扩大信息面。
+ */
+export function directorySnapshotOf(
+  entries: readonly TreeEntryDto[],
+  level: string,
+  projectId?: string,
+): string {
+  const hash = createHash('sha256');
+  hash.update(`ws-tree-v1\n${projectId ?? ''}\n${level}\n`);
+  for (const entry of entries) {
+    hash.update(`${entry.kind}\u0000${entry.name}\u0000${entry.relPath}\u0000${entry.extension}\u0000\n`);
+  }
+  return hash.digest('hex').slice(0, 32);
 }
 
 /**
@@ -233,6 +267,17 @@ export function buildTreePage(
   );
 
   const total = all.length;
+  const snapshot = directorySnapshotOf(all, level, options.projectId);
+
+  // 目录在两页之间变了：失败必须显式，绝不返回一份可能漏项的"成功"结果。
+  // 错误码由 `server.ts` 统一映射成 409 + 公共文案；这里只负责判定，不碰 HTTP。
+  if (options.expectedSnapshot != null && options.expectedSnapshot !== snapshot) {
+    throw Object.assign(
+      new Error('目录已变化，请刷新'),
+      { errorCode: 'ERR_DIR_CHANGED' },
+    );
+  }
+
   const page = all.slice(offset, offset + limit);
   const end = offset + page.length;
 
@@ -245,6 +290,7 @@ export function buildTreePage(
       cursor: options.cursor === undefined ? null : String(offset),
       nextCursor: end < total && page.length > 0 ? String(end) : null,
       total,
+      snapshot,
     },
   };
 }

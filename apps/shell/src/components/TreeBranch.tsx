@@ -72,18 +72,22 @@ export function LevelStatus({
     return <StatusRow depth={depth}>正在加载更多…</StatusRow>;
   }
   if (level.status === 'error') {
+    // 集合已变时不能"重试同一页"：旧游标已失效，必须重新从第一页取（R1-04）。
+    const dirChanged = level.errorCode === 'ERR_DIR_CHANGED';
     return (
       <StatusRow depth={depth}>
         <span className="tree__status--error">
-          {level.errorCode === 'ERR_DIR_UNREADABLE'
-            ? '无法读取此文件夹'
-            : level.errorCode === 'ERR_RESOURCE_NOT_FOUND'
-              ? '该文件夹已不存在'
-              : '加载失败'}
+          {dirChanged
+            ? '目录已变化，请刷新'
+            : level.errorCode === 'ERR_DIR_UNREADABLE'
+              ? '无法读取此文件夹'
+              : level.errorCode === 'ERR_RESOURCE_NOT_FOUND'
+                ? '该文件夹已不存在'
+                : '加载失败'}
         </span>
         {' · '}
         <button type="button" className="tree__status-action" onClick={onRetry}>
-          重试
+          {dirChanged ? '刷新' : '重试'}
         </button>
       </StatusRow>
     );

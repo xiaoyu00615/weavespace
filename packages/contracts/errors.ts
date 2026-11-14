@@ -43,6 +43,15 @@ export const ERROR_CODES = {
    * 跟随它可能越过项目根，而项目根是唯一授权单元。
    */
   ERR_DIR_IS_LINK: 'ERR_DIR_IS_LINK',
+  /**
+   * 目录在这一轮**分页期间**发生了变化（UX-02B-TREE-R1）。
+   *
+   * 数字偏移游标只保证"位置"，不保证两页看到的是同一份条目集合：第一页之后
+   * 插入/删除/重命名都可能让第二页静默漏项。客户端必须把首轮的
+   * 目录快照标识原样回传；服务端一旦发现集合变化，用本码 + 409 要求刷新整层，
+   * 绝不返回可能不完整的结果。它不是授权失败，也不是路径越界。
+   */
+  ERR_DIR_CHANGED: 'ERR_DIR_CHANGED',
   ERR_DOCUMENT_NOT_FOUND: 'ERR_DOCUMENT_NOT_FOUND',
   ERR_DOCUMENT_DIRTY: 'ERR_DOCUMENT_DIRTY',
   ERR_DOCUMENT_VERSION_CONFLICT: 'ERR_DOCUMENT_VERSION_CONFLICT',

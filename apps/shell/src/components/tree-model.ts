@@ -19,9 +19,6 @@ import type { ResourceNodeState } from '../state/types.ts';
 /** 项目根这一层的键。 */
 export const ROOT_LEVEL = '';
 
-/** 物化递归树时的最大深度保护：防止畸形数据（自指目录）造成无限递归。 */
-const MAX_MATERIALIZE_DEPTH = 64;
-
 export type TreeLevelStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface TreeLevelState {
@@ -37,6 +34,11 @@ export interface TreeLevelState {
   readonly errorCode: string | null;
   /** 是否正在"加载更多"（区别于首次整层加载）。 */
   readonly loadingMore: boolean;
+  /**
+   * 本轮分页的目录快照标识（UX-02B-TREE-R1）。
+   * 续页必须把它原样回传；`null` 表示这一层还没有建立一致性基线。
+   */
+  readonly snapshot: string | null;
 }
 
 export type TreeLevels = Readonly<Record<string, TreeLevelState>>;
@@ -64,6 +66,7 @@ function blankLevel(dir: string): TreeLevelState {
     status: 'idle',
     errorCode: null,
     loadingMore: false,
+    snapshot: null,
   };
 }
 
@@ -104,6 +107,8 @@ export interface AppliedPage {
   readonly cursor: string | null;
   readonly nextCursor: string | null;
   readonly total: number;
+  /** 本轮分页的目录快照标识；旧版响应可能没有。 */
+  readonly snapshot?: string | null;
 }
 
 /**
@@ -118,6 +123,11 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
   const previous = levels[key] ?? blankLevel(key);
   const incoming = page.entries.map(entryToNode);
   const first = page.cursor === null;
+  // Shell 侧第二道闸：即便服务端漏判，也不能把"另一份目录"的续页追加到本轮结果上。
+  // 失败必须显式作废整层，绝不能让 `nextCursor: null` 伪装成"已经全部加载完成"。
+  if (!first && page.snapshot != null && previous.snapshot != null && page.snapshot !== previous.snapshot) {
+    return invalidateLevel(levels, dir, 'ERR_DIR_CHANGED');
+  }
   const merged = first ? incoming : [...previous.entries, ...incoming];
   const deduped: ResourceNodeState[] = [];
   const seen = new Set<string>();
@@ -136,6 +146,7 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
       status: 'ready',
       errorCode: null,
       loadingMore: false,
+      snapshot: page.snapshot ?? null,
     },
   };
 }
@@ -155,6 +166,30 @@ export function failLevel(levels: TreeLevels, dir: string, errorCode: string | n
   };
 }
 
+/**
+ * 目录在本轮分页期间发生变化：整层作废（UX-02B-TREE-R1 / R1-04）。
+ *
+ * 与 `failLevel` 的区别是**故意**的：普通失败保留已加载条目与游标供"重试同一页"，
+ * 而集合已变时旧游标和旧快照都不再有任何意义，保留它们会让 UI 把"继续加载"
+ * 当成安全的下一步。清空后 `status: 'error'` + 明确错误码，UI 只给"刷新整层"。
+ */
+export function invalidateLevel(levels: TreeLevels, dir: string, errorCode: string): TreeLevels {
+  const key = normalizeDir(dir);
+  return {
+    ...levels,
+    [key]: {
+      dir: key,
+      entries: [],
+      nextCursor: null,
+      total: 0,
+      status: 'error',
+      errorCode,
+      loadingMore: false,
+      snapshot: null,
+    },
+  };
+}
+
 /** 刷新：整份层表作废（调用方只对**这一个项目**调用）。 */
 export function resetLevels(): TreeLevels {
   return emptyLevels();
@@ -170,19 +205,24 @@ export function resetLevels(): TreeLevels {
 export function materializeTree(
   levels: TreeLevels,
   dir: string = ROOT_LEVEL,
-  depth = 0,
+  ancestors: ReadonlySet<string> = new Set(),
 ): ResourceNodeState[] {
-  if (depth > MAX_MATERIALIZE_DEPTH) return [];
   const key = normalizeDir(dir);
+  // 环检测按**路径身份**而不是固定深度：真实项目可能有 70+ 层目录，
+  // 任何数字上限都会把有效层级静默变成空文件夹（UX-02B-TREE-R1 / R1-03）。
+  if (ancestors.has(key)) return [];
   const level = levels[key];
   if (!level) return [];
+  const chain = new Set(ancestors).add(key);
   return level.entries.map((entry) => {
     if (entry.kind !== 'folder') return entry;
     // `entry.path` 已经是带父路径的项目内相对路径（服务端 relPath），直接用它定位子层
     const normalized = normalizeDir(entry.path ?? (key === ROOT_LEVEL ? entry.name : `${key}/${entry.name}`));
+    // 自指（a 里又指向 a）或回到某个祖先：只显示这一行，不再往下展开
+    if (normalized === key || chain.has(normalized)) return entry;
     const childLevel = levels[normalized];
     if (!childLevel) return entry;
-    return { ...entry, children: materializeTree(levels, normalized, depth + 1) };
+    return { ...entry, children: materializeTree(levels, normalized, chain) };
   });
 }
 

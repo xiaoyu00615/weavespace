@@ -58,6 +58,13 @@ export interface TreePageMeta {
   /** 非 null 表示还有下一页，必须继续请求直到 null。 */
   nextCursor: string | null;
   total: number;
+  /**
+   * 本轮分页的**目录快照标识**（UX-02B-TREE-R1）。
+   * 由服务端对"排序后的整层条目集合"计算，客户端原样回传给续页请求；
+   * 目录在两页之间发生变化时服务端返回 `ERR_DIR_CHANGED`，客户端必须刷新整层。
+   * 旧版服务端不返回该字段时为 null。
+   */
+  snapshot: string | null;
 }
 
 export type TreeQueryOutcome =
@@ -168,6 +175,8 @@ export interface WeaveSpaceClient {
     dir: string,
     cursor?: string | null,
     limit?: number,
+    /** 本轮分页的目录快照（仅续页传入，第一页为 null）。 */
+    snapshot?: string | null,
   ): Promise<TreeQueryOutcome>;
   openDocument(path: string, projectId?: string): Promise<OpenOutcome>;
   readDocument(sessionId: string, viewId?: string | null): Promise<OpenOutcome>;
@@ -268,12 +277,13 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         ? ((body as { nodes: ResourceNode[] }).nodes ?? [])
         : [];
     },
-    async listTree(projectId, dir, cursor, limit) {
+    async listTree(projectId, dir, cursor, limit, snapshot) {
       const query = new URLSearchParams();
       if (projectId) query.set('projectId', projectId);
       if (dir) query.set('dir', dir);
       if (cursor !== null && cursor !== undefined) query.set('cursor', cursor);
       if (limit !== undefined) query.set('limit', String(limit));
+      if (snapshot !== null && snapshot !== undefined) query.set('snapshot', snapshot);
       const suffix = query.toString();
       const { httpStatus, body } = await request(baseUrl, `/api/tree${suffix ? `?${suffix}` : ''}`);
       if (httpStatus !== 200 || body.status !== 'APPLIED') {
@@ -299,6 +309,7 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
           cursor: page.cursor ?? null,
           nextCursor: page.nextCursor ?? null,
           total: page.total,
+          snapshot: typeof page.snapshot === 'string' ? page.snapshot : null,
         },
       };
     },
@@ -481,7 +492,13 @@ export function createDemoClient(
         status: 'APPLIED' as const,
         level: dir,
         entries,
-        page: { limit: Math.max(entries.length, 1), cursor: null, nextCursor: null, total: entries.length },
+        page: {
+          limit: Math.max(entries.length, 1),
+          cursor: null,
+          nextCursor: null,
+          total: entries.length,
+          snapshot: null,
+        },
       };
     },
     async openDocument(path: string) {

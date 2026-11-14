@@ -31,6 +31,7 @@ import type {
   WorkspaceUiSnapshot,
 } from './types.ts';
 import type { WorkspaceMode } from '../client/client-api.ts';
+import type { TreeLevels } from '../components/tree-model.ts';
 import {
   folderIdsOf,
   pruneExpanded,
@@ -146,42 +147,86 @@ export function findNodeByPath(
 }
 
 /**
- * UX-02B-TREE：懒加载树下"按树找文件"的解析规则。
- *
- * 逐层文件树里，未展开的目录根本不在内存里。若把"树里没有"直接判成文件不存在，
- * 重启恢复就会把所有**子目录里的**标签误报成 `file-missing` —— 那是懒加载的假象，
- * 不是磁盘事实。因此分三种情况：
- *
- * 1. 已在已加载层里找到 → 用真实节点；
- * 2. 父目录这一层**已经完整加载**（ready 且无下一页）却仍找不到 → 真的不存在，
- *    保留既有 `file-missing` 语义（既有断言依赖它）；
- * 3. 父目录尚未加载 → 不能凭"没扫过"下结论，合成一个**候选节点**交给打开链路，
- *    由 Host 按真实磁盘判定存在性与权限。文件缺失会走 `open-rejected`，不撒谎。
- *
- * Legacy（projectId === null）没有层表，沿用第 1/2 条的旧行为。
+ * 候选路径合法性：来自持久化记录的路径可能损坏或被改写，合成节点之前
+ * 必须先挡掉绝对路径 / 盘符 / 反斜杠 / `..` / 空段 / 控制字符（fail-closed）。
  */
-export function resolveRestorableNode(state: WorkspaceState, path: string, projectId: string | null): ResourceNodeState | null {
-  const nodes: readonly ResourceNodeState[] =
-    projectId === null ? state.resources : (state.resourcesByProject[projectId] ?? []);
-  const found = findNodeByPath(nodes, path);
-  if (found) return found;
-  if (projectId === null) return null;
+function safePathSegments(path: string): string[] | null {
+  if (typeof path !== 'string' || path.length === 0 || path.length > 4096) return null;
+  if (path.includes('\0') || path.includes('\\') || path.startsWith('/')) return null;
+  if (/^[A-Za-z]:/.test(path)) return null;
+  const segments = path.split('/');
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
+  return segments;
+}
 
-  const segments = path.split('/').filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
-  if (segments.length === 0) return null;
-  const parent = segments.slice(0, -1).join('/');
-  const parentLevel = state.treeByProject[projectId]?.[parent];
-  if (parentLevel?.status === 'ready' && parentLevel.nextCursor === null) return null;
+/**
+ * 这一条路径分支是否**已经被完整枚举**（UX-02B-TREE-R1 / R1-01）。
+ *
+ * 必须检查从根到父目录的每一层，而不只是父层：
+ * - 任一层没加载 → 后面可能根本还没被扫描到；
+ * - 任一层只取了第一页（`nextCursor !== null`）→ 后续页里可能就有这个文件；
+ * - `loading` / `error` 也不算"完整"。
+ * 只有每一层都 `ready` 且 `nextCursor === null`，"树里没有"才等价于"磁盘上没有"。
+ */
+function branchFullyLoaded(levels: TreeLevels, parentSegments: readonly string[]): boolean {
+  for (let i = 0; i <= parentSegments.length; i += 1) {
+    const dir = parentSegments.slice(0, i).join('/');
+    const level = levels[dir];
+    if (!level || level.status !== 'ready' || level.nextCursor !== null) return false;
+  }
+  return true;
+}
 
-  const name = segments[segments.length - 1];
+/** 合成一个"待 Host 裁决"的候选文件节点；它不是磁盘事实，只是打开请求的目标。 */
+function candidateNode(path: string, name: string, projectId: string | null): ResourceNodeState {
   const dot = name.lastIndexOf('.');
+  const rel = projectId === null ? path : `${projectId}/${path}`;
   return {
-    id: `doc:${projectId}/${path}`,
+    id: `doc:${rel}`,
     name,
     kind: 'file',
     extension: dot > 0 ? name.slice(dot).toLowerCase() : '',
     path,
   };
+}
+
+/**
+ * UX-02B-TREE-R1：懒加载 + 分页树下"按树找文件"的解析规则。
+ *
+ * 逐层文件树里，未展开的目录、以及只取了第一页的层，都不在内存里。
+ * 把"树里没有"直接判成文件不存在，会把**子目录里的 / 后续页里的**标签
+ * 误报成 `file-missing` —— 那是懒加载的假象，不是磁盘事实。
+ *
+ * 1. 已在已加载层里找到 → 用真实节点；
+ * 2. 从根到父目录**每一层都已完整加载**却仍找不到 → 真的不存在，
+ *    保留既有 `file-missing` 语义（既有断言依赖它）；
+ * 3. 其余情况 → 合成候选节点交给打开链路，由 Host 按真实磁盘判定存在性与授权；
+ *    文件缺失走 `open-rejected`，不撒谎、不自动创建。
+ *
+ * Legacy（`projectId === null`）同样适用：它的层表键是 `''`，与 Multi 一样是懒加载。
+ * 完全没有层表时按旧行为处理（旧式全量树 / 尚未开始加载），避免改动既有语义。
+ */
+export function resolveRestorableNode(
+  state: WorkspaceState,
+  path: string,
+  projectId: string | null,
+): ResourceNodeState | null {
+  const nodes: readonly ResourceNodeState[] =
+    projectId === null ? state.resources : (state.resourcesByProject[projectId] ?? []);
+  const found = findNodeByPath(nodes, path);
+  if (found) return found;
+
+  const segments = safePathSegments(path);
+  if (!segments) return null;
+
+  const levels = state.treeByProject[projectId ?? ''];
+  if (!levels) {
+    // 没有层表：Legacy 旧式全量树沿用"找不到即不存在"；Multi 本来就是懒加载，
+    // 没有层表说明还没扫描过，同样只能交 Host 判定（与 02B-TREE 既有行为一致）。
+    return projectId === null ? null : candidateNode(path, segments[segments.length - 1], projectId);
+  }
+  if (branchFullyLoaded(levels, segments.slice(0, -1))) return null;
+  return candidateNode(path, segments[segments.length - 1], projectId);
 }
 
 /**

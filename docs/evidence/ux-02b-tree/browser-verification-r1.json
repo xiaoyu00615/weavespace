@@ -1,0 +1,88 @@
+{
+  "realView": {
+    "badge": "真实文件",
+    "statusBar": null,
+    "rowCount": 17,
+    "rootRows": [
+      {
+        "text": "▾ 设计资料库",
+        "folder": true,
+        "depth": 0
+      },
+      {
+        "text": "▾ 第二个项目",
+        "folder": true,
+        "depth": 0
+      }
+    ],
+    "folderRows": 7,
+    "linkRows": [
+      "linked-out（链接不展开，避免越过项目根）"
+    ],
+    "names": [
+      "设计资料库",
+      ".git",
+      "空目录",
+      "bulk",
+      "docs",
+      "linked-out（链接不展开，避免越过项目根）",
+      ".hidden",
+      "手册.pdf",
+      "clip.mp4",
+      "data.json",
+      "LICENSE",
+      "notes.txt",
+      "pic.png",
+      "README.md",
+      "第二个项目",
+      "assets",
+      "b.md"
+    ],
+    "statusLines": [
+      "已加载 217 个条目 · 当前项目",
+      "已加载 3 个条目"
+    ],
+    "indentGuides": 15
+  },
+  "clickedMore": "继续加载",
+  "beforeChange": [
+    "已显示 200 / 2005 项 · 继续加载",
+    "已加载 217 个条目 · 当前项目",
+    "已加载 3 个条目"
+  ],
+  "afterChange": {
+    "statuses": [
+      "目录已变化，请刷新 · 刷新",
+      "已加载 17 个条目 · 当前项目",
+      "已加载 3 个条目"
+    ],
+    "actions": [
+      "刷新"
+    ],
+    "hasChangedHint": true,
+    "bulkRows": 17
+  },
+  "clickedRefresh": "刷新",
+  "afterRefresh": {
+    "statuses": [
+      "已显示 200 / 2006 项 · 继续加载",
+      "已加载 217 个条目 · 当前项目",
+      "已加载 3 个条目"
+    ],
+    "actions": [
+      "继续加载"
+    ]
+  },
+  "demoView": {
+    "badge": "演示模式",
+    "rootRows": [
+      {
+        "text": "▾ 演示项目 · 雨夜",
+        "folder": true,
+        "depth": 0
+      }
+    ],
+    "rowCount": 8,
+    "indentGuides": 7
+  }
+}
