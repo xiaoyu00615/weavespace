@@ -36,6 +36,7 @@ import {
   type Autosave,
 } from './workspace-persistence';
 import { createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
+import { emptyLevels, normalizeDir } from '../components/tree-model.ts';
 import { refreshProject } from './refresh-project';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
@@ -63,6 +64,14 @@ export interface DocumentActions {
   reloadResources(projectId?: string): Promise<void>;
   /** 切换"当前项目"：只改焦点，不动标签 / 队列 / 草稿。 */
   switchProject(projectId: string): Promise<void>;
+  /**
+   * UX-02B-TREE：按需加载**一层**目录。
+   *
+   * `projectId=null` 表示 Legacy 单根；`dir=''` 表示项目根层。
+   * `append=true` 用该层当前的 `nextCursor` 继续加载下一页；
+   * 已加载条目不会被清空，其它层与其它项目不受影响。
+   */
+  loadTreeLevel(projectId: string | null, dir: string, append: boolean): Promise<void>;
   /** 只读查看磁盘当前内容（冲突恢复第一步）。 */
   fetchDiskVersion(docId: string): Promise<
     { ok: true; content: string; contentVersion: string } | { ok: false; errorCode: string | null; message?: string }
@@ -395,6 +404,51 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         // 打开/刷新/并发/模式切换的全部时序处理都在 open-document.ts：
         // 这里只转发，避免把异步归属判定散落在组件里（G2-R1）。
         await opener.openNode(node, projectId);
+      },
+
+      /**
+       * 逐层加载（UX-02B-TREE 契约 B.2）。
+       *
+       * 一层一个 `TREE_LEVEL_BEGIN` → 一次 `listTree` → `TREE_LEVEL_PAGE`；
+       * 同层已有在途请求时不重复发（单飞），迟到结果在切回 demo 后丢弃。
+       */
+      async loadTreeLevel(projectId, dir, append) {
+        if (stateRef.current.mode !== 'live') return;
+        const projectKey = projectId ?? '';
+        const levelDir = normalizeDir(dir);
+        const levels = stateRef.current.treeByProject[projectKey] ?? emptyLevels();
+        const current = levels[levelDir];
+        if (current?.status === 'loading') return;
+        const cursor = append ? (current?.nextCursor ?? null) : null;
+        if (append && !cursor) return;
+
+        dispatch({ type: 'TREE_LEVEL_BEGIN', projectId: projectKey, dir: levelDir, append });
+        try {
+          const outcome = await clientFor('live').listTree(projectId, levelDir, cursor);
+          // 用户已经切走：这个响应属于上一个工作区，一个 dispatch 都不能发
+          if (stateRef.current.mode !== 'live' || modeRef.current !== 'live') return;
+          if (outcome.status !== 'APPLIED') {
+            dispatch({
+              type: 'TREE_LEVEL_ERROR',
+              projectId: projectKey,
+              dir: levelDir,
+              errorCode: outcome.errorCode,
+            });
+            return;
+          }
+          dispatch({
+            type: 'TREE_LEVEL_PAGE',
+            projectId: projectKey,
+            dir: levelDir,
+            entries: outcome.entries,
+            cursor,
+            nextCursor: outcome.page.nextCursor,
+            total: outcome.page.total,
+          });
+        } catch {
+          if (stateRef.current.mode !== 'live') return;
+          dispatch({ type: 'TREE_LEVEL_ERROR', projectId: projectKey, dir: levelDir, errorCode: null });
+        }
       },
 
       async restoreWorkspace() {

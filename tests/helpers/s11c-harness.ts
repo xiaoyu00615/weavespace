@@ -298,6 +298,16 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
       await passHold('resources');
       return inner.listResources(projectId);
     },
+    /**
+     * UX-02B-TREE：加载器已从 `/api/resources` 迁到 `/api/tree`。
+     * 这里沿用**同一个** hold 类别，因为取消类的用例关心的是
+     * "这一次资源加载请求被挂住了"，与走哪个端点无关。
+     */
+    async listTree(projectId, dir, cursor, limit) {
+      calls.push(projectId ? { name: 'listTree', projectId } : { name: 'listTree' });
+      await passHold('resources');
+      return inner.listTree(projectId, dir, cursor, limit);
+    },
     async openDocument(path: string, projectId?: string) {
       calls.push(projectId ? { name: 'openDocument', path, projectId } : { name: 'openDocument', path });
       openCount += 1;

@@ -15,7 +15,8 @@
  *
  * 接口（全部返回 JSON，`status` 是权威结果，HTTP 200 不等于成功）：
  *   GET  /api/health                     健康检查
- *   GET  /api/resources                  已授权的项目文件树
+ *   GET  /api/resources                  已授权的项目文件树（旧端点，输出冻结）
+ *   GET  /api/tree                      逐层、可分页的真实文件树（UX-02B-TREE）
  *   POST /api/open      {path}           经 CommandBus 打开会话（返回会话句柄 + 正文）
  *   GET  /api/document  ?sessionId&viewId 经授权读取会话正文与版本
  *   POST /api/edit      {sessionId, buffer, expectedVersion?}
@@ -46,7 +47,7 @@ import {
   type ProjectRegistry,
   type WorkspaceConfig,
 } from '../../../packages/project-registry/index.ts';
-import { buildResourceTree, type ResourceNodeDto } from './tree.ts';
+import { buildResourceTree, buildTreePage, TREE_PAGE_DEFAULT_LIMIT, TREE_PAGE_MAX_LIMIT, type ResourceNodeDto } from './tree.ts';
 import { createProjectRuntime, type ProjectRuntime } from './project-runtime.ts';
 import { createFileProjectStore, type FileProjectStore, type StoreIo } from './store/index.ts';
 import { createHostFolderPicker, type ExecFileImpl, type FolderPicker } from './folder-picker/index.ts';
@@ -180,11 +181,18 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_PICKER_UNAVAILABLE':
     case 'ERR_COMMAND_UNSUPPORTED':
       return 501;
+    // 403 组：授权/路径越界/身份冲突/撤销待核对。
+    // `ERR_DIR_UNREADABLE` 也落在 403（HTTP 语义所限），但它是**环境事实**而非策略判定，
+    // 错误码与文案必须与 `ERR_PERMISSION_DENIED` 分开（契约 B.6 / T-22）。
     case 'ERR_PERMISSION_DENIED':
     case 'ERR_PATH_OUTSIDE_ROOT':
     case 'ERR_RESOURCE_IDENTITY_CONFLICT':
     case 'ERR_PROJECT_REVOKE_UNKNOWN':
+    case 'ERR_DIR_UNREADABLE':
       return 403;
+    // 链接不可展开：客户端指错了对象（既不是路径越界，也不是权限问题）。
+    case 'ERR_DIR_IS_LINK':
+      return 400;
     case 'ERR_RESOURCE_NOT_FOUND':
     case 'ERR_DOCUMENT_NOT_FOUND':
       return 404;
@@ -242,6 +250,12 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_ROOT_IDENTITY_UNSUPPORTED: '项目根目录身份无法确认',
   ERR_PATH_OUTSIDE_ROOT: '路径不在允许范围内',
   ERR_PERMISSION_DENIED: '权限不足',
+  /**
+   * 注意：这里**不能**写"权限"。目录读不出来不是授权问题，
+   * 说成"权限不足"会让用户去重新授权一个其实已授权的项目（契约 B.6）。
+   */
+  ERR_DIR_UNREADABLE: '无法读取此文件夹',
+  ERR_DIR_IS_LINK: '链接节点不能展开（避免越过项目根）',
   ERR_RESOURCE_NOT_FOUND: '资源不存在',
   ERR_DOCUMENT_NOT_FOUND: '文档会话不存在',
   ERR_STORAGE_IO: '存储访问失败',
@@ -277,6 +291,58 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
 
 function publicMessageOf(errorCode: ErrorCode): string {
   return PUBLIC_ERROR_MESSAGES[errorCode] ?? '请求处理失败';
+}
+
+/* ---------------- `/api/tree` 的参数校验（UX-02B-TREE） ---------------- */
+
+/**
+ * 层路径校验（契约 B.2.1 / 文档 26 §4.1）。
+ *
+ * 只接受**项目内相对路径**，且必须能在"不碰磁盘"的前提下判完：
+ * 绝对路径、盘符、UNC、`..`/`.` 段、反斜杠、NUL、空段一律 400。
+ * 这不是授权判定（越界由 storage 的 `resolveInBoundary` 负责），
+ * 目的是让明显非法的输入在读盘之前就被拒（T-10 的"零 IO"）。
+ */
+function parseTreeDir(raw: string | null): string {
+  if (raw === null || raw === '') return '';
+  if (raw.length > 4096) throw new HttpError(400, 'ERR_COMMAND_INVALID', 'dir 过长');
+  if (raw.includes('\0')) throw new HttpError(400, 'ERR_COMMAND_INVALID', 'dir 含非法字符');
+  // 统一用正斜杠：反斜杠会与 Windows 分隔符产生歧义，且可能被用来绕过段级校验
+  if (raw.includes('\\')) throw new HttpError(400, 'ERR_COMMAND_INVALID', 'dir 必须使用正斜杠');
+  if (raw.startsWith('/')) throw new HttpError(400, 'ERR_COMMAND_INVALID', '不接受绝对路径或 UNC');
+  if (/^[A-Za-z]:/.test(raw)) throw new HttpError(400, 'ERR_COMMAND_INVALID', '不接受盘符路径');
+  const segments = raw.split('/');
+  for (const segment of segments) {
+    if (segment === '' || segment === '.' || segment === '..') {
+      throw new HttpError(400, 'ERR_COMMAND_INVALID', 'dir 含空段或相对段');
+    }
+  }
+  return segments.join('/');
+}
+
+/**
+ * 游标 = 不透明字符串（当前实现是十进制偏移量）。
+ *
+ * 客户端不得解析或构造它；这里做严格格式校验，非法即 400 且不读盘。
+ * 超出总数的游标是**合法**的：返回空页 + `nextCursor: null`（幂等终点）。
+ */
+function parseTreeCursor(raw: string | null): number | undefined {
+  if (raw === null) return undefined;
+  if (!/^(0|[1-9][0-9]{0,9})$/.test(raw)) {
+    throw new HttpError(400, 'ERR_COMMAND_INVALID', 'cursor 不合法');
+  }
+  return Number(raw);
+}
+
+/** 每页条数：缺省 200，范围 1–2000（契约 B.2.1）。它**不是**单层可见上限。 */
+function parseTreeLimit(raw: string | null): number {
+  if (raw === null) return TREE_PAGE_DEFAULT_LIMIT;
+  if (!/^[0-9]{1,4}$/.test(raw)) throw new HttpError(400, 'ERR_COMMAND_INVALID', 'limit 不合法');
+  const value = Number(raw);
+  if (value < 1 || value > TREE_PAGE_MAX_LIMIT) {
+    throw new HttpError(400, 'ERR_COMMAND_INVALID', `limit 必须在 1–${TREE_PAGE_MAX_LIMIT} 之间`);
+  }
+  return value;
 }
 
 /**
@@ -1081,6 +1147,65 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         return;
       }
       sendJson(res, 200, { status: 'APPLIED', projects: authority.list() });
+      return;
+    }
+
+    /**
+     * UX-02B-TREE：只读、逐层、可分页的真实目录树。
+     *
+     * 与 `/api/resources` 的关系：旧端点的实现与输出**冻结**（递归、只认文本后缀），
+     * 保留给既有客户端与测试；新端点只增不改，是 Shell 懒加载的唯一数据来源。
+     *
+     * 门禁顺序与旧端点一致：项目存在/可用（404/503）→ 项目级读授权（403）
+     * → 参数合法性（400，零 IO）→ `withDiskOp` 包裹下的单次 `readDir`。
+     * 全过程不接受、也不返回任何本机绝对路径。
+     */
+    if (method === 'GET' && pathname === '/api/tree') {
+      const projectId = url.searchParams.get('projectId') ?? '';
+      if (mode === 'multi' && !projectId) {
+        throw new HttpError(400, 'ERR_PROJECT_REQUIRED', PUBLIC_ERROR_MESSAGES.ERR_PROJECT_REQUIRED ?? '必须声明 projectId');
+      }
+
+      // 先判项目存在与可用，再判授权：不存在的项目不该被报成"权限不足"。
+      let treeProvider: StorageProvider;
+      let treeProjectId: string | undefined;
+      if (mode === 'multi') {
+        treeProvider = requireProjectHandle(projectId).provider;
+        const decision = permission.authorize({
+          actorId,
+          action: 'read',
+          resourcePath: '',
+          providerId: `local:${projectId}`,
+        });
+        if (!decision.allowed) {
+          throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+        }
+        treeProjectId = projectId;
+      } else {
+        treeProvider = legacyOnlyProvider();
+      }
+
+      // 参数校验必须在 readDir 之前：非法 dir / cursor / limit 一律零 IO
+      const dir = parseTreeDir(url.searchParams.get('dir'));
+      const cursor = parseTreeCursor(url.searchParams.get('cursor'));
+      const limit = parseTreeLimit(url.searchParams.get('limit'));
+
+      try {
+        const entries = await withDiskOp(treeProjectId, () =>
+          treeProvider.readDir(dir === '' ? '.' : dir),
+        );
+        // 排序 → 切片 → nextCursor 全在纯函数里，便于直接断言"没有静默截断"
+        sendJson(res, 200, buildTreePage(entries, { projectId: treeProjectId, dir, cursor, limit }));
+      } catch (err) {
+        if (err instanceof HttpError) throw err;
+        const code = (err as { errorCode?: string }).errorCode;
+        const known = typeof code === 'string' && code in ERROR_CODES ? (code as ErrorCode) : undefined;
+        throw new HttpError(
+          known ? httpStatusOfDomainError(known) : 422,
+          known ?? 'ERR_STORAGE_IO',
+          known ? publicMessageOf(known) : '目录读取失败',
+        );
+      }
       return;
     }
 

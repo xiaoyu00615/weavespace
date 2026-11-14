@@ -1,0 +1,57 @@
+{
+  "url": "http://127.0.0.1:5178/",
+  "host": "http://127.0.0.1:5177 (--workspace 静态 Multi 模式)",
+  "browser": "Google Chrome headless (CDP, 1500x950)",
+  "before": {
+    "title": "织界 WeaveSpace · 工作台（S9-A 演示）",
+    "badge": "真实文件",
+    "rows": 222,
+    "text": "项目\n2 个项目 · 2 个可用\n«\n▾\n设计资料库\n可用\n↻\n▾\n.git\nconfig\n▾\n空目录\n空文件夹\n▾\nbulk\nf00000.txt\nf00001.txt\nf00002.txt\nf00003.txt\nf00004.txt\nf00005.txt\nf00006.txt\nf00007.txt\nf00008.txt\nf00009.txt\nf00010.txt\nf00011.txt\nf00012.txt\nf00013.txt\nf00014.txt\nf00015.txt\nf00016.txt\nf00017.txt\nf00018.txt\nf00019.txt\nf00020.txt\nf00021.txt\nf00022.txt\nf00023.txt\nf00024.txt\nf00025.txt\nf00026.txt\nf00027.txt\nf00028.txt\nf00029.txt\nf00030"
+  },
+  "after": {
+    "badge": "真实文件",
+    "mode": "真实文件",
+    "rootRows": [
+      "▾\n设计资料库",
+      "▾\n第二个项目"
+    ],
+    "rowCount": 222,
+    "kinds": {
+      "folder": 9,
+      "file": 213,
+      "link": 1
+    },
+    "status": [
+      "空文件夹",
+      "已显示 200 / 2005 项 · 继续加载",
+      "已加载 217 个条目 · 当前项目",
+      "已加载 3 个条目"
+    ],
+    "treeText": "项目\n2 个项目 · 2 个可用\n«\n▾\n设计资料库\n可用\n↻\n▾\n.git\nconfig\n▾\n空目录\n空文件夹\n▾\nbulk\nf00000.txt\nf00001.txt\nf00002.txt\nf00003.txt\nf00004.txt\nf00005.txt\nf00006.txt\nf00007.txt\nf00008.txt\nf00009.txt\nf00010.txt\nf00011.txt\nf00012.txt\nf00013.txt\nf00014.txt\nf00015.txt\nf00016.txt\nf00017.txt\nf00018.txt\nf00019.txt\nf00020.txt\nf00021.txt\nf00022.txt\nf00023.txt\nf00024.txt\nf00025.txt\nf00026.txt\nf00027.txt\nf00028.txt\nf00029.txt\nf00030.txt\nf00031.txt\nf00032.txt\nf00033.txt\nf00034.txt\nf00035.txt\nf00036.txt\nf00037.txt\nf00038.txt\nf00039.txt\nf00040.txt\nf00041.txt\nf00042.txt\nf00043.txt\nf00044.txt\nf00045.txt\nf00046.txt\nf00047.txt\nf00048.txt\nf00049.txt\nf00050.txt\nf00051.txt\nf00052.txt\nf00053.txt\nf00054.txt\nf00055.txt\nf00056.txt\nf00057.txt\nf00058.txt\nf00059.txt\nf00060.txt\nf00061.txt\nf00062.txt\nf00063.txt\nf00064.txt\nf00065.txt\nf00066.txt\nf00067.txt\nf00068.txt\nf00069.txt\nf00070.txt\nf00071.txt\nf00072.txt\nf00073.txt\nf00074.txt\nf00075.txt\n"
+  },
+  "unsupported": {
+    "clicked": "手册.pdf",
+    "hit": "「手册.pdf」此类型暂不支持预览或编辑，仍可在文件树中查看",
+    "tabCount": 0
+  },
+  "pagination": {
+    "before": "已显示 200 / 2005 项 · 继续加载",
+    "action": "clicked",
+    "after": {
+      "status": [
+        "已显示 400 / 2005 项 · 继续加载",
+        "已加载 417 个条目 · 当前项目"
+      ],
+      "rows": 422
+    }
+  },
+  "link": {
+    "row": "linked-out（链接不展开，避免越过项目根）",
+    "notice": "「linked-out」是链接，不展开也不打开（避免越过项目根）"
+  },
+  "screenshots": [
+    "01-真实文件模式-根层.png",
+    "02-不支持预览的提示.png",
+    "03-分页继续加载.png"
+  ]
+}

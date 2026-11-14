@@ -70,7 +70,8 @@ node apps/server/src/main.ts --workspace-store <dir> [端口]         # Multi �
 | GET | `/api/session-token` | **托管 Multi**：换一次性会话令牌 `{token, intent?}`；其他模式 501 |
 | POST | `/api/projects/pick` | **托管 Multi**：`{requestId, intentId, name?}` → 请求 Host 弹本机目录选择器（202）；**不接受任何路径字段** |
 | GET | `/api/projects/pick` | 托管 Multi：`?requestId=` → 查询该请求的终态（`PENDING`/`APPLIED`/`CANCELLED`/`REJECTED`） |
-| GET | `/api/resources` | 授权范围内的可编辑文本文件树；Legacy 无需参数，Multi 必须 `?projectId=` |
+| GET | `/api/resources` | **旧端点，输出冻结**：授权范围内的可编辑文本文件树（递归、只列 `.md/.markdown/.txt`）；Legacy 无需参数，Multi 必须 `?projectId=`。新 UI 不用它 |
+| GET | `/api/tree` | **UX-02B-TREE**：只读一层真实目录，支持分页；见下节 |
 | POST | `/api/open` | Legacy `{path}` / Multi `{projectId,path}` → 经 CommandBus 建立会话 |
 | GET | `/api/document` | `?sessionId&viewId` → **G-DRAFT**：按 actor + 会话 + 视图归属读回内存正文（不碰磁盘） |
 | POST | `/api/edit` | `{sessionId, buffer, expectedVersion?}` → `document.applyEdit` |
@@ -104,6 +105,47 @@ node apps/server/src/main.ts --workspace-store <dir> [端口]         # Multi �
 | **该平台/环境没有可用选择器** | 501 | `REJECTED` + `ERR_PICKER_UNAVAILABLE` |
 | **意图过期 / 已用 / 不存在，或 `requestId` 未知** | 410 | `REJECTED` + `ERR_INTENT_EXPIRED` / `ERR_INTENT_CONSUMED` / `ERR_INTENT_INVALID` / `ERR_PICK_REQUEST_GONE` |
 | **输入不合法**（名称过长/含控制字符/缺必填） | 400 | `REJECTED` + `ERR_COMMAND_INVALID` |
+| **目录当前读不出来**（UX-02B-TREE） | 403 | `REJECTED` + `ERR_DIR_UNREADABLE`（"无法读取此文件夹"） |
+| **请求展开链接节点** | 400 | `REJECTED` + `ERR_DIR_IS_LINK` |
+
+## 逐层文件树 `GET /api/tree`（UX-02B-TREE）
+
+```http
+GET /api/tree?projectId=project-a&dir=docs&cursor=200&limit=200
+```
+
+```jsonc
+{
+  "status": "APPLIED",
+  "level": "docs",
+  "entries": [
+    { "id": "dir:project-a/docs/sub", "name": "sub", "kind": "folder", "extension": "", "relPath": "docs/sub" },
+    { "id": "doc:project-a/docs/a.md", "name": "a.md", "kind": "file", "extension": ".md", "relPath": "docs/a.md" }
+  ],
+  "page": { "limit": 200, "cursor": "200", "nextCursor": "400", "total": 423 }
+}
+```
+
+- **一次只取一层**。`dir` 是项目内相对路径（省略/空串 = 根）；不接受绝对路径、盘符、
+  UNC、`..`/`.` 段、反斜杠、NUL、空段 → `400 ERR_COMMAND_INVALID`，零 IO。
+- **分页不是截断**：`limit` 缺省 200、范围 1–2000，只是每页条数。只要还有剩余条目，
+  `nextCursor` 就必须非 `null`；客户端继续请求直到 `nextCursor === null`，
+  此时该层所有可枚举条目都已可见。`page.total` 是该层真实总数。
+  排序是服务端全序（目录/链接在前 → `zh-Hans-CN` → 码点兜底），先排完再切片，
+  因此分页不会漂移。
+- **三种节点**：`folder` / `file` / `link`，id 分别是 `dir:` / `doc:` / `link:` 命名空间。
+  文件类型不决定是否显示；不支持预览的格式照样列出，由 Shell 的能力注册表决定能否打开。
+  空目录正常返回 `entries: []`；`link`（符号链接 / junction / 重解析点）只显示、不跟随，
+  把 `dir` 指向它 → `400 ERR_DIR_IS_LINK`。
+- **三态不得混淆**：目录读不出来 → `403 ERR_DIR_UNREADABLE`（环境事实）；
+  项目未授权 → `403 ERR_PERMISSION_DENIED`（策略事实）；
+  目录不存在/不是目录 → `404 ERR_RESOURCE_NOT_FOUND`。
+  绝不把不可读渲染成空文件夹。
+- **门禁与 `/api/resources` 一致**：项目存在与 READY（404/503）→ 项目级读授权（403）
+  → 参数校验（400）→ `withDiskOp` 包裹（屏障期 409）→ `StorageProvider.readDir()` 单层读取。
+  **不返回、不接受任何本机绝对路径**；响应也不含 `providerId` / `rootToken`。
+- `/api/resources` 保持兼容且输出冻结（既有链路与测试依赖它），但 Shell 的树已迁移到本端点。
+
 
 Multi 下项目级失败（根失效/会话失效）的 `/api/save` 响应**省略 `document.content`**：
 只返回 `dirty` / `baseVersion` / `revision` / `stale` 等状态，避免把草稿正文复制进错误响应；

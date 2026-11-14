@@ -25,6 +25,24 @@ export const ERROR_CODES = {
    * 不得静默复用；本轮不提供隐式重绑定。
    */
   ERR_RESOURCE_IDENTITY_CONFLICT: 'ERR_RESOURCE_IDENTITY_CONFLICT',
+  /**
+   * 目录在当前时刻**读不出来**（`EPERM` / `EACCES` / `EBUSY` / `EIO` 等）。
+   *
+   * 与 `ERR_PERMISSION_DENIED` 严格区分（UX-02B-TREE / 契约 B.6）：
+   * - 本码是"环境事实"——磁盘不让读这个目录，与 WeaveSpace 的授权状态无关；
+   * - `ERR_PERMISSION_DENIED` 是"策略事实"——WeaveSpace 的授权判定拒绝。
+   *
+   * 两者都映射 403，但**不得**互相替代：把前者说成"权限不足"会诱导用户去重新授权一个
+   * 其实已授权的项目；把后者说成"读不出来"则会掩盖一次真实的越权尝试。
+   */
+  ERR_DIR_UNREADABLE: 'ERR_DIR_UNREADABLE',
+  /**
+   * 请求展开的路径本身是符号链接 / junction / 其他重解析点。
+   *
+   * 链接只作为 `kind: 'link'` 叶子**显示**，不展开、不读取（契约 B.5）：
+   * 跟随它可能越过项目根，而项目根是唯一授权单元。
+   */
+  ERR_DIR_IS_LINK: 'ERR_DIR_IS_LINK',
   ERR_DOCUMENT_NOT_FOUND: 'ERR_DOCUMENT_NOT_FOUND',
   ERR_DOCUMENT_DIRTY: 'ERR_DOCUMENT_DIRTY',
   ERR_DOCUMENT_VERSION_CONFLICT: 'ERR_DOCUMENT_VERSION_CONFLICT',

@@ -1,0 +1,69 @@
+{
+  "collapsed": [
+    "bulk",
+    ".git",
+    "docs",
+    "assets"
+  ],
+  "realView": {
+    "badge": "真实文件",
+    "rootRows": [
+      {
+        "text": "▾ 设计资料库",
+        "folder": true,
+        "depth": 0
+      },
+      {
+        "text": "▾ 第二个项目",
+        "folder": true,
+        "depth": 0
+      }
+    ],
+    "names": [
+      "设计资料库",
+      ".git",
+      "空目录",
+      "bulk",
+      "docs",
+      "linked-out（链接不展开，避免越过项目根）",
+      ".hidden",
+      "手册.pdf",
+      "clip.mp4",
+      "data.json",
+      "LICENSE",
+      "notes.txt",
+      "pic.png",
+      "README.md",
+      "第二个项目",
+      "assets",
+      "b.md"
+    ],
+    "linkRows": [
+      "linked-out（链接不展开，避免越过项目根）"
+    ],
+    "status": [
+      "空文件夹",
+      "已加载 217 个条目 · 当前项目",
+      "已加载 3 个条目"
+    ]
+  },
+  "pageState": [
+    "空文件夹",
+    "已显示 200 / 2005 项 · 继续加载",
+    "已加载 217 个条目 · 当前项目",
+    "已加载 3 个条目"
+  ],
+  "hint": "「pic.png」此类型暂不支持预览或编辑，仍可在文件树中查看",
+  "demoView": {
+    "badge": "演示模式",
+    "rootRows": [
+      {
+        "text": "▾ 演示项目 · 雨夜",
+        "folder": true,
+        "depth": 0
+      }
+    ],
+    "rowCount": 8,
+    "hasIndentGuides": 7
+  }
+}

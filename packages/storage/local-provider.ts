@@ -20,7 +20,7 @@
  * 本模块不负责编辑会话、冲突呈现或权限判定，那些属于 document / permission。
  */
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SaveResult } from '../contracts/types.ts';
 import {
@@ -67,6 +67,14 @@ export interface StorageFaultHooks {
    * 用于确定性注入"版本读取期间根失效"，验证根错误优先于版本冲突。
    */
   afterVersionRead?: () => void;
+  /**
+   * 单层列目录即将执行 `readdir` 时调用（UX-02B-TREE）。
+   *
+   * 用途：确定性注入"这个目录读不出来"（`EACCES`/`EPERM`/`EBUSY`），
+   * 因为在 Windows 上无法用 `chmod` 造出不可读目录。抛错即视为该目录读取失败，
+   * 由 `readDir` 的目录错误映射转成 `ERR_DIR_UNREADABLE`。
+   */
+  beforeReadDir?: (relativeDir: string) => void;
 }
 
 export interface LocalProviderOptions {
@@ -92,6 +100,15 @@ export interface ReadResult {
   encoding: 'utf8';
 }
 
+/** 单层目录条目类型（UX-02B-TREE 契约 B.3）：只描述事实，不带格式语义。 */
+export type DirEntryKind = 'folder' | 'file' | 'link';
+
+export interface DirEntry {
+  /** 单段名称，不含路径分隔符。 */
+  readonly name: string;
+  readonly kind: DirEntryKind;
+}
+
 export interface StorageProvider {
   readonly providerId: string;
   readonly rootDir: string;
@@ -100,6 +117,20 @@ export interface StorageProvider {
   /** expectedVersion=null 表示"仅当不存在时创建"。 */
   writeConditional(path: string, content: string, expectedVersion: string | null): Promise<SaveResult>;
   list(dir?: string): Promise<string[]>;
+  /**
+   * 只读**一层**目录（UX-02B-TREE）。
+   *
+   * 与 `list()` 的区别是语义而非实现细节：`list()` 递归整棵子树、只返回可编辑文本的
+   * 相对路径（旧端点 `/api/resources` 依赖它，保持冻结）；`readDir()` 只枚举一层、
+   * 返回目录/文件/链接三种事实，空目录正常返回 `[]`。
+   *
+   * 纪律（契约 B.5 / B.6）：
+   * - **不跟随**符号链接与 junction：它们以 `kind: 'link'` 返回，绝不进入；
+   * - 读不出来必须上抛 `ERR_DIR_UNREADABLE`，**不得**吞成空数组——
+   *   把"读不出来"渲染成"空文件夹"会让用户以为文件丢了；
+   * - 不存在返回 `ERR_RESOURCE_NOT_FOUND`，与"存在但为空"严格区分。
+   */
+  readDir(dir?: string): Promise<DirEntry[]>;
 }
 
 export function contentVersionOf(content: string | Buffer): string {
@@ -108,6 +139,30 @@ export function contentVersionOf(content: string | Buffer): string {
 
 function isMissing(err: unknown): boolean {
   return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
+function domainError(errorCode: string, message: string): Error {
+  return Object.assign(new Error(message), { errorCode });
+}
+
+/**
+ * 单层列目录的错误映射（UX-02B-TREE 契约 B.6）。
+ *
+ * 与写入链路的 `toStorageError` **刻意分开**：那里把 `EPERM/EACCES` 映射成
+ * `ERR_PERMISSION_DENIED`（"你没被允许写这里"），而这里必须映射成
+ * `ERR_DIR_UNREADABLE`（"这个目录现在读不出来"）——两者是环境事实与策略事实的区别，
+ * 混用会让用户去重新授权一个其实已授权的项目，或掩盖一次真实的越权尝试。
+ *
+ * 错误消息固定为常量文本：绝不携带绝对路径（S-14 / WK-04 的零泄露纪律）。
+ */
+function toDirError(err: unknown): Error {
+  const tagged = (err as { errorCode?: string } | undefined)?.errorCode;
+  if (typeof tagged === 'string') return err as Error;
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'ENOENT' || code === 'ENOTDIR') {
+    return domainError('ERR_RESOURCE_NOT_FOUND', '目录不存在');
+  }
+  return domainError('ERR_DIR_UNREADABLE', '目录无法读取');
 }
 
 /** 已确认存在后的版本读取重试次数上限（F01：有限次数重新核验，不做无限重试）。 */
@@ -494,5 +549,82 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       await walk(check.absolutePath, '');
       return out.sort();
     },
+
+    /**
+     * 只读一层目录（UX-02B-TREE）。
+     *
+     * `list()` 的语义是"取整棵子树里所有可编辑文本的路径清单"，它无法表达空目录、
+     * 无法表达链接、也无法表达"这一层读不出来"。本方法补上这三件事，且**只**做一层。
+     */
+    async readDir(dir = '.'): Promise<DirEntry[]> {
+      const requested = typeof dir === 'string' && dir.length > 0 ? dir : '.';
+
+      // 链接预检（契约 B.5）：必须发生在 resolveInBoundary **之前**。
+      // resolveInBoundary 会逐级 realpath 比对，链接因"真实路径 ≠ 字面路径"被它判成越界，
+      // 用户只会看到"路径不在允许范围内"，看不出"这是一条链接"。这里只看末段的元数据，
+      // 且只在字面形态明显安全时进行（含 `..`/绝对路径/盘符的一律不做这次 peek）。
+      const literal = literalPathIfSafe(boundary.canonicalRoot, requested);
+      if (literal !== null) {
+        try {
+          const pre = await lstat(literal);
+          if (pre.isSymbolicLink()) throw domainError('ERR_DIR_IS_LINK', '该路径是链接，不展开');
+        } catch (err) {
+          const tagged = (err as { errorCode?: string } | undefined)?.errorCode;
+          if (typeof tagged === 'string') throw err;
+          // ENOENT / EACCES 等：交给下面的统一链路给出一致的错误
+        }
+      }
+
+      const check = resolveInBoundary(boundary, requested);
+      if (!check.ok) {
+        throw Object.assign(new Error(check.detail), { errorCode: check.errorCode });
+      }
+      // 与 list() 同一条纪律：根消失时不得静默表现为"普通空目录"
+      assertRootContinuity(boundary, establishedToken);
+
+      try {
+        const info = await lstat(check.absolutePath);
+        // 悬空重解析点也不会走到这里（resolveInBoundary 已判越界），此处是第二道闸
+        if (info.isSymbolicLink()) throw domainError('ERR_DIR_IS_LINK', '该路径是链接，不展开');
+        if (!info.isDirectory()) throw domainError('ERR_RESOURCE_NOT_FOUND', '该路径不是目录');
+
+        faults.beforeReadDir?.(requested);
+
+        const entries = await readdir(check.absolutePath, { withFileTypes: true });
+        const out: DirEntry[] = [];
+        for (const entry of entries) {
+          // `dirent` 是唯一能可靠识别 Windows junction 的通道（旧 list() 已依赖这一点）
+          if (entry.isSymbolicLink()) {
+            out.push({ name: entry.name, kind: 'link' });
+          } else if (entry.isDirectory()) {
+            out.push({ name: entry.name, kind: 'folder' });
+          } else {
+            // 普通文件，以及管道/设备等非目录条目：一律显示为文件。
+            // 静默丢弃会让用户以为"文件丢了"。
+            out.push({ name: entry.name, kind: 'file' });
+          }
+        }
+        // 稳定升序；"目录/链接在前"是展示层语义（tree.ts 负责），不在存储层表达
+        return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      } catch (err) {
+        throw toDirError(err);
+      }
+    },
   };
+}
+
+/**
+ * 把一个"形态明显安全的相对路径"拼成字面绝对路径；不安全则返回 null。
+ *
+ * 这不是授权判定（授权仍由 `resolveInBoundary` 负责），只是决定"要不要做那次链接元数据预检"：
+ * 含 `..`、绝对路径、盘符、UNC、NUL、空段的请求一律跳过预检，直接进入正式解析，
+ * 避免为了一次诊断性 peek 去触碰根外路径。
+ */
+function literalPathIfSafe(canonicalRoot: string, requested: string): string | null {
+  if (requested.includes('\0')) return null;
+  const unified = requested.replace(/\\/g, '/');
+  if (unified.startsWith('/') || /^[A-Za-z]:/.test(unified)) return null;
+  const segments = unified.split('/');
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
+  return join(canonicalRoot, ...segments);
 }

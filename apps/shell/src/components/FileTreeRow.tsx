@@ -121,6 +121,27 @@ export function FileGlyph({ extension }: { extension?: string }) {
   );
 }
 
+/**
+ * 链接图标（UX-02B-TREE 契约 B.5）。
+ *
+ * 形状与文件/文件夹都不同：链接是"显示但不可用"的叶子（不展开、不打开、不预览），
+ * 静默隐藏会让用户以为文件丢了，但把它画成普通文件又会诱导点击。
+ */
+export function LinkGlyph() {
+  return (
+    <svg className="tree__icon tree__icon--link" viewBox="0 0 16 16" width={ICON_SIZE} height={ICON_SIZE} aria-hidden="true">
+      <path
+        d="M6.6 9.4 9.4 6.6M6.9 4.9l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9.1 11.1l-1 1a2.5 2.5 0 0 1-3.5-3.5l1-1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeDasharray="2 1.4"
+      />
+    </svg>
+  );
+}
+
 export interface TreeRowProps {
   node: ResourceNodeState;
   depth: number;
@@ -135,6 +156,13 @@ export interface TreeRowProps {
   opened?: boolean;
   /** 已打开且有未保存修改。 */
   dirty?: boolean;
+  /**
+   * 右对齐的附加内容（项目根的状态芯片 / 刷新按钮）。
+   *
+   * 渲染在**按钮之外**、同一个 `<li>` 之内：HTML 不允许按钮套按钮，
+   * 把它放进主按钮会让项目根行的刷新按钮变成无效交互元素。
+   */
+  actions?: ReactNode;
   onActivate(): void;
   /** 展开后的子层（渲染在同一个 `<li>` 内，保证语义与缩进引导线连续）。 */
   children?: ReactNode;
@@ -155,37 +183,50 @@ export function TreeRow({
   selected,
   opened,
   dirty,
+  actions,
   onActivate,
   children,
 }: TreeRowProps) {
   const isFolder = node.kind === 'folder';
+  const isLink = node.kind === 'link';
   return (
     <li className="tree__item">
-      <button
-        type="button"
-        className={[
-          'tree__row',
-          isFolder ? 'tree__row--folder' : 'tree__row--file',
-          selected ? 'tree__row--selected' : '',
-          opened ? 'tree__row--opened' : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        aria-expanded={isFolder ? expanded : undefined}
-        title={node.name}
-        onClick={onActivate}
-      >
-        <TreeIndent depth={depth} last={last} trails={trails} />
-        <TreeCaret expanded={isFolder ? expanded : undefined} />
-        {isFolder ? <FolderGlyph open={expanded === true} /> : <FileGlyph extension={node.extension} />}
-        <span className="tree__name">{node.name}</span>
-        {opened && (
-          <span
-            className={dirty ? 'tree__dot tree__dot--dirty' : 'tree__dot'}
-            title={dirty ? '已打开（有未保存修改）' : '已在标签中打开'}
-          />
-        )}
-      </button>
+      <div className="tree__row-wrap">
+        <button
+          type="button"
+          className={[
+            'tree__row',
+            isFolder ? 'tree__row--folder' : 'tree__row--file',
+            isLink ? 'tree__row--link' : '',
+            selected ? 'tree__row--selected' : '',
+            opened ? 'tree__row--opened' : '',
+            actions ? 'tree__row--with-actions' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          aria-expanded={isFolder ? expanded : undefined}
+          title={isLink ? `${node.name}（链接不展开，避免越过项目根）` : node.name}
+          onClick={onActivate}
+        >
+          <TreeIndent depth={depth} last={last} trails={trails} />
+          <TreeCaret expanded={isFolder ? expanded : undefined} />
+          {isFolder ? (
+            <FolderGlyph open={expanded === true} />
+          ) : isLink ? (
+            <LinkGlyph />
+          ) : (
+            <FileGlyph extension={node.extension} />
+          )}
+          <span className="tree__name">{node.name}</span>
+          {opened && (
+            <span
+              className={dirty ? 'tree__dot tree__dot--dirty' : 'tree__dot'}
+              title={dirty ? '已打开（有未保存修改）' : '已在标签中打开'}
+            />
+          )}
+        </button>
+        {actions && <span className="tree__row-actions">{actions}</span>}
+      </div>
       {children}
     </li>
   );

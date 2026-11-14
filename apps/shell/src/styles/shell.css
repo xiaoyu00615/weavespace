@@ -1312,3 +1312,67 @@ button {
   color: var(--muted);
   font-size: 11px;
 }
+
+/* ---- UX-02B-TREE：统一树行、状态行与链接节点 ---- */
+
+.tree__row-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.tree__row--with-actions {
+  /* 给右侧操作区让出空间，避免文件名被状态芯片压住 */
+  padding-right: 74px;
+}
+
+.tree__row-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.tree__row--link {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tree__icon--link {
+  opacity: 0.7;
+}
+
+.tree__status {
+  list-style: none;
+  min-height: 20px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tree__status--error {
+  color: var(--warn);
+}
+
+.tree__status--count {
+  opacity: 0.75;
+}
+
+.tree__status-action {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tree__status-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -165,19 +165,43 @@ export async function loadWorkspace(deps: WorkspaceLoadDeps): Promise<LoadedWork
     if (cancelled()) return null;
     dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
     try {
-      const nodes = await client.listResources();
+      // UX-02B-TREE：Legacy 也走逐层树，根层只取一层；旧 `/api/resources` 保持冻结不再调用
+      const outcome = await client.listTree(null, '');
       if (cancelled()) return null;
-      dispatch({ type: 'SET_RESOURCES', nodes });
-      const files = countFiles(nodes);
+      if (outcome.status !== 'APPLIED') {
+        dispatch({ type: 'TREE_LEVEL_ERROR', projectId: '', dir: '', errorCode: outcome.errorCode });
+        dispatch({ type: 'NOTICE', message: '根目录读取失败：请检查项目根是否可用' });
+        return null;
+      }
+      dispatch({ type: 'TREE_RESET', projectId: '' });
+      dispatch({
+        type: 'TREE_LEVEL_PAGE',
+        projectId: '',
+        dir: '',
+        entries: outcome.entries,
+        cursor: null,
+        nextCursor: outcome.page.nextCursor,
+        total: outcome.page.total,
+      });
+      const files = outcome.entries.filter((entry) => entry.kind === 'file').length;
       dispatch({
         type: 'NOTICE',
-        message: files > 0 ? `已加载 ${files} 个可编辑文件（真实文件模式）` : '未发现可编辑文件',
+        message:
+          files > 0
+            ? `已加载根层 ${files} 个文件；可编辑文件（真实文件模式）按查看器能力判定`
+            : '根目录为空；可编辑文件（真实文件模式）按查看器能力判定',
       });
       return {
         workspaceMode,
         workspaceKey,
         projects: [],
-        resources: nodes,
+        resources: outcome.entries.map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          kind: entry.kind,
+          extension: entry.extension,
+          path: entry.relPath,
+        })),
         resourcesByProject: {},
       };
     } catch {
@@ -245,9 +269,25 @@ export async function loadProjectResources(
   if (cancelled()) return false;
   dispatch({ type: 'SET_PROJECT_LOADING', projectId, loading: true });
   try {
-    const nodes = await deps.clientFor('live').listResources(projectId);
+    // UX-02B-TREE：只取根层；子目录在用户展开时才逐层加载（不递归扫描整个项目）
+    const outcome = await deps.clientFor('live').listTree(projectId, '');
     if (cancelled()) return false;
-    dispatch({ type: 'SET_PROJECT_RESOURCES', projectId, nodes });
+    if (outcome.status !== 'APPLIED') {
+      dispatch({ type: 'TREE_LEVEL_ERROR', projectId, dir: '', errorCode: outcome.errorCode });
+      dispatch({ type: 'NOTICE', message: '项目根目录读取失败：请检查授权与目录可用性' });
+      return false;
+    }
+    // 刷新只作废这一个项目的层表（其他项目引用不变）
+    dispatch({ type: 'TREE_RESET', projectId });
+    dispatch({
+      type: 'TREE_LEVEL_PAGE',
+      projectId,
+      dir: '',
+      entries: outcome.entries,
+      cursor: null,
+      nextCursor: outcome.page.nextCursor,
+      total: outcome.page.total,
+    });
     const projects = await refreshProjectStatuses(deps);
     if (cancelled()) return false;
     const status = projects?.find((project) => project.projectId === projectId);

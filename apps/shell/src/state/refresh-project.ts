@@ -11,7 +11,7 @@
 import type { WeaveSpaceClient } from '../client/client-api.ts';
 import type { OpenTabsRefreshReport } from './open-document.ts';
 import type { ClientMode, WorkspaceAction, WorkspaceState } from './types.ts';
-import { countFiles, loadProjectResources } from './workspace-load.ts';
+import { loadProjectResources } from './workspace-load.ts';
 
 export interface RefreshProjectDeps {
   getState(): WorkspaceState;
@@ -147,11 +147,26 @@ export async function refreshProject(
   deps.dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
   let files = 0;
   try {
-    const nodes = await deps.clientFor('live').listResources();
+    // UX-02B-TREE：Legacy 刷新同样只重取根层；已展开的子层由 UI 按需重取
+    const outcome = await deps.clientFor('live').listTree(null, '');
     // 树读回来了，但用户可能已经切走：此时连资源树都不属于当前工作区
     if (!stillValid()) return cancelled(null);
-    deps.dispatch({ type: 'SET_RESOURCES', nodes });
-    files = countFiles(nodes);
+    if (outcome.status !== 'APPLIED') {
+      deps.dispatch({ type: 'TREE_LEVEL_ERROR', projectId: '', dir: '', errorCode: outcome.errorCode });
+      deps.dispatch({ type: 'NOTICE', message: '刷新失败：根目录不可读' });
+      return { cancelled: false, projectId: null, files: 0, report: null };
+    }
+    deps.dispatch({ type: 'TREE_RESET', projectId: '' });
+    deps.dispatch({
+      type: 'TREE_LEVEL_PAGE',
+      projectId: '',
+      dir: '',
+      entries: outcome.entries,
+      cursor: null,
+      nextCursor: outcome.page.nextCursor,
+      total: outcome.page.total,
+    });
+    files = outcome.entries.filter((entry) => entry.kind === 'file').length;
   } catch {
     if (!stillValid()) return cancelled(null);
     deps.dispatch({ type: 'NOTICE', message: '刷新失败：无法连接本地服务' });

@@ -647,6 +647,7 @@ test('X-05 屏障期间晚到的 open 不留下 View（可继续移除）', asyn
           },
           writeConditional: (path, content, expected) => inner.writeConditional(path, content, expected),
           list: (dir) => inner.list(dir),
+          readDir: (dir) => inner.readDir(dir),
         } satisfies StorageProvider;
       },
     },

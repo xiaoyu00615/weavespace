@@ -1,4 +1,13 @@
 import { DEFAULT_EXPANDED } from '../data/demo-project.ts';
+import {
+  applyPage,
+  beginLevel,
+  emptyLevels,
+  failLevel,
+  materializeTree,
+  resetLevels,
+  type TreeLevels,
+} from '../components/tree-model.ts';
 import type {
   DocTab,
   LayoutMode,
@@ -36,6 +45,7 @@ export const INITIAL_STATE: WorkspaceState = {
   projects: [],
   activeProjectId: null,
   resourcesByProject: {},
+  treeByProject: {},
   expandedByProject: {},
   selectedByProject: {},
   loadingByProject: {},
@@ -65,6 +75,52 @@ function defaultExpandedFor(nodes: ResourceNodeState[]): Record<string, boolean>
     if (node.kind === 'folder') out[node.id] = true;
   }
   return out;
+}
+
+/**
+ * UX-02B-TREE：层表是权威数据，`resources` / `resourcesByProject` 是**派生视图**。
+ *
+ * 保留派生视图是为了不打断既有链路（启动恢复按树查文件、页脚计数、既有测试断言）。
+ * 除这个函数外，任何地方都不允许直接写这两棵树，否则两份状态会漂移。
+ * 展开状态刻意不动：懒加载下"默认全部展开"会把每个一级目录都立即拉一遍，
+ * 那等于把按需展开退化成一次性的层级扫描。
+ */
+function withTreeLevels(state: WorkspaceState, projectId: string, levels: TreeLevels): WorkspaceState {
+  const treeByProject = { ...state.treeByProject, [projectId]: levels };
+  const derived = materializeTree(levels);
+  if (projectId === '') {
+    return { ...state, treeByProject, resources: derived };
+  }
+  return {
+    ...state,
+    treeByProject,
+    resourcesByProject: { ...state.resourcesByProject, [projectId]: derived },
+  };
+}
+
+/**
+ * 首次拿到某个项目的根层时，沿用既有"默认一级目录展开"的用户可见行为
+ * （`SET_PROJECT_RESOURCES` 一直如此，PC-08 依赖它）。
+ *
+ * 与旧实现的差别：这里只写展开标记，**不**把整棵子树塞进内存；
+ * 展开的子层由 `TreeBranch` 在渲染时按需加载（仍然是一层一层取）。
+ * 刷新时 expandedByProject 已存在，不会被重新填满。
+ */
+function withInitialExpansion(state: WorkspaceState, projectId: string): WorkspaceState {
+  const derived = materializeTree(state.treeByProject[projectId]);
+  if (projectId === '') {
+    if (Object.keys(state.expanded).length > 0) return state;
+    return { ...state, expanded: defaultExpandedFor(derived) };
+  }
+  const previous = state.expandedByProject[projectId];
+  if (previous && Object.keys(previous).length > 0) return state;
+  return {
+    ...state,
+    expandedByProject: {
+      ...state.expandedByProject,
+      [projectId]: defaultExpandedFor(derived),
+    },
+  };
 }
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
@@ -104,6 +160,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         projects: [],
         activeProjectId: null,
         resourcesByProject: {},
+        treeByProject: {},
         expandedByProject: {},
         selectedByProject: {},
         loadingByProject: {},
@@ -350,6 +407,39 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         loadingByProject: { ...state.loadingByProject, [action.projectId]: action.loading },
       };
+
+    // ---- UX-02B-TREE 逐层文件树 ----
+    case 'TREE_LEVEL_BEGIN': {
+      const levels = state.treeByProject[action.projectId] ?? emptyLevels();
+      return withTreeLevels(state, action.projectId, beginLevel(levels, action.dir, action.append));
+    }
+
+    case 'TREE_LEVEL_PAGE': {
+      const levels = state.treeByProject[action.projectId] ?? emptyLevels();
+      const merged = withTreeLevels(
+        state,
+        action.projectId,
+        applyPage(levels, action.dir, {
+          entries: action.entries,
+          cursor: action.cursor,
+          nextCursor: action.nextCursor,
+          total: action.total,
+        }),
+      );
+      // 只在"首次拿到根层的第一页"时补默认展开；续页与刷新都不重置展开状态
+      return action.dir === '' && action.cursor === null
+        ? withInitialExpansion(merged, action.projectId)
+        : merged;
+    }
+
+    case 'TREE_LEVEL_ERROR': {
+      const levels = state.treeByProject[action.projectId] ?? emptyLevels();
+      return withTreeLevels(state, action.projectId, failLevel(levels, action.dir, action.errorCode));
+    }
+
+    case 'TREE_RESET':
+      // 只作废这一个项目；其他项目的层表引用原样保留（T-16）
+      return withTreeLevels(state, action.projectId, resetLevels());
 
     case 'TOGGLE_PROJECT_NODE': {
       const current = state.expandedByProject[action.projectId] ?? {};

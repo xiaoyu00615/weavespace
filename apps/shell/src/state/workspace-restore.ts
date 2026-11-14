@@ -146,6 +146,45 @@ export function findNodeByPath(
 }
 
 /**
+ * UX-02B-TREE：懒加载树下"按树找文件"的解析规则。
+ *
+ * 逐层文件树里，未展开的目录根本不在内存里。若把"树里没有"直接判成文件不存在，
+ * 重启恢复就会把所有**子目录里的**标签误报成 `file-missing` —— 那是懒加载的假象，
+ * 不是磁盘事实。因此分三种情况：
+ *
+ * 1. 已在已加载层里找到 → 用真实节点；
+ * 2. 父目录这一层**已经完整加载**（ready 且无下一页）却仍找不到 → 真的不存在，
+ *    保留既有 `file-missing` 语义（既有断言依赖它）；
+ * 3. 父目录尚未加载 → 不能凭"没扫过"下结论，合成一个**候选节点**交给打开链路，
+ *    由 Host 按真实磁盘判定存在性与权限。文件缺失会走 `open-rejected`，不撒谎。
+ *
+ * Legacy（projectId === null）没有层表，沿用第 1/2 条的旧行为。
+ */
+export function resolveRestorableNode(state: WorkspaceState, path: string, projectId: string | null): ResourceNodeState | null {
+  const nodes: readonly ResourceNodeState[] =
+    projectId === null ? state.resources : (state.resourcesByProject[projectId] ?? []);
+  const found = findNodeByPath(nodes, path);
+  if (found) return found;
+  if (projectId === null) return null;
+
+  const segments = path.split('/').filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+  if (segments.length === 0) return null;
+  const parent = segments.slice(0, -1).join('/');
+  const parentLevel = state.treeByProject[projectId]?.[parent];
+  if (parentLevel?.status === 'ready' && parentLevel.nextCursor === null) return null;
+
+  const name = segments[segments.length - 1];
+  const dot = name.lastIndexOf('.');
+  return {
+    id: `doc:${projectId}/${path}`,
+    name,
+    kind: 'file',
+    extension: dot > 0 ? name.slice(dot).toLowerCase() : '',
+    path,
+  };
+}
+
+/**
  * 恢复开始时的界面基线（IX-01/IX-02）。
  *
  * 组件会直接 `dispatch({type:'SET_SPLIT_RATIO'})` 而不经过任何"恢复 API"，
@@ -357,13 +396,9 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
         continue;
       }
 
-      const nodes: readonly ResourceNodeState[] =
-        tab.projectId === null
-          ? state.resources
-          : state.resourcesByProject[tab.projectId] ?? [];
-      const node = findNodeByPath(nodes, tab.path);
+      const node = resolveRestorableNode(state, tab.path, tab.projectId);
       if (!node) {
-        // 文件不存在 / 不在本次树里：不自动创建、不回退到别的项目的同名文件
+        // 文件确实不在（或该层已完整加载却没有它）：不自动创建、不回退到别的项目
         skipped.push({ projectId: tab.projectId, path: tab.path, reason: 'file-missing' });
         continue;
       }

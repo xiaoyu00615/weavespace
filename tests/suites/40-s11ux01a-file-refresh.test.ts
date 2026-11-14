@@ -155,6 +155,19 @@ function buildHarness(args: {
       await gate.released;
       return pending;
     },
+    /**
+     * UX-02B-TREE：加载器现在走逐层 `listTree`。
+     * 复用 `gates.listResources` 这个"资源加载"闸门，让既有的挂起/取消用例
+     * 仍然精确地拦在资源请求上（断言与时序语义不变）。
+     */
+    async listTree(projectId, dir, cursor, limit) {
+      const gate = gates.listResources.take();
+      if (!gate) return inner.listTree(projectId, dir, cursor, limit);
+      const pending = inner.listTree(projectId, dir, cursor, limit);
+      gate.enter();
+      await gate.released;
+      return pending;
+    },
     async openDocument(path: string, projectId?: string) {
       counts.open += 1;
       const pre = gates.open.take();

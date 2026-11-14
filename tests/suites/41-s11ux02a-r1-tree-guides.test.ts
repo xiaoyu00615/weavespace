@@ -159,15 +159,20 @@ test('G-07 三种模式共用同一规则：Multi 与 Legacy 都把 trails 传�
   // .tsx 无法 import 进 Node，只能对源码做接线检查，避免"规则对了但没接上"
   const list = await readFile(resolve(ROOT, 'apps/shell/src/components/ProjectList.tsx'), 'utf8');
   const tree = await readFile(resolve(ROOT, 'apps/shell/src/components/ProjectTree.tsx'), 'utf8');
+  // UX-02B-TREE：递归渲染已收敛到共享的 TreeBranch，规则接线检查跟着它走
+  const branch = await readFile(resolve(ROOT, 'apps/shell/src/components/TreeBranch.tsx'), 'utf8');
 
   for (const [name, source] of [
     ['ProjectList', list],
     ['ProjectTree', tree],
   ] as const) {
-    assert.ok(source.includes("from './tree-trails'"), `${name} 未引用 tree-trails`);
-    assert.ok(/<TreeLevel[^>]*trails=/s.test(source), `${name} 的 TreeLevel 未传入 trails`);
     assert.ok(/<TreeRow[^>]*trails=/s.test(source), `${name} 的 TreeRow 未传入 trails`);
+    assert.ok(source.includes('trails={[]}'), `${name} 的根层必须从空 trails 起算`);
+    assert.ok(source.includes('TreeBranch'), `${name} 未复用共享树渲染器`);
   }
-  // Multi 必须用 descend 下推，而不是自己拼数组
-  assert.ok(list.includes('descend(trails, last)'), 'ProjectList 未用 descend 下推祖先标记');
+  assert.ok(branch.includes("from './tree-trails'"), 'TreeBranch 未引用 tree-trails');
+  assert.ok(/<TreeBranch[^>]*trails=/s.test(branch), 'TreeBranch 的下一层未传入 trails');
+  assert.ok(/<TreeRow[^>]*trails=/s.test(branch), 'TreeBranch 的 TreeRow 未传入 trails');
+  // Multi / Legacy / Demo 现在都由同一处 descend 下推，而不是各自拼数组
+  assert.ok(branch.includes('descend(trails, last)'), 'TreeBranch 未用 descend 下推祖先标记');
 });

@@ -1,5 +1,6 @@
 /** 工作台状态模型（S9-A / S9-B / G2）。布局与缓冲属于 UI；会话与版本以 Core 为准。 */
-import type { ProjectSummary, WorkspaceMode } from '../client/client-api.ts';
+import type { ProjectSummary, TreeEntry, WorkspaceMode } from '../client/client-api.ts';
+import type { TreeLevels } from '../components/tree-model.ts';
 
 export type ViewMode = 'editor' | 'preview';
 export type LayoutMode = 'single' | 'vertical';
@@ -8,10 +9,13 @@ export type AuxTab = 'ai' | 'tasks' | 'diagnostics';
 export type NavKey = 'projects' | 'plugins' | 'diagnostics';
 
 /**
- * 资源与文档只描述**事实**（是目录/是文件、扩展名），不描述「用哪个插件渲染」。
- * 查看器由能力注册表按扩展名解析（S10-A），因此新增格式不需要改这里。
+ * 资源与文档只描述**事实**（是目录/是文件/是链接、扩展名），
+ * 不描述「用哪个插件渲染」。查看器由能力注册表按扩展名解析（S10-A）。
+ *
+ * UX-02B-TREE：`link` 是"显示但不可用"的叶子——不可展开、不可打开、不可预览，
+ * 目的是让符号链接/重解析点可见，同时不跟随它们越过项目根。
  */
-export type ResourceEntryKind = 'folder' | 'file';
+export type ResourceEntryKind = 'folder' | 'file' | 'link';
 
 /** demo：内置演示数据，绝不写盘；live：经 localhost API 读写真实文件。 */
 export type ClientMode = 'demo' | 'live';
@@ -119,6 +123,12 @@ export interface WorkspaceState {
   activeProjectId: string | null;
   /** 每个项目独立的资源树 / 展开状态 / 选中项 / 加载状态。 */
   resourcesByProject: Record<string, ResourceNodeState[]>;
+  /**
+   * UX-02B-TREE：逐层文件树的**权威缓存**，按项目隔离。
+   * 键 `''` 是 Legacy / Demo 的单根。
+   * `resourcesByProject` / `resources` 是它的派生视图，只为兼容既有恢复链路与测试保留。
+   */
+  treeByProject: Record<string, TreeLevels>;
   expandedByProject: Record<string, Record<string, boolean>>;
   selectedByProject: Record<string, string | null>;
   loadingByProject: Record<string, boolean>;
@@ -150,6 +160,25 @@ export type WorkspaceAction =
   | { type: 'SET_ACTIVE_PROJECT'; projectId: string }
   | { type: 'SET_PROJECT_RESOURCES'; projectId: string; nodes: ResourceNodeState[] }
   | { type: 'SET_PROJECT_LOADING'; projectId: string; loading: boolean }
+  /**
+   * UX-02B-TREE：开始加载某一层。`append=true` 表示继续加载下一页，
+   * 已加载条目必须保留（否则用户会看到树突然清空）。
+   */
+  | { type: 'TREE_LEVEL_BEGIN'; projectId: string; dir: string; append: boolean }
+  /** 合并一页结果，并重建该项目/单根的派生树视图。 */
+  | {
+      type: 'TREE_LEVEL_PAGE';
+      projectId: string;
+      dir: string;
+      entries: readonly TreeEntry[];
+      cursor: string | null;
+      nextCursor: string | null;
+      total: number;
+    }
+  /** 该层加载失败：保留已加载条目，UI 显示"重试"。 */
+  | { type: 'TREE_LEVEL_ERROR'; projectId: string; dir: string; errorCode: string | null }
+  /** 刷新：只作废这一个项目的层表，其他项目引用不变。 */
+  | { type: 'TREE_RESET'; projectId: string }
   | { type: 'TOGGLE_PROJECT_NODE'; projectId: string; path: string }
   | { type: 'SELECT_PROJECT_NODE'; projectId: string; path: string | null }
   | { type: 'OPEN_TAB'; tab: DocTab }

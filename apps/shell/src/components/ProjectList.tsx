@@ -1,179 +1,88 @@
 /**
- * 多项目列表（G2-01 / UX-02A）。
+ * 多项目列表（G2-01 / UX-02A → UX-02B-TREE）。
  *
- * 结构是一棵**真正的目录树**，不是平铺列表：
- *   第 1 层：项目根（根文件夹图标 + 名称 + 状态）
- *   第 2 层：项目根下的文件与文件夹
- *   第 3 层及以后：按 `ResourceNodeState.children` 递归
+ * 结构是一棵**真正的目录树**，不是平铺列表，也不是一套独立的项目卡片：
+ *   depth 0：每个项目根（与子文件夹使用同一个 `TreeRow`）
+ *   depth 1：根下的直接子项
+ *   depth 2+：按需展开的子层
  *
- * 多个项目**同时可见**，各自独立展开/折叠/刷新/选中。
- * 单击项目标题 = 切换"当前项目"（只改焦点），不会隐藏其他项目、不会关闭标签。
+ * 与 Demo / Legacy 的 `ProjectTree` 共用 `TreeBranch` 与全部 `FileTreeRow` 原语，
+ * 因此"真实模式与演示模式根行结构不同"这个问题在结构上不可能再出现（契约 C.2）。
  *
- * 边界：
- * - UNAVAILABLE 项目不展示文件，只显示原因；已有标签与草稿不受影响；
- * - 不展示 rootDir / canonicalRoot / rootToken —— 服务端也不返回它们；
- * - 刷新只作用于当前项目，不覆盖其他项目的资源树；
- * - 层级完全由数据树的 `children` 与注入的 `depth` 决定，**不解析路径字符串**。
+ * 数据来自 `treeByProject[projectId]` 的层表：根层在连接/刷新时加载，
+ * 子层只在用户展开时加载；刷新只作废这一个项目（T-16）。
  */
-import { useState } from 'react';
-import type { ProjectSummary } from '../client/client-api';
-import { makeDocId } from '../state/doc-identity';
-import { useDocumentActions } from '../state/DocumentActionsContext';
-import { useQuickFile } from '../state/QuickFileContext';
-import { useWorkspace } from '../state/WorkspaceContext';
-import type { ResourceNodeState } from '../state/types';
-import { FolderGlyph, TreeRow } from './FileTreeRow';
-import { descend, type TreeTrails } from './tree-trails';
+import { useMemo, useState } from 'react';
+import type { ProjectSummary } from '../client/client-api.ts';
+import type { ResourceNodeState } from '../state/types.ts';
+import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
+import { useWorkspace } from '../state/WorkspaceContext.tsx';
+import { LevelStatus, TreeBranch } from './TreeBranch.tsx';
+import { TreeRow } from './FileTreeRow.tsx';
+import { countLoadedEntries, emptyLevels, materializeTree } from './tree-model.ts';
 
-/**
- * 一层的兄弟节点列表。
- *
- * `depth` 1 = 项目根的直接子项（箭头/图标列右移一级），依次递归；
- * `last` 让同层最后一项的引导线收尾，避免下方拖着一条悬空竖线；
- * `trails` 记录各祖先层是否还有后续兄弟，末项祖先的后代不再画那条竖线。
- */
-function TreeLevel({
-  projectId,
-  nodes,
-  depth,
-  trails,
-}: {
-  projectId: string;
-  nodes: readonly ResourceNodeState[];
-  depth: number;
-  trails: TreeTrails;
-}) {
-  return (
-    <ul className="tree__children">
-      {nodes.map((node, index) => (
-        <TreeItem
-          key={`${projectId}:${node.id}`}
-          projectId={projectId}
-          node={node}
-          depth={depth}
-          last={index === nodes.length - 1}
-          trails={trails}
-        />
-      ))}
-    </ul>
-  );
-}
-
-function TreeItem({
-  projectId,
-  node,
-  depth,
+/** 单个项目根：depth 0 的一个树行 + 它自己的子层。 */
+function ProjectRoot({
+  project,
   last,
-  trails,
+  open,
+  onToggle,
 }: {
-  projectId: string;
-  node: ResourceNodeState;
-  depth: number;
+  project: ProjectSummary;
   last: boolean;
-  trails: TreeTrails;
+  open: boolean;
+  onToggle(): void;
 }) {
-  const { state, dispatch } = useWorkspace();
+  const { state } = useWorkspace();
   const actions = useDocumentActions();
-  const quick = useQuickFile();
-  // 子层要继承"我这一列是否还有后续兄弟"
-  const childTrails = descend(trails, last);
+  const projectId = project.projectId;
+  const active = state.activeProjectId === projectId;
+  const ready = project.status === 'READY';
+  const loading = state.loadingByProject[projectId] ?? false;
 
-  if (node.kind === 'folder') {
-    const expanded = state.expandedByProject[projectId]?.[node.id] ?? false;
-    return (
-      <TreeRow
-        node={node}
-        depth={depth}
-        last={last}
-        trails={trails}
-        expanded={expanded}
-        onActivate={() => dispatch({ type: 'TOGGLE_PROJECT_NODE', projectId, path: node.id })}
-      >
-        {/* 折叠时整棵后代都不渲染：不是靠 CSS 隐藏 */}
-        {expanded && node.children && node.children.length > 0 && (
-          <TreeLevel projectId={projectId} nodes={node.children} depth={depth + 1} trails={childTrails} />
-        )}
-      </TreeRow>
-    );
-  }
-
-  const docId = makeDocId(projectId, node.path ?? node.id);
-  const selected = state.selectedByProject[projectId] === docId;
-  const tab = state.tabs.find((item) => item.docId === docId);
+  const levels = state.treeByProject[projectId] ?? emptyLevels();
+  const nodes = useMemo(() => materializeTree(levels), [levels]);
+  const rootLevel = levels[''];
+  const rootNode: ResourceNodeState = {
+    id: `project:${projectId}`,
+    name: project.name,
+    kind: 'folder',
+  };
 
   return (
     <TreeRow
-      node={node}
-      depth={depth}
+      node={rootNode}
+      depth={0}
       last={last}
-      trails={trails}
-      selected={selected}
-      opened={Boolean(tab)}
-      dirty={tab?.dirty ?? false}
+      trails={[]}
+      expanded={open}
+      selected={active}
       onActivate={() => {
-        // 打开项目文件即离开 Quick File 预览（Quick File 本身不被清除）
-        quick.deactivate();
-        void actions.openNode(node, projectId);
+        // 切换当前项目只改焦点：不清标签、不动草稿、不影响其它项目（G2-05/G2-07）
+        if (!active) void actions.switchProject(projectId);
+        onToggle();
       }}
-    />
-  );
-}
-
-function ProjectSection({ project }: { project: ProjectSummary }) {
-  const { state } = useWorkspace();
-  const actions = useDocumentActions();
-  // 项目根的展开是纯 UI 状态：各项目独立，互不影响；刷新不会重置它
-  const [open, setOpen] = useState(true);
-  const active = state.activeProjectId === project.projectId;
-  const ready = project.status === 'READY';
-  const nodes = state.resourcesByProject[project.projectId] ?? [];
-  const loading = state.loadingByProject[project.projectId] ?? false;
-  const fileCount = countFiles(nodes);
-
-  return (
-    <li className={active ? 'project project--active' : 'project'}>
-      {/*
-        第 1 层：项目根。箭头 / 图标 / 名称是**同一个按钮**——
-        与子文件夹"点整行即展开"保持一致，也不会出现嵌套按钮导致一次点击折两次。
-        点击同时把该项目设为当前项目；切换只改焦点，不清标签、不动草稿（G2-05/G2-07）。
-      */}
-      <div className="project__root">
-        <button
-          type="button"
-          className="project__toggle"
-          aria-expanded={open}
-          title={`${project.name}${active ? '（当前项目）' : '（点击切换为当前项目）'} · 点击展开或折叠`}
-          onClick={() => {
-            if (!active) void actions.switchProject(project.projectId);
-            setOpen((value) => !value);
-          }}
-        >
-          <span className="project__caret" aria-hidden="true">
-            {open ? '▾' : '▸'}
-          </span>
-          <span className="tree__icon-slot" aria-hidden="true">
-            <FolderGlyph open={open} />
-          </span>
-          <span className="project__title">{project.name}</span>
-        </button>
-        <span
-          className={ready ? 'project__state' : 'project__state project__state--unavailable'}
-          title={ready ? '可用' : `不可用${project.reason ? `：${project.reason}` : ''}`}
-        >
-          {ready ? '可用' : '不可用'}
-        </span>
-        {ready && (
-          <button
-            type="button"
-            className="icon-button project__refresh"
-            title={`刷新 ${project.name} 的文件树`}
-            onClick={() => void actions.reloadResources(project.projectId)}
+      actions={
+        <>
+          <span
+            className={ready ? 'project__state' : 'project__state project__state--unavailable'}
+            title={ready ? '可用' : `不可用${project.reason ? `：${project.reason}` : ''}`}
           >
-            ↻
-          </button>
-        )}
-      </div>
-
+            {loading ? '…' : ready ? '可用' : '不可用'}
+          </span>
+          {ready && (
+            <button
+              type="button"
+              className="icon-button project__refresh"
+              title={`刷新 ${project.name} 的文件树`}
+              onClick={() => void actions.reloadResources(projectId)}
+            >
+              ↻
+            </button>
+          )}
+        </>
+      }
+    >
       {open && (
         <>
           {!ready && (
@@ -181,34 +90,41 @@ function ProjectSection({ project }: { project: ProjectSummary }) {
               根目录不可用{project.reason ? `（${project.reason}）` : ''} · 无法打开新的磁盘文件；已打开的标签与草稿仍保留
             </p>
           )}
-          {ready && loading && <p className="project__meta">正在加载…</p>}
-          {ready && !loading && nodes.length === 0 && (
-            <p className="project__meta">该项目下没有可编辑的文本文件</p>
+          {ready && (
+            <ul className="tree__children">
+              <TreeBranch
+                projectKey={projectId}
+                projectId={projectId}
+                nodes={nodes}
+                levels={levels}
+                depth={1}
+                trails={[]}
+                isDemo={false}
+              />
+              <LevelStatus
+                level={rootLevel}
+                depth={1}
+                isDemo={false}
+                onRetry={() => void actions.loadTreeLevel(projectId, '', false)}
+                onMore={() => void actions.loadTreeLevel(projectId, '', true)}
+              />
+              <li className="tree__status tree__status--count" style={{ paddingLeft: '44px' }}>
+                已加载 {countLoadedEntries(levels)} 个条目{active ? ' · 当前项目' : ''}
+              </li>
+            </ul>
           )}
-          {ready && nodes.length > 0 && (
-            <TreeLevel projectId={project.projectId} nodes={nodes} depth={1} trails={[]} />
-          )}
-          <p className="project__meta">
-            {ready ? `${fileCount} 个文件` : '磁盘访问已被拒绝'}
-            {active && ' · 当前项目'}
-          </p>
         </>
       )}
-    </li>
+    </TreeRow>
   );
-}
-
-function countFiles(nodes: readonly ResourceNodeState[]): number {
-  let total = 0;
-  for (const node of nodes) {
-    if (node.kind === 'folder') total += countFiles(node.children ?? []);
-    else total += 1;
-  }
-  return total;
 }
 
 export function ProjectList() {
   const { state, dispatch } = useWorkspace();
+  // 各项目根独立展开；刷新只作废该项目的层表，不重置这里的展开状态
+  const [openRoots, setOpenRoots] = useState<Record<string, boolean>>({});
+  const toggleRoot = (projectId: string): void =>
+    setOpenRoots((current) => ({ ...current, [projectId]: !(current[projectId] ?? true) }));
 
   if (state.treeCollapsed) {
     return (
@@ -251,15 +167,19 @@ export function ProjectList() {
         </div>
       </header>
 
-      <ul className="projects">
-        {state.projects.map((project) => (
-          <ProjectSection key={project.projectId} project={project} />
+      <ul className="tree__root">
+        {state.projects.map((project, index) => (
+          <ProjectRoot
+            key={project.projectId}
+            project={project}
+            last={index === state.projects.length - 1}
+            open={openRoots[project.projectId] ?? true}
+            onToggle={() => toggleRoot(project.projectId)}
+          />
         ))}
       </ul>
 
-      <footer className="tree__footer">
-        真实文件 · 每个项目独立授权与独立 Provider
-      </footer>
+      <footer className="tree__footer">真实文件 · 独立授权 · 逐层加载</footer>
     </aside>
   );
 }

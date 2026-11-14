@@ -29,7 +29,11 @@ import {
 const DEMO_NOTICE = '演示数据：不读取、不写入本机文件';
 
 function countOf(h: Harness, name: string): number {
-  return h.calls.filter((call) => call.name === name).length;
+  // UX-02B-TREE：资源加载请求已从 listResources（递归旧端点）改为 listTree（逐层分页）。
+  // 这些取消断言关心的是"有没有再发一次资源加载请求"，不是具体方法名，
+  // 因此把两个名字归到同一个计数类别；断言本身一条未改。
+  const names = name === 'listResources' ? ['listResources', 'listTree'] : [name];
+  return h.calls.filter((call) => names.includes(call.name)).length;
 }
 
 // ---------------------------------------------------------------------------

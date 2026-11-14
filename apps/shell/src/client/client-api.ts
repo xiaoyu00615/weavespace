@@ -27,14 +27,51 @@ export interface ProjectSummary {
 export interface ResourceNode {
   id: string;
   name: string;
-  /** 只区分目录/文件；格式由 `extension` + 能力注册表决定（S10-A）。 */
-  kind: 'folder' | 'file';
+  /** 只区分目录/文件/链接；格式由 `extension` + 能力注册表决定（S10-A）。 */
+  kind: TreeEntryKind;
   /** 文件扩展名（小写含点）；目录为空。 */
   extension?: string;
   /** 文件相对路径（live 用于 open）；demo 下与 id 相同。 */
   path?: string;
   children?: ResourceNode[];
 }
+
+/* ---- UX-02B-TREE：逐层、可分页的真实目录树（契约 B.2/B.3） ---- */
+
+/** 三套事实类型，`link` 只显示、不展开、不打开。 */
+export type TreeEntryKind = 'folder' | 'file' | 'link';
+
+export interface TreeEntry {
+  /** `dir:` / `doc:` / `link:` 三套互不重叠的命名空间。 */
+  id: string;
+  name: string;
+  kind: TreeEntryKind;
+  /** 小写含点；无扩展名与目录为空串。 */
+  extension: string;
+  /** 项目内相对路径；**永不是绝对路径**。 */
+  relPath: string;
+}
+
+export interface TreePageMeta {
+  limit: number;
+  cursor: string | null;
+  /** 非 null 表示还有下一页，必须继续请求直到 null。 */
+  nextCursor: string | null;
+  total: number;
+}
+
+export type TreeQueryOutcome =
+  | {
+      status: 'APPLIED';
+      level: string;
+      entries: TreeEntry[];
+      page: TreePageMeta;
+    }
+  | {
+      status: 'REJECTED';
+      errorCode: string | null;
+      message?: string;
+    };
 
 /** Core 的会话快照：版本与状态语义与 DocumentStateView 对齐。 */
 export interface DocumentSnapshot {
@@ -114,7 +151,24 @@ export interface WeaveSpaceClient {
   workspaceIdentity(): Promise<WorkspaceIdentity>;
   /** 仅 Multi 有项目列表；Legacy 返回 `[]`。 */
   listProjects(): Promise<ProjectSummary[]>;
+  /**
+   * 旧端点 `/api/resources`：递归整棵树、只含可编辑文本。
+   *
+   * **保持冻结**，Legacy 恢复链路与既有测试仍依赖它；新 UI 不要用。
+   */
   listResources(projectId?: string): Promise<ResourceNode[]>;
+  /**
+   * UX-02B-TREE：只读**一层**目录，`cursor` 省略为第一页。
+   *
+   * `projectId` 为 null 表示 Legacy 单根。`dir` 是项目内相对路径（根为空串），
+   * **绝不接受绝对路径**。调用方必须用 `page.nextCursor` 继续加载直到 null。
+   */
+  listTree(
+    projectId: string | null,
+    dir: string,
+    cursor?: string | null,
+    limit?: number,
+  ): Promise<TreeQueryOutcome>;
   openDocument(path: string, projectId?: string): Promise<OpenOutcome>;
   readDocument(sessionId: string, viewId?: string | null): Promise<OpenOutcome>;
   applyEdit(
@@ -213,6 +267,40 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       return Array.isArray((body as { nodes?: ResourceNode[] }).nodes)
         ? ((body as { nodes: ResourceNode[] }).nodes ?? [])
         : [];
+    },
+    async listTree(projectId, dir, cursor, limit) {
+      const query = new URLSearchParams();
+      if (projectId) query.set('projectId', projectId);
+      if (dir) query.set('dir', dir);
+      if (cursor !== null && cursor !== undefined) query.set('cursor', cursor);
+      if (limit !== undefined) query.set('limit', String(limit));
+      const suffix = query.toString();
+      const { httpStatus, body } = await request(baseUrl, `/api/tree${suffix ? `?${suffix}` : ''}`);
+      if (httpStatus !== 200 || body.status !== 'APPLIED') {
+        return { status: 'REJECTED' as const, errorCode: body.errorCode ?? null, message: body.message };
+      }
+      const asTree = body as unknown as {
+        level?: string;
+        entries?: TreeEntry[];
+        page?: Partial<TreePageMeta>;
+      };
+      // 响应形状不完整时按"拒绝"处理，绝不把半截数据渲染成一棵不完整的树
+      const entries = Array.isArray(asTree.entries) ? asTree.entries : null;
+      const page = asTree.page;
+      if (!entries || !page || typeof page.total !== 'number') {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_INTERNAL', message: '目录响应不完整' };
+      }
+      return {
+        status: 'APPLIED' as const,
+        level: typeof asTree.level === 'string' ? asTree.level : dir,
+        entries,
+        page: {
+          limit: typeof page.limit === 'number' ? page.limit : entries.length,
+          cursor: page.cursor ?? null,
+          nextCursor: page.nextCursor ?? null,
+          total: page.total,
+        },
+      };
     },
     async openDocument(path: string, projectId?: string) {
       const { body } = await request(baseUrl, '/api/open', {
@@ -324,6 +412,33 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
  * - `saveDocument` 返回 `DEMO`，**不是** `COMMITTED`：演示态不得冒充真实保存；
  * - 不接触任何真实文件，也不写入磁盘。
  */
+function extensionFromName(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 && dot < name.length - 1 ? name.slice(dot).toLowerCase() : '';
+}
+
+/**
+ * demo 的"单层"视图：从嵌套演示树里取出指定层的直接子项。
+ *
+ * 这样 Demo / Legacy / Multi 三条路径都向同一套 UI 提供 `TreeEntry[]`，
+ * 根行与子行的结构差异就没有机会再出现（契约 C.2）。
+ */
+function demoEntriesAt(nodes: readonly ResourceNode[], dir: string): TreeEntry[] {
+  let level = nodes;
+  for (const segment of dir.split('/').filter(Boolean)) {
+    const folder = level.find((node) => node.kind === 'folder' && node.name === segment);
+    if (!folder?.children) return [];
+    level = folder.children;
+  }
+  return level.map((node) => ({
+    id: node.id,
+    name: node.name,
+    kind: node.kind === 'folder' ? ('folder' as const) : ('file' as const),
+    extension: node.extension ?? extensionFromName(node.name),
+    relPath: node.path ?? (dir ? `${dir}/${node.name}` : node.name),
+  }));
+}
+
 export function createDemoClient(
   nodes: ResourceNode[],
   contents: Readonly<Record<string, string>>,
@@ -359,6 +474,15 @@ export function createDemoClient(
     },
     async listResources() {
       return nodes;
+    },
+    async listTree(_projectId, dir) {
+      const entries = demoEntriesAt(nodes, dir);
+      return {
+        status: 'APPLIED' as const,
+        level: dir,
+        entries,
+        page: { limit: Math.max(entries.length, 1), cursor: null, nextCursor: null, total: entries.length },
+      };
     },
     async openDocument(path: string) {
       const node = find(path);
