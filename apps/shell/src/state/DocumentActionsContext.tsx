@@ -35,7 +35,8 @@ import {
   serializeWorkspace,
   type Autosave,
 } from './workspace-persistence';
-import { countFiles, createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
+import { createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
+import { refreshProject } from './refresh-project';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
 import { useWorkspace } from './WorkspaceContext';
@@ -116,27 +117,6 @@ function safeLocalStorage(): Storage | null {
   } catch {
     return null;
   }
-}
-
-/**
- * 手动刷新的提示文案（S11-UX-01A）。
- *
- * 文件树结果与文档层结果必须**合并成一条**：`NOTICE` 只有一行，分开派发会互相覆盖，
- * 用户就看不到"哪些文件有外部修改但被草稿挡住"这个关键信息。
- */
-function refreshNotice(
-  base: string,
-  updated: number,
-  dirtyChanged: readonly string[],
-  failed: readonly string[],
-): string {
-  const parts = [base];
-  if (updated > 0) parts.push(`${updated} 个已打开文件已同步磁盘变化`);
-  if (dirtyChanged.length > 0) {
-    parts.push(`${dirtyChanged.join('、')} 在磁盘上已被修改，但存在未保存草稿，未自动覆盖`);
-  }
-  if (failed.length > 0) parts.push(`${failed.join('、')} 检查失败（磁盘不可读）`);
-  return parts.join('；');
 }
 
 export function DocumentActionsProvider({ children }: { children: ReactNode }) {
@@ -347,15 +327,6 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       getState: () => stateRef.current,
       dispatch,
       clientFor: (target: ClientMode) => (target === 'live' ? liveClient : demoClient),
-    };
-
-    /** Multi：按项目取资源树（Legacy 用单树）。 */
-    const projectName = (projectId: string | null): string | null => {
-      if (!projectId) return null;
-      return (
-        stateRef.current.projects.find((project) => project.projectId === projectId)?.name ??
-        projectId
-      );
     };
 
     /**
@@ -613,53 +584,20 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       },
 
       async reloadResources(projectId?: string) {
-        if (stateRef.current.mode !== 'live') return;
-        const multi = stateRef.current.workspaceMode === 'multi';
-        // Legacy 的标签没有项目身份（projectId === null），Multi 按项目限定
-        const target = multi ? (projectId ?? stateRef.current.activeProjectId ?? null) : null;
-
-        if (multi) {
-          // 没有活动项目时没有"要刷新哪一份"的答案：宁可不刷，也不猜
-          if (!target) return;
-          // 只刷新指定项目，绝不覆盖其他项目的资源树（G2-01）
-          const ok = await loadProjectResources(loadDeps, target);
-          // 失败 / 不可用的提示由 loadProjectResources 自己给出，这里不再叠一条
-          if (!ok) return;
-          const report = await opener.refreshOpenTabs(target);
-          dispatch({
-            type: 'NOTICE',
-            message: refreshNotice(
-              `已刷新项目 ${projectName(target) ?? target} 的文件树`,
-              report.updated,
-              report.dirtyChanged,
-              report.failed,
-            ),
-          });
-          return;
-        }
-
-        dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
-        let files = 0;
-        try {
-          const nodes = await clientFor('live').listResources();
-          dispatch({ type: 'SET_RESOURCES', nodes });
-          files = countFiles(nodes);
-        } catch {
-          dispatch({ type: 'NOTICE', message: '刷新失败：无法连接本地服务' });
-          return;
-        } finally {
-          dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
-        }
-        const report = await opener.refreshOpenTabs(null);
-        dispatch({
-          type: 'NOTICE',
-          message: refreshNotice(
-            `已刷新资源树（${files} 个文件）`,
-            report.updated,
-            report.dirtyChanged,
-            report.failed,
-          ),
-        });
+        // 编排（文件树 + 已打开文档 + 生命周期判定）都在 refresh-project.ts：
+        // 这里只注入宿主依赖，保证测试驱动的是生产同一条链路（UX-01A-R1）
+        await refreshProject(
+          {
+            getState: () => stateRef.current,
+            getMode: () => modeRef.current,
+            dispatch,
+            clientFor,
+            refreshOpenTabs: (target) => opener.refreshOpenTabs(target),
+            loadToken: () => loadEpoch.current.current(),
+            isTokenCurrent: (token) => loadEpoch.current.isCurrent(token),
+          },
+          projectId,
+        );
       },
 
       async switchProject(projectId: string) {

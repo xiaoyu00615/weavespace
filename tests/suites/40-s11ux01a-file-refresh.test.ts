@@ -1,18 +1,17 @@
 /**
- * S11-UX-01A：已打开文件的安全手动刷新（真实 Host + 真实 reducer）。
+ * S11-UX-01A：已打开文件的安全手动刷新（真实 Host + 真实 reducer + 真实文件）。
  *
- * 缺口（修复前）：项目刷新按钮只重载**文件树**（`reloadResources`），
- * 已打开文档完全不会检查磁盘——外部编辑器改完 a.md 再点刷新，标签里还是旧内容。
- *
- * 这组用例直接驱动 Provider 实际使用的编排器（`createDocumentOpener`），
+ * 被测对象是**生产链路本身**：`state/refresh-project.ts` 的 `refreshProject()`
+ * 就是 `DocumentActionsContext.reloadResources` 内部调用的那一个函数；
+ * 它再调用 `createDocumentOpener().refreshOpenTabs()`（同样是 Provider 用的实现）。
  * 客户端是真实 `createLiveClient`，服务端是真实 Host（端口 0），状态由真实
- * `workspaceReducer` 承接；不测"模拟函数返回值"。
+ * `workspaceReducer` 承接。
  *
- * 纪律（与 S11-C / G2-R1 一致）：
- * - 草稿绝不被刷新覆盖；外部变化只提示，不自动 reload；
- * - 刷新不得改变活动文档 / 焦点窗格 / 分屏结构；
- * - 临时 View 必须释放；迟到响应不得复活已关闭标签或写进另一个工作区；
- * - A/B 项目同名文件绝不混淆。
+ * 时序纪律（UX-01A-R1）：
+ * - 每个挂起门禁都提供 `entered` 信号，表示**请求真的发出去了**；
+ *   测试必须先 `await gate.entered`，再做交错动作，不允许用 sleep / 事件循环赌时序。
+ * - `open` 有两段门禁：`entered`（请求已发）与 `afterOpenResponse`
+ *   （响应已到手、服务端临时 View 已存在），后者用来验证"View 已建之后再取消"的释放路径。
  */
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
@@ -29,6 +28,11 @@ import {
   createEditEpochs,
   type DocumentOpener,
 } from '../../apps/shell/src/state/open-document.ts';
+import {
+  refreshProject,
+  type RefreshProjectResult,
+} from '../../apps/shell/src/state/refresh-project.ts';
+import { createLoadEpoch } from '../../apps/shell/src/state/workspace-load.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import type {
   ClientMode,
@@ -49,6 +53,48 @@ function nodeOf(projectId: string | null, path: string): ResourceNodeState {
   };
 }
 
+/** 一次性挂起门禁：`entered` 表示"已进入请求阶段"，`release()` 放行。 */
+class Gate {
+  readonly entered: Promise<void>;
+  readonly released: Promise<void>;
+  private enterResolve!: () => void;
+  private releaseResolve!: () => void;
+
+  constructor() {
+    this.entered = new Promise<void>((resolve) => {
+      this.enterResolve = resolve;
+    });
+    this.released = new Promise<void>((resolve) => {
+      this.releaseResolve = resolve;
+    });
+  }
+
+  enter(): void {
+    this.enterResolve();
+  }
+
+  release(): void {
+    this.releaseResolve();
+  }
+}
+
+/** 门禁槽位：`arm()` 只对**下一次**调用生效，取走即失效。 */
+class GateSlot {
+  private next: Gate | null = null;
+
+  arm(): Gate {
+    const gate = new Gate();
+    this.next = gate;
+    return gate;
+  }
+
+  take(): Gate | null {
+    const gate = this.next;
+    this.next = null;
+    return gate;
+  }
+}
+
 interface SeenView {
   sessionId: string;
   viewId: string;
@@ -60,78 +106,149 @@ interface Harness {
   rootB: string;
   opener: DocumentOpener;
   client: WeaveSpaceClient;
-  /** 直连客户端：只用于断言服务端真实状态。 */
   inner: WeaveSpaceClient;
   views: SeenView[];
-  /** 统计：openDocument 调用次数 / reload 调用次数 / readDisk 调用次数。 */
-  counts: { open: number; reload: number; disk: number };
+  counts: { open: number; reload: number; disk: number; close: number };
+  /** 生产实现：与 `DocumentActionsContext.reloadResources` 调用的是同一个函数。 */
+  refresh(projectId?: string): Promise<RefreshProjectResult>;
   dispatch(action: WorkspaceAction): void;
+  /** 与 Provider 的 `switchMode` 同序：先推进代次，再同步模式，最后派发。 */
   setMode(mode: ClientMode): void;
-  /** 挂起下一次 openDocument 的**响应**（请求照常发出）。返回放行函数。 */
-  holdNextOpen(): () => void;
-  /** 挂起下一次 readDisk 的**响应**。返回放行函数。 */
-  holdNextDisk(): () => void;
+  /** 模拟重新连接 / 工作区身份变化。 */
+  reconnect(workspaceKey: string): void;
+  /** 模拟 S11-C 恢复开始新的一代，返回该代的取消检查。 */
+  startEpoch(): () => boolean;
+  gates: {
+    listResources: GateSlot;
+    open: GateSlot;
+    /** 响应已到手、临时 View 已建之后挂起。 */
+    afterOpenResponse: GateSlot;
+    readDisk: GateSlot;
+  };
 }
 
-function makeClientHooks(inner: WeaveSpaceClient, counts: Harness['counts'], views: SeenView[]) {
-  const gates: { open: (() => void) | null; disk: (() => void) | null } = { open: null, disk: null };
-  let openGate: Promise<void> | null = null;
-  let diskGate: Promise<void> | null = null;
+function buildHarness(args: {
+  inner: WeaveSpaceClient;
+  roots: { rootA: string; rootB: string };
+  initialState: WorkspaceState;
+}): Harness {
+  let state = args.initialState;
+  let mode: ClientMode = 'live';
+  const counts = { open: 0, reload: 0, disk: 0, close: 0 };
+  const views: SeenView[] = [];
+  const loadEpoch = createLoadEpoch();
+  const gates = {
+    listResources: new GateSlot(),
+    open: new GateSlot(),
+    afterOpenResponse: new GateSlot(),
+    readDisk: new GateSlot(),
+  };
 
+  const inner = args.inner;
   const client: WeaveSpaceClient = {
     ...inner,
+    async listResources(projectId?: string) {
+      const gate = gates.listResources.take();
+      if (!gate) return inner.listResources(projectId);
+      const pending = inner.listResources(projectId);
+      gate.enter();
+      await gate.released;
+      return pending;
+    },
     async openDocument(path: string, projectId?: string) {
       counts.open += 1;
-      const pending = inner.openDocument(path, projectId);
-      const held = openGate;
-      if (held) {
-        openGate = null;
-        await held;
+      const pre = gates.open.take();
+      const post = gates.afterOpenResponse.take();
+      let outcome;
+      if (pre) {
+        const pending = inner.openDocument(path, projectId);
+        pre.enter();
+        await pre.released;
+        outcome = await pending;
+      } else {
+        outcome = await inner.openDocument(path, projectId);
       }
-      const outcome = await pending;
       if (outcome.document?.viewId) {
         views.push({ sessionId: outcome.document.sessionId, viewId: outcome.document.viewId });
+      }
+      if (post) {
+        // 此刻服务端临时 View 已存在，但 opener 还没拿到返回值
+        post.enter();
+        await post.released;
       }
       return outcome;
     },
     async readDisk(sessionId: string, viewId?: string | null) {
       counts.disk += 1;
+      const gate = gates.readDisk.take();
+      if (!gate) return inner.readDisk(sessionId, viewId);
       const pending = inner.readDisk(sessionId, viewId);
-      const held = diskGate;
-      if (held) {
-        diskGate = null;
-        await held;
-      }
+      gate.enter();
+      await gate.released;
       return pending;
     },
     async reloadDocument(sessionId: string, viewId: string) {
       counts.reload += 1;
       return inner.reloadDocument(sessionId, viewId);
     },
+    async closeDocument(sessionId: string, viewId: string) {
+      counts.close += 1;
+      return inner.closeDocument(sessionId, viewId);
+    },
   };
 
+  const dispatch = (action: WorkspaceAction): void => {
+    state = workspaceReducer(state, action);
+  };
+
+  const opener = createDocumentOpener({
+    getState: () => state,
+    getMode: () => mode,
+    dispatch,
+    clientFor: (target) => {
+      if (target !== 'live') throw new Error(`测试不应使用 ${target} 客户端`);
+      return client;
+    },
+    editEpochs: createEditEpochs(),
+  });
+
   return {
+    get state() {
+      return state;
+    },
+    rootA: args.roots.rootA,
+    rootB: args.roots.rootB,
+    opener,
     client,
-    holdNextOpen() {
-      openGate = new Promise<void>((resolve) => {
-        gates.open = resolve;
-      });
-      return () => {
-        openGate = null;
-        gates.open?.();
-        gates.open = null;
-      };
+    inner,
+    views,
+    counts,
+    refresh: (projectId?: string) =>
+      refreshProject(
+        {
+          getState: () => state,
+          getMode: () => mode,
+          dispatch,
+          clientFor: () => client,
+          refreshOpenTabs: (target) => opener.refreshOpenTabs(target),
+          loadToken: () => loadEpoch.current(),
+          isTokenCurrent: (token) => loadEpoch.isCurrent(token),
+        },
+        projectId,
+      ),
+    dispatch,
+    setMode(next) {
+      // 与 Provider 的 switchMode 一致：先让在途加载失效，再同步模式，最后派发
+      loadEpoch.cancel();
+      mode = next;
+      dispatch({ type: 'SET_MODE', mode: next });
     },
-    holdNextDisk() {
-      diskGate = new Promise<void>((resolve) => {
-        gates.disk = resolve;
-      });
-      return () => {
-        diskGate = null;
-        gates.disk?.();
-        gates.disk = null;
-      };
+    reconnect(workspaceKey) {
+      loadEpoch.cancel();
+      dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey });
     },
+    startEpoch: () => loadEpoch.start(),
+    gates,
   };
 }
 
@@ -155,58 +272,25 @@ async function withMulti(fn: (h: Harness) => Promise<void>): Promise<void> {
   const server = await createShellServer({ workspace, port: 0 });
   const inner = createLiveClient(server.url);
 
-  let state: WorkspaceState = {
-    ...INITIAL_STATE,
-    mode: 'live',
-    workspaceMode: 'multi',
-    projects: [
-      { projectId: 'project-a', name: '项目 A', status: 'READY' },
-      { projectId: 'project-b', name: '项目 B', status: 'READY' },
-    ],
-    activeProjectId: 'project-a',
-    notice: '',
-  };
-  let mode: ClientMode = 'live';
-
-  const counts = { open: 0, reload: 0, disk: 0 };
-  const views: SeenView[] = [];
-  const hooks = makeClientHooks(inner, counts, views);
-
-  const dispatch = (action: WorkspaceAction): void => {
-    state = workspaceReducer(state, action);
-  };
-
-  const opener = createDocumentOpener({
-    getState: () => state,
-    getMode: () => mode,
-    dispatch,
-    clientFor: (target) => {
-      if (target !== 'live') throw new Error(`测试不应使用 ${target} 客户端`);
-      return hooks.client;
+  const harness = buildHarness({
+    inner,
+    roots: { rootA, rootB },
+    initialState: {
+      ...INITIAL_STATE,
+      mode: 'live',
+      workspaceMode: 'multi',
+      workspaceKey: 'ws-1',
+      projects: [
+        { projectId: 'project-a', name: '项目 A', status: 'READY' },
+        { projectId: 'project-b', name: '项目 B', status: 'READY' },
+      ],
+      activeProjectId: 'project-a',
+      notice: '',
     },
-    editEpochs: createEditEpochs(),
   });
 
   try {
-    await fn({
-      get state() {
-        return state;
-      },
-      rootA,
-      rootB,
-      opener,
-      client: hooks.client,
-      inner,
-      views,
-      counts,
-      dispatch,
-      setMode(next) {
-        mode = next;
-        dispatch({ type: 'SET_MODE', mode: next });
-      },
-      holdNextOpen: hooks.holdNextOpen,
-      holdNextDisk: hooks.holdNextDisk,
-    });
+    await fn(harness);
   } finally {
     await server.close().catch(() => {});
     await rm(base, { recursive: true, force: true }).catch(() => {});
@@ -223,50 +307,20 @@ async function withLegacy(fn: (h: Harness) => Promise<void>): Promise<void> {
   const server = await createShellServer({ rootDir: root, port: 0 });
   const inner = createLiveClient(server.url);
 
-  let state: WorkspaceState = {
-    ...INITIAL_STATE,
-    mode: 'live',
-    workspaceMode: 'legacy',
-    notice: '',
-  };
-  let mode: ClientMode = 'live';
-  const counts = { open: 0, reload: 0, disk: 0 };
-  const views: SeenView[] = [];
-  const hooks = makeClientHooks(inner, counts, views);
-  const dispatch = (action: WorkspaceAction): void => {
-    state = workspaceReducer(state, action);
-  };
-  const opener = createDocumentOpener({
-    getState: () => state,
-    getMode: () => mode,
-    dispatch,
-    clientFor: (target) => {
-      if (target !== 'live') throw new Error(`测试不应使用 ${target} 客户端`);
-      return hooks.client;
+  const harness = buildHarness({
+    inner,
+    roots: { rootA: root, rootB: root },
+    initialState: {
+      ...INITIAL_STATE,
+      mode: 'live',
+      workspaceMode: 'legacy',
+      workspaceKey: 'ws-legacy',
+      notice: '',
     },
-    editEpochs: createEditEpochs(),
   });
 
   try {
-    await fn({
-      get state() {
-        return state;
-      },
-      rootA: root,
-      rootB: root,
-      opener,
-      client: hooks.client,
-      inner,
-      views,
-      counts,
-      dispatch,
-      setMode(next) {
-        mode = next;
-        dispatch({ type: 'SET_MODE', mode: next });
-      },
-      holdNextOpen: hooks.holdNextOpen,
-      holdNextDisk: hooks.holdNextDisk,
-    });
+    await fn(harness);
   } finally {
     await server.close().catch(() => {});
     await rm(base, { recursive: true, force: true }).catch(() => {});
@@ -296,8 +350,8 @@ test('A-01 外部修改后刷新：干净标签同步磁盘内容与版本基线
 
     await writeFile(join(h.rootA, 'a.md'), '# A edited externally\n', 'utf8');
 
-    const report = await h.opener.refreshOpenTabs('project-a');
-    assert.equal(report.updated, 1, '应同步 1 个文件');
+    const result = await h.refresh('project-a');
+    assert.equal(result.report?.updated, 1, '应同步 1 个文件');
 
     const after = tabOf(h, 'project-a', 'a.md');
     assert.ok(after);
@@ -315,17 +369,16 @@ test('A-02 磁盘没有变化时不刷新：不建临时 View、不产生多余�
     const before = tabOf(h, 'project-a', 'a.md');
     assert.ok(before);
     const opensBefore = h.counts.open;
-    const noticeBefore = h.state.notice;
 
-    const report = await h.opener.refreshOpenTabs('project-a');
-    assert.equal(report.updated, 0);
+    const result = await h.refresh('project-a');
+    assert.equal(result.report?.updated, 0);
     assert.equal(h.counts.open, opensBefore, '无变化时不得调用 open（否则每次刷新都多一个 View）');
 
     const after = tabOf(h, 'project-a', 'a.md');
     assert.equal(after?.buffer, before.buffer);
     assert.equal(after?.revision, before.revision);
     assert.equal(after?.baseVersion, before.baseVersion);
-    assert.equal(h.state.notice, noticeBefore, '无变化时不应打扰用户');
+    assert.equal(after?.dirty, false);
   });
 });
 
@@ -333,7 +386,6 @@ test('A-03 刷新不改变活动文档、焦点窗格与分屏结构', async () 
   await withMulti(async (h) => {
     await h.opener.openNode(nodeOf('project-a', 'a.md'), 'project-a');
     await h.opener.openNode(nodeOf('project-b', 'readme.md'), 'project-b');
-    // 焦点停在 B 的文件上，A 的 a.md 仍在后台打开
     h.dispatch({ type: 'SET_LAYOUT', layout: 'vertical' });
     h.dispatch({ type: 'FOCUS_PANE', pane: 'secondary' });
     const panesBefore = JSON.stringify(h.state.panes);
@@ -341,7 +393,7 @@ test('A-03 刷新不改变活动文档、焦点窗格与分屏结构', async () 
     const layoutBefore = h.state.layout;
 
     await writeFile(join(h.rootA, 'a.md'), '# A changed\n', 'utf8');
-    await h.opener.refreshOpenTabs('project-a');
+    await h.refresh('project-a');
 
     assert.equal(JSON.stringify(h.state.panes), panesBefore, '窗格指向不得变化');
     assert.equal(h.state.focusedPane, focusedBefore, '焦点窗格不得变化');
@@ -358,7 +410,6 @@ test('B-01 有草稿时检测到外部修改：只提示，草稿与版本一律
     const tab = tabOf(h, 'project-a', 'a.md');
     assert.ok(tab);
 
-    // 用户改动（真实调用链：noteLocalEdit + EDIT_DOC + Core applyEdit）
     h.opener.noteLocalEdit(tab.docId);
     h.dispatch({ type: 'EDIT_DOC', docId: tab.docId, text: '# my draft\n' });
     const edited = await h.client.applyEdit(
@@ -378,13 +429,12 @@ test('B-01 有草稿时检测到外部修改：只提示，草稿与版本一律
     assert.ok(draftTab);
     assert.equal(draftTab.dirty, true);
 
-    // 外部也改了
     await writeFile(join(h.rootA, 'a.md'), '# disk version\n', 'utf8');
     const reloadsBefore = h.counts.reload;
 
-    const report = await h.opener.refreshOpenTabs('project-a');
-    assert.deepEqual(report.dirtyChanged, ['a.md'], '必须明确报告该文件存在外部修改');
-    assert.equal(report.updated, 0, '有草稿的文件绝不自动同步');
+    const result = await h.refresh('project-a');
+    assert.deepEqual(result.report?.dirtyChanged, ['a.md'], '必须明确报告该文件存在外部修改');
+    assert.equal(result.report?.updated, 0, '有草稿的文件绝不自动同步');
     assert.equal(h.counts.reload, reloadsBefore, '不得调用会丢弃草稿的 reload');
 
     const after = tabOf(h, 'project-a', 'a.md');
@@ -393,7 +443,6 @@ test('B-01 有草稿时检测到外部修改：只提示，草稿与版本一律
     assert.equal(after?.baseVersion, draftTab.baseVersion, '版本基线不得被改写');
     assert.equal(after?.revision, draftTab.revision, 'revision 不得被推进');
     assert.equal(after?.sessionId, draftTab.sessionId);
-    // 不能伪造"保存已冲突"
     assert.equal(after?.lastStatus, draftTab.lastStatus, '不得伪造一次保存结论');
     assert.equal(after?.errorCode, draftTab.errorCode);
   });
@@ -407,9 +456,9 @@ test('B-02 有草稿但磁盘未变：不误报外部修改', async () => {
     h.opener.noteLocalEdit(tab.docId);
     h.dispatch({ type: 'EDIT_DOC', docId: tab.docId, text: '# local only\n' });
 
-    const report = await h.opener.refreshOpenTabs('project-a');
+    const result = await h.refresh('project-a');
     assert.deepEqual(
-      report.dirtyChanged,
+      result.report?.dirtyChanged,
       [],
       '磁盘没变时不得把"草稿与磁盘不同"误报成外部修改',
     );
@@ -433,7 +482,7 @@ test('B-03 外部修改与草稿并存时保存：得到 CONFLICT，不静默覆
     assert.equal(edited.status, 'APPLIED');
 
     await writeFile(join(h.rootA, 'a.md'), '# theirs\n', 'utf8');
-    await h.opener.refreshOpenTabs('project-a');
+    await h.refresh('project-a');
 
     const outcome = await h.client.saveDocument(
       tab.sessionId as string,
@@ -459,8 +508,8 @@ test('C-01 刷新项目 A 只动 A：B 的同名 readme.md 不受影响', async 
     await writeFile(join(h.rootA, 'readme.md'), '# A readme v2\n', 'utf8');
     await writeFile(join(h.rootB, 'readme.md'), '# B readme v2\n', 'utf8');
 
-    const report = await h.opener.refreshOpenTabs('project-a');
-    assert.equal(report.updated, 1);
+    const result = await h.refresh('project-a');
+    assert.equal(result.report?.updated, 1);
 
     assert.equal(tabOf(h, 'project-a', 'readme.md')?.buffer, '# A readme v2\n');
     assert.equal(
@@ -481,14 +530,14 @@ test('C-02 Legacy 单项目：projectId 为 null 的标签同样能被刷新', a
     assert.equal(before.buffer, '# legacy A\n');
 
     await writeFile(join(h.rootA, 'a.md'), '# legacy A v2\n', 'utf8');
-    const report = await h.opener.refreshOpenTabs(null);
-    assert.equal(report.updated, 1);
+    const result = await h.refresh();
+    assert.equal(result.report?.updated, 1);
     assert.equal(tabOf(h, null, 'a.md')?.buffer, '# legacy A v2\n');
   });
 });
 
 // ---------------------------------------------------------------------------
-// D. 异步安全
+// D. 异步安全（文档层）
 // ---------------------------------------------------------------------------
 test('D-01 刷新未返回时用户输入：旧结果被拒，草稿不被覆盖', async () => {
   await withMulti(async (h) => {
@@ -497,10 +546,10 @@ test('D-01 刷新未返回时用户输入：旧结果被拒，草稿不被覆盖
     assert.ok(tab);
     await writeFile(join(h.rootA, 'a.md'), '# from disk\n', 'utf8');
 
-    const release = h.holdNextOpen();
-    const refresh = h.opener.refreshOpenTabs('project-a');
+    const gate = h.gates.open.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered; // 确定性：open 请求已发出
 
-    // 请求在途：用户开始输入
     h.opener.noteLocalEdit(tab.docId);
     h.dispatch({ type: 'EDIT_DOC', docId: tab.docId, text: '# typed while refreshing\n' });
     await h.client.applyEdit(
@@ -510,7 +559,7 @@ test('D-01 刷新未返回时用户输入：旧结果被拒，草稿不被覆盖
       tab.viewId,
     );
 
-    release();
+    gate.release();
     await refresh;
 
     const after = tabOf(h, 'project-a', 'a.md');
@@ -525,11 +574,10 @@ test('D-02 刷新未返回时用户保存：保存结果不被刷新回退', asy
     const tab = tabOf(h, 'project-a', 'a.md');
     assert.ok(tab);
 
-    // 挂起磁盘读取的**响应**（请求已发出，读到的是保存之前的磁盘状态）
-    const release = h.holdNextDisk();
-    const refresh = h.opener.refreshOpenTabs('project-a');
+    const gate = h.gates.readDisk.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered; // 磁盘读取已发出（读到的是保存之前的状态）
 
-    // 在途期间用户改动并保存（磁盘此前未变，因此条件保存应成功）
     h.opener.noteLocalEdit(tab.docId);
     h.dispatch({ type: 'EDIT_DOC', docId: tab.docId, text: '# saved while refreshing\n' });
     const edited = await h.client.applyEdit(
@@ -559,7 +607,7 @@ test('D-02 刷新未返回时用户保存：保存结果不被刷新回退', asy
     const savedVersion = savedTab.baseVersion;
     const savedRevision = savedTab.revision;
 
-    release();
+    gate.release();
     await refresh;
 
     const after = tabOf(h, 'project-a', 'a.md');
@@ -577,19 +625,18 @@ test('D-03 刷新未返回时关闭标签：不复活标签，临时 View 必须
     assert.ok(tab);
     await writeFile(join(h.rootA, 'a.md'), '# disk v2\n', 'utf8');
 
-    const release = h.holdNextOpen();
-    const refresh = h.opener.refreshOpenTabs('project-a');
+    const gate = h.gates.open.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered;
 
-    // 在途期间用户关闭标签（真实调用链：关闭会话视图 + CLOSE_TAB）
     await h.client.closeDocument(tab.sessionId as string, tab.viewId as string);
     h.opener.forget(tab.docId);
     h.dispatch({ type: 'CLOSE_TAB', docId: tab.docId });
 
-    release();
+    gate.release();
     await refresh;
 
     assert.equal(h.state.tabs.length, 0, '刷新不得复活已关闭的标签');
-    // 标签自己的 View 在关闭时已释放；临时 View 也必须释放掉
     for (const view of h.views) {
       assert.equal(await viewAccepted(h, view), false, '临时 View 不得泄漏');
     }
@@ -602,13 +649,15 @@ test('D-04 刷新未返回时切换模式：结果不得写回（也不得复活
     assert.equal(h.state.tabs.length, 1);
     await writeFile(join(h.rootA, 'a.md'), '# disk v3\n', 'utf8');
 
-    const release = h.holdNextOpen();
-    const refresh = h.opener.refreshOpenTabs('project-a');
+    const gate = h.gates.open.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered;
     // 切模式会清空该工作区的标签（SET_MODE 归约），迟到的刷新绝不能把它们写回来
     h.setMode('demo');
-    release();
-    await refresh;
+    gate.release();
+    const result = await refresh;
 
+    assert.equal(result.cancelled, true, '切走之后这次刷新必须被判定为取消');
     assert.equal(h.state.mode, 'demo');
     assert.equal(h.state.tabs.length, 0, '迟到的刷新结果不得复活上一个工作区的标签');
   });
@@ -620,12 +669,10 @@ test('D-05 连续点击刷新同一项目：不重复建临时 View，最终内�
     await writeFile(join(h.rootA, 'a.md'), '# disk v4\n', 'utf8');
     const opensBefore = h.counts.open;
 
-    const [r1, r2] = await Promise.all([
-      h.opener.refreshOpenTabs('project-a'),
-      h.opener.refreshOpenTabs('project-a'),
-    ]);
+    const [r1, r2] = await Promise.all([h.refresh('project-a'), h.refresh('project-a')]);
 
-    assert.equal(r1.updated + r2.updated >= 1, true, '至少有一轮完成同步');
+    const updated = (r1.report?.updated ?? 0) + (r2.report?.updated ?? 0);
+    assert.equal(updated >= 1, true, '至少有一轮完成同步');
     assert.equal(
       h.counts.open - opensBefore <= 1,
       true,
@@ -645,9 +692,13 @@ test('D-06 磁盘文件被删除：只记失败，标签与草稿保持不变', 
 
     await unlink(join(h.rootA, 'a.md'));
 
-    const report = await h.opener.refreshOpenTabs('project-a');
-    assert.equal(report.updated, 0);
-    assert.equal(report.failed.length >= 1, true, '读取失败必须被记录，而不是静默成功');
+    const result = await h.refresh('project-a');
+    assert.equal(result.report?.updated, 0);
+    assert.equal(
+      (result.report?.failed.length ?? 0) >= 1,
+      true,
+      '读取失败必须被记录，而不是静默成功',
+    );
 
     const after = tabOf(h, 'project-a', 'a.md');
     assert.equal(after?.buffer, '# keep me\n', '草稿不得因刷新失败丢失');
@@ -663,15 +714,200 @@ test('D-07 刷新未返回时切换项目：活动项目不被夺回，B 不受�
     assert.ok(bBefore);
     await writeFile(join(h.rootA, 'a.md'), '# A during switch\n', 'utf8');
 
-    const release = h.holdNextOpen();
-    const refresh = h.opener.refreshOpenTabs('project-a');
-    // 在途期间用户切到项目 B
+    const gate = h.gates.open.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered;
     h.dispatch({ type: 'SET_ACTIVE_PROJECT', projectId: 'project-b' });
-    release();
+    gate.release();
     await refresh;
 
     assert.equal(h.state.activeProjectId, 'project-b', '迟到的刷新不得把活动项目夺回 A');
     assert.equal(tabOf(h, 'project-b', 'readme.md')?.buffer, bBefore.buffer, 'B 不得被 A 的结果改写');
     assert.equal(tabOf(h, 'project-a', 'a.md')?.buffer, '# A during switch\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R1（GPT 审查阻断项）：刷新生命周期取消
+// ---------------------------------------------------------------------------
+test('R1-M01 Multi 树读取在途切 Demo：放行后不得污染新工作区', async () => {
+  await withMulti(async (h) => {
+    const gate = h.gates.listResources.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered; // 资源树请求已发出
+
+    h.setMode('demo');
+    const noticeAfterSwitch = h.state.notice;
+
+    gate.release();
+    const result = await refresh;
+
+    assert.equal(result.cancelled, true, '切走之后必须判定为取消');
+    assert.equal(h.state.mode, 'demo');
+    assert.deepEqual(h.state.resourcesByProject, {}, '不得写入旧工作区的项目资源树');
+    assert.deepEqual(h.state.loadingByProject, {}, '不得留下旧工作区的加载标记');
+    assert.deepEqual(h.state.projects, [], '不得把旧项目表写回 Demo 工作区');
+    assert.equal(h.state.notice, noticeAfterSwitch, '不得用旧刷新的提示覆盖当前提示');
+  });
+});
+
+test('R1-L02 Legacy 树读取在途切 Demo：放行后不得更新资源树或旧提示', async () => {
+  await withLegacy(async (h) => {
+    const gate = h.gates.listResources.arm();
+    const refresh = h.refresh();
+    await gate.entered;
+
+    h.setMode('demo');
+    const noticeAfterSwitch = h.state.notice;
+    assert.equal(h.state.loadingResources, true, '请求在途时确实处于加载中');
+
+    gate.release();
+    const result = await refresh;
+
+    assert.equal(result.cancelled, true);
+    assert.deepEqual(h.state.resources, [], '不得把旧工作区的资源树写进 Demo');
+    assert.equal(h.state.notice, noticeAfterSwitch, '不得发出旧工作区的刷新提示');
+  });
+});
+
+test('R1-E03 Demo→Live 快速往返：模式相同但旧代次，仍必须丢弃', async () => {
+  await withMulti(async (h) => {
+    const gate = h.gates.listResources.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered;
+
+    // 切走再切回：模式最终仍是 live，但请求已属于上一代
+    h.setMode('demo');
+    h.setMode('live');
+    h.reconnect('ws-2');
+    const noticeAfterReturn = h.state.notice;
+
+    gate.release();
+    const result = await refresh;
+
+    assert.equal(result.cancelled, true, '模式相同也不能让旧代次的结果生效');
+    assert.deepEqual(h.state.resourcesByProject, {}, '旧代次不得写入资源树');
+    assert.equal(h.state.notice, noticeAfterReturn, '旧代次不得写提示');
+  });
+});
+
+test('R1-V04 open 已发出且临时 View 已建，随后关闭标签：View 必须被释放', async () => {
+  await withMulti(async (h) => {
+    await h.opener.openNode(nodeOf('project-a', 'a.md'), 'project-a');
+    const tab = tabOf(h, 'project-a', 'a.md');
+    assert.ok(tab);
+    await writeFile(join(h.rootA, 'a.md'), '# disk for view\n', 'utf8');
+    const viewsBefore = h.views.length;
+
+    const gate = h.gates.afterOpenResponse.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered; // 信号：open 响应已到手，临时 View 已存在
+
+    const created = h.views.slice(viewsBefore);
+    assert.equal(created.length, 1, '刷新确实新建了一个临时 View');
+
+    // 此刻关掉标签：临时 View 仍然必须被释放
+    await h.client.closeDocument(tab.sessionId as string, tab.viewId as string);
+    h.opener.forget(tab.docId);
+    h.dispatch({ type: 'CLOSE_TAB', docId: tab.docId });
+
+    gate.release();
+    await refresh;
+
+    assert.equal(await viewAccepted(h, created[0]), false, '临时 View 必须在取消路径上释放');
+    assert.equal(h.state.tabs.length, 0, '不得复活标签');
+  });
+});
+
+test('R1-V05 open 已发出且临时 View 已建，随后切模式：View 释放且不写回', async () => {
+  await withMulti(async (h) => {
+    await h.opener.openNode(nodeOf('project-a', 'a.md'), 'project-a');
+    await writeFile(join(h.rootA, 'a.md'), '# disk for mode\n', 'utf8');
+    const viewsBefore = h.views.length;
+
+    const gate = h.gates.afterOpenResponse.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered;
+
+    const created = h.views.slice(viewsBefore);
+    assert.equal(created.length, 1);
+
+    h.setMode('demo');
+    gate.release();
+    const result = await refresh;
+
+    assert.equal(result.cancelled, true);
+    assert.equal(await viewAccepted(h, created[0]), false, '切模式后临时 View 仍须释放');
+    assert.equal(h.state.tabs.length, 0, '不得把 live 标签写回 Demo 工作区');
+  });
+});
+
+test('R1-S06 readDisk 迟到且期间已保存：不得据过期快照报"外部修改"或多建 View', async () => {  await withMulti(async (h) => {
+    await h.opener.openNode(nodeOf('project-a', 'a.md'), 'project-a');
+    const tab = tabOf(h, 'project-a', 'a.md');
+    assert.ok(tab);
+
+    const gate = h.gates.readDisk.arm();
+    const refresh = h.refresh('project-a');
+    await gate.entered; // 快照已读（此刻 baseVersion 仍是旧值）
+
+    // 在途期间用户改并保存：基线推进，磁盘内容变成用户自己的内容
+    h.opener.noteLocalEdit(tab.docId);
+    h.dispatch({ type: 'EDIT_DOC', docId: tab.docId, text: '# mine\n' });
+    await h.client.applyEdit(tab.sessionId as string, '# mine\n', tab.baseVersion, tab.viewId);
+    const saved = await h.client.saveDocument(
+      tab.sessionId as string,
+      tab.baseVersion as string,
+      tab.viewId,
+    );
+    assert.equal(saved.status, 'COMMITTED');
+    h.dispatch({
+      type: 'TAB_PATCH',
+      docId: tab.docId,
+      patch: {
+        baseVersion: saved.document?.baseVersion ?? null,
+        revision: saved.document?.revision ?? tab.revision,
+        dirty: false,
+      },
+    });
+    const opensBefore = h.counts.open;
+
+    gate.release();
+    const result = await refresh;
+
+    assert.deepEqual(result.report?.dirtyChanged, [], '过期快照不得用来断言"存在外部修改"');
+    assert.equal(result.report?.updated, 0, '也不得据此同步（用户刚保存的内容就是磁盘内容）');
+    assert.equal(h.counts.open, opensBefore, '过期快照不得触发多余的 open / 临时 View');
+    assert.equal(tabOf(h, 'project-a', 'a.md')?.buffer, '# mine\n');
+  });
+});
+
+test('R1-C07 手动刷新不推进 load 代次：不得误取消进行中的恢复', async () => {
+  await withMulti(async (h) => {
+    // 模拟 S11-C 恢复刚开启的一代：刷新只能"读令牌"，不能推进或作废它
+    const cancelledByRestore = h.startEpoch();
+    await h.refresh('project-a');
+    assert.equal(cancelledByRestore(), false, '刷新不得让恢复的在途检查失效');
+  });
+});
+
+test('R1-L08 Legacy 文档刷新在途切 Demo：返回后不得写提示或资源树', async () => {
+  await withLegacy(async (h) => {
+    await h.opener.openNode(nodeOf(null, 'a.md'), null);
+    await writeFile(join(h.rootA, 'a.md'), '# legacy v2\n', 'utf8');
+
+    const gate = h.gates.readDisk.arm();
+    const refresh = h.refresh();
+    await gate.entered; // 文件树已回填，文档层已发出 readDisk
+
+    h.setMode('demo');
+    const noticeAfterSwitch = h.state.notice;
+
+    gate.release();
+    const result = await refresh;
+
+    assert.equal(result.cancelled, true, '文档刷新返回后也要重新校验，不能只看请求发出时');
+    assert.deepEqual(h.state.resources, [], '不得把旧资源树写回 Demo');
+    assert.equal(h.state.notice, noticeAfterSwitch, '不得覆盖当前提示');
   });
 });

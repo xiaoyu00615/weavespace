@@ -328,6 +328,7 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
       report.checked += 1;
 
       // 先只读检查：无论干净还是有草稿，都不写盘、不动会话
+      const capturedBaseVersion = tab.baseVersion;
       let disk: { content: string; contentVersion: string };
       try {
         const outcome = await deps.clientFor('live').readDisk(tab.sessionId, tab.viewId);
@@ -344,6 +345,9 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
       // 期间用户改了 / 存了 / 关了：这次读取已过期，不再据此决策
       const stillThere = tabOf(docId);
       if (!stillThere || stillThere.sessionId !== tab.sessionId) continue;
+      // 读取期间用户保存/重载推进了基线：快照对应的是**保存前**的磁盘，
+      // 拿它与新基线比较只会得出一份不存在的"外部修改"（还会白建一个临时 View）
+      if ((stillThere.baseVersion ?? null) !== (capturedBaseVersion ?? null)) continue;
 
       if (!diskChangedAgainst(stillThere, disk)) continue;
 

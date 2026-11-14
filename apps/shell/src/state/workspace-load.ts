@@ -53,6 +53,15 @@ export interface LoadEpoch {
   start(): () => boolean;
   /** 让所有在途加载失效（切到不需要加载的模式时用）。 */
   cancel(): void;
+  /**
+   * 读取当前代次令牌（S11-UX-01A-R1）。
+   *
+   * 只读，**不推进代次**：手动刷新需要在"不打断 S11-C 恢复"的前提下记住
+   * 自己属于哪一代，事后再问一句"这一代还有效吗"。
+   */
+  current(): number;
+  /** 给定令牌是否仍是当前代（切模式 / 重新连接都会让旧令牌失效）。 */
+  isCurrent(token: number): boolean;
 }
 
 export function createLoadEpoch(): LoadEpoch {
@@ -65,6 +74,12 @@ export function createLoadEpoch(): LoadEpoch {
     },
     cancel() {
       generation += 1;
+    },
+    current() {
+      return generation;
+    },
+    isCurrent(token) {
+      return generation === token;
     },
   };
 }
