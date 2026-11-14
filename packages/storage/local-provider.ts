@@ -75,6 +75,14 @@ export interface StorageFaultHooks {
    * 由 `readDir` 的目录错误映射转成 `ERR_DIR_UNREADABLE`。
    */
   beforeReadDir?: (relativeDir: string) => void;
+  /**
+   * 仅测试注入：替换 `readDir` 的 `lstat`（UX-02B-TREE-R2）。
+   *
+   * 用途：记录/拦截每一次元数据读取，验证对 `dir=link/child` 的拒绝**发生在**
+   * 沿链接访问根外 `child` 之前。仅断言 HTTP 400/403 无法区分这两者。
+   * 不注入时使用 `node:fs/promises.lstat`，生产行为不变。
+   */
+  lstatImpl?: LstatImpl;
 }
 
 export interface LocalProviderOptions {
@@ -99,6 +107,15 @@ export interface ReadResult {
   contentVersion: string;
   encoding: 'utf8';
 }
+
+/** `lstat` 的最小视图：`readDir` 只关心这两件事，便于测试注入可观测实现。 */
+export interface LstatResultLike {
+  isSymbolicLink(): boolean;
+  isDirectory(): boolean;
+}
+
+/** 仅测试注入：替换 `readDir` 的元数据读取，用于证明"拒绝前没有越界元数据读取"。 */
+export type LstatImpl = (absolutePath: string) => Promise<LstatResultLike>;
 
 /** 单层目录条目类型（UX-02B-TREE 契约 B.3）：只描述事实，不带格式语义。 */
 export type DirEntryKind = 'folder' | 'file' | 'link';
@@ -171,6 +188,8 @@ const VERSION_READ_ATTEMPTS = 3;
 export function createLocalProvider(options: LocalProviderOptions): StorageProvider {
   const rootDir = options.rootDir;
   const faults = options.faults ?? {};
+  /** 仅测试注入：默认就是真实的 `lstat`，生产行为完全不变。 */
+  const lstatImpl: LstatImpl = faults.lstatImpl ?? lstat;
 
   // 根目录身份在此一次性固定；无法确认（EPERM/EACCES/悬空重解析点…）时直接抛错，
   // 不允许“先建 provider、之后每次操作各自猜边界”。
@@ -559,15 +578,40 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
     async readDir(dir = '.'): Promise<DirEntry[]> {
       const requested = typeof dir === 'string' && dir.length > 0 ? dir : '.';
 
-      // 链接预检（契约 B.5）：必须发生在 resolveInBoundary **之前**。
-      // resolveInBoundary 会逐级 realpath 比对，链接因"真实路径 ≠ 字面路径"被它判成越界，
-      // 用户只会看到"路径不在允许范围内"，看不出"这是一条链接"。这里只看末段的元数据，
-      // 且只在字面形态明显安全时进行（含 `..`/绝对路径/盘符的一律不做这次 peek）。
-      const literal = literalPathIfSafe(boundary.canonicalRoot, requested);
-      if (literal !== null) {
+      /**
+       * 链接诊断（契约 B.5 / UX-02B-TREE-R2）。
+       *
+       * 旧实现把**完整字面路径**拼出来后直接 `lstat`：当父级是 junction/symlink
+       * 时，这次 lstat 会沿链接解析到项目根之外，等于在确认父链安全之前就读取了
+       * 根外 `child` 的元数据。虽然随后 resolveInBoundary 仍会拒绝，但元数据已经
+       * 被访问过了 —— 这不是"是否泄露内容"的问题，而是访问顺序本身不安全。
+       *
+       * 新顺序：
+       *   1. 先用 `resolveInBoundary` 校验**父目录链**（它逐级 realpath，遇到
+       *      重解析点立即返回，不会继续往下解析）；父链不安全就直接失败，
+       *      一次目标元数据读取都不做（`dir=link/child` 走这一支）。
+       *   2. 父链确认安全后，才对**末段本身**做一次不跟随的 lstat，用来把
+       *      "这是一条链接"报成明确的 `ERR_DIR_IS_LINK`（`dir=link` 走这一支）。
+       *
+       * `isUntrustedResolution` 补上 Windows junction：`lstat().isSymbolicLink()`
+       * 对 junction 可能返回 false，realpath 比对仍能识别它。
+       * 非法形态（绝对路径 / 盘符 / `..` / 空段 / NUL）跳过诊断，交给正式链路
+       * fail-closed 拒绝，绝不为了一次诊断去拼可疑路径。
+       */
+      const segments = safeSegmentsOf(requested);
+      if (segments !== null && segments.length > 0) {
+        const parentRel = segments.length > 1 ? segments.slice(0, -1).join('/') : '.';
+        const parentCheck = resolveInBoundary(boundary, parentRel);
+        if (!parentCheck.ok) {
+          throw Object.assign(new Error(parentCheck.detail), { errorCode: parentCheck.errorCode });
+        }
+        const leaf = segments[segments.length - 1];
+        const leafAbs = join(parentCheck.absolutePath, leaf);
         try {
-          const pre = await lstat(literal);
-          if (pre.isSymbolicLink()) throw domainError('ERR_DIR_IS_LINK', '该路径是链接，不展开');
+          const pre = await lstatImpl(leafAbs);
+          if (pre.isSymbolicLink() || isUntrustedResolution(leafAbs)) {
+            throw domainError('ERR_DIR_IS_LINK', '该路径是链接，不展开');
+          }
         } catch (err) {
           const tagged = (err as { errorCode?: string } | undefined)?.errorCode;
           if (typeof tagged === 'string') throw err;
@@ -583,7 +627,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       assertRootContinuity(boundary, establishedToken);
 
       try {
-        const info = await lstat(check.absolutePath);
+        const info = await lstatImpl(check.absolutePath);
         // 悬空重解析点也不会走到这里（resolveInBoundary 已判越界），此处是第二道闸
         if (info.isSymbolicLink()) throw domainError('ERR_DIR_IS_LINK', '该路径是链接，不展开');
         if (!info.isDirectory()) throw domainError('ERR_RESOURCE_NOT_FOUND', '该路径不是目录');
@@ -614,17 +658,20 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
 }
 
 /**
- * 把一个"形态明显安全的相对路径"拼成字面绝对路径；不安全则返回 null。
+ * 把「形态明显安全」的相对路径拆成段；不安全形态返回 null（UX-02B-TREE-R2）。
  *
- * 这不是授权判定（授权仍由 `resolveInBoundary` 负责），只是决定"要不要做那次链接元数据预检"：
- * 含 `..`、绝对路径、盘符、UNC、NUL、空段的请求一律跳过预检，直接进入正式解析，
- * 避免为了一次诊断性 peek 去触碰根外路径。
+ * 这不是授权判定（授权仍由 `resolveInBoundary` 负责），只决定"要不要做链接诊断"：
+ * 含 `..`、绝对路径、盘符、UNC、NUL、空段的请求一律跳过诊断，直接进入正式解析，
+ * 避免为了一次诊断去拼出可疑的字面路径。
+ *
+ * 与旧 `literalPathIfSafe` 的关键区别：这里**不拼接完整绝对路径**，
+ * 只交出段名；父链由 `resolveInBoundary` 逐级确认后才允许拼末段。
  */
-function literalPathIfSafe(canonicalRoot: string, requested: string): string | null {
+function safeSegmentsOf(requested: string): string[] | null {
   if (requested.includes('\0')) return null;
   const unified = requested.replace(/\\/g, '/');
   if (unified.startsWith('/') || /^[A-Za-z]:/.test(unified)) return null;
   const segments = unified.split('/');
   if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null;
-  return join(canonicalRoot, ...segments);
+  return segments;
 }

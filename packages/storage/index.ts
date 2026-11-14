@@ -11,6 +11,8 @@ export {
   type FileStat,
   type StorageFaultHooks,
   type StorageProvider,
+  type LstatImpl,
+  type LstatResultLike,
 } from './local-provider.ts';
 export {
   resolveInsideRoot,

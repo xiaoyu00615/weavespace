@@ -64,6 +64,31 @@
 | `writeConditional` | **边界比对（先于版本比较，F06）** → 解析 → 版本校验 → **边界比对** → `mkdir` → **再次解析** → **边界比对** → 写临时文件 → **边界比对** → `rename`；任一步失败即 `FAILED` |
 | `list` | 校验边界后遍历；跳过 dirent 标记为链接的条目；每级目录递归前再次校验是否为可信解析结果 |
 
+### `readDir` 的链接诊断顺序（UX-02B-TREE-R2）
+
+`readDir()` 需要把「这条路径是链接」报成明确的 `ERR_DIR_IS_LINK`，而不是笼统的越界错误。
+**这次诊断本身也必须遵守父链优先**：旧实现把完整字面路径拼好后直接 `lstat`，当父级是
+junction / 符号链接时，那次 `lstat` 会沿链接解析到项目根之外，等于在确认父链安全之前
+读取了根外 `child` 的元数据（即便随后 `resolveInBoundary` 仍会拒绝）。
+
+现行顺序：
+
+1. 形态明显不安全的输入（绝对路径、盘符、UNC、`..`、空段、NUL）**跳过诊断**，
+   交由 `resolveInBoundary` fail-closed 拒绝，绝不为了一次诊断去拼可疑路径。
+2. 先用 `resolveInBoundary` 校验**父目录链**。它逐级 `realpathSync.native()` 比对，
+   遇到重解析点立即返回；父链不安全就**直接失败，一次目标元数据读取都不做**。
+   因此 `dir=link/child` 在 `link` 这一级就被拒绝，不会触碰根外 `child`。
+3. 父链确认安全后，才对**末段本身**做一次不跟随的 `lstat`，并用
+   `isUntrustedResolution()`（realpath 比对）补上 Windows junction —— 本机
+   `lstatSync().isSymbolicLink()` 对部分 junction 返回 `false`。命中即
+   `ERR_DIR_IS_LINK`，保持「链接不展开」的明确语义。
+4. 最后仍走**原有的** `resolveInBoundary(requested)` + 根连续性断言 + `readdir`；
+   已通过审查的根身份与读写授权规则没有改动。
+
+`faults.lstatImpl` 是仅测试注入的可观测点，用来记录每一次元数据读取；
+`tests/suites/53-*.test.ts` 以「父目录 realpath 是否已在根外」判定越界读取，
+而不是只断言 HTTP 400/403。
+
 ## 文本安全（S5）
 
 **定位**：`read()` 是 **UTF-8 文本接口**，不是通用二进制读取器。无法安全表示为文本的内容必须

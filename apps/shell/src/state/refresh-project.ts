@@ -11,6 +11,7 @@
 import type { WeaveSpaceClient } from '../client/client-api.ts';
 import type { OpenTabsRefreshReport } from './open-document.ts';
 import type { ClientMode, WorkspaceAction, WorkspaceState } from './types.ts';
+import type { TreeOwnershipGuard, TreeRequestTicket } from './tree-load.ts';
 import { loadProjectResources } from './workspace-load.ts';
 
 export interface RefreshProjectDeps {
@@ -25,6 +26,12 @@ export interface RefreshProjectDeps {
   loadToken(): number;
   /** 该令牌是否仍是当前代（切模式 / 重新连接都让旧令牌失效）。 */
   isTokenCurrent(token: number): boolean;
+  /**
+   * UX-02B-TREE-R2：与逐层加载共用的请求归属守卫。
+   * `loadToken()` 只读不推进代次，连续两次刷新同项目时两次的 token 完全相同，
+   * 因此必须靠 guard 的「每层请求代次」区分新旧根层请求（R2-01）。
+   */
+  treeOwnership?: TreeOwnershipGuard;
 }
 
 export interface RefreshProjectResult {
@@ -85,12 +92,22 @@ export async function refreshProject(
   const token = deps.loadToken();
   const capturedKey = state.workspaceKey;
   const capturedActive = state.activeProjectId;
+  /**
+   * UX-02B-TREE-R2：Legacy 根层刷新也领一张票据。
+   *
+   * `loadToken()` 只读，两次连续刷新 token 相同；Multi 由 `loadProjectResources`
+   * 内部领票据，Legacy 分支直接走 `listTree`，必须在这里补上同样的代次保护。
+   * 只有 Legacy 分支需要，Multi 分支由加载链自己推进代次，避免重复推进。
+   */
+  const ownership = deps.treeOwnership;
+  let legacyTicket: TreeRequestTicket | null = null;
   /** 本次刷新是否仍然代表"当前这个工作区"（只读判定，不推进任何代次）。 */
   const stillValid = (): boolean =>
     deps.getMode() === 'live' &&
     deps.getState().mode === 'live' &&
     deps.getState().workspaceKey === capturedKey &&
-    deps.isTokenCurrent(token);
+    deps.isTokenCurrent(token) &&
+    (legacyTicket === null || ownership === undefined || ownership.isCurrent(legacyTicket));
 
   const cancelled = (target: string | null): RefreshProjectResult => ({
     cancelled: true,
@@ -116,6 +133,8 @@ export async function refreshProject(
         isCancelled: () => !stillValid(),
         // 取消后不要清理 loading：标记可能已经属于新一代对同一个项目的加载（UX-01A-R2）
         preserveLoadingOnCancel: true,
+        // 根层读取与子目录读取共用的归属守卫（R2-01）
+        treeOwnership: ownership,
       },
       target as string,
     );
@@ -144,6 +163,8 @@ export async function refreshProject(
     return { cancelled: false, projectId: target, files: 0, report };
   }
 
+  // R2-01：Legacy 根层刷新领票据，连续两次刷新时旧响应立即失效
+  legacyTicket = ownership?.begin('', '') ?? null;
   deps.dispatch({ type: 'SET_LOADING_RESOURCES', loading: true });
   let files = 0;
   try {
@@ -165,6 +186,7 @@ export async function refreshProject(
       cursor: null,
       nextCursor: outcome.page.nextCursor,
       total: outcome.page.total,
+      snapshot: outcome.page.snapshot ?? null,
     });
     files = outcome.entries.filter((entry) => entry.kind === 'file').length;
   } catch {
@@ -172,8 +194,11 @@ export async function refreshProject(
     deps.dispatch({ type: 'NOTICE', message: '刷新失败：无法连接本地服务' });
     return { cancelled: false, projectId: null, files: 0, report: null };
   } finally {
-    // 已取消时不要写"加载中=false"：那个标记属于旧工作区，切模式时归约已经重置
-    if (stillValid()) deps.dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
+    const expired =
+      legacyTicket !== null && ownership !== undefined && !ownership.isCurrent(legacyTicket);
+    if (ownership && legacyTicket) ownership.end(legacyTicket);
+    // 过期票据的 finally 不得清理 loading：标记已属于新请求（R2-01 要求 3）
+    if (!expired && stillValid()) deps.dispatch({ type: 'SET_LOADING_RESOURCES', loading: false });
   }
 
   const report = await deps.refreshOpenTabs(null);

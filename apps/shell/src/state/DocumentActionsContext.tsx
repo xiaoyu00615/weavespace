@@ -37,7 +37,7 @@ import {
 } from './workspace-persistence';
 import { createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
 import { emptyLevels } from '../components/tree-model.ts';
-import { createTreeLevelLoader, type TreeLoadIdentity } from './tree-load.ts';
+import { createTreeLevelLoader, createTreeOwnershipGuard, type TreeLoadIdentity } from './tree-load.ts';
 import { refreshProject } from './refresh-project';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
@@ -172,19 +172,34 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
    * 这里只注入宿主依赖，不复制任何编排逻辑。
    */
   const treeLoader = useRef(
-    createTreeLevelLoader({
-      identity: (): TreeLoadIdentity => ({
-        mode: stateRef.current.mode,
-        syncMode: modeRef.current,
-        workspaceKey: stateRef.current.workspaceKey,
-        epoch: loadEpoch.current.current(),
-        activeProjectId: stateRef.current.activeProjectId,
-      }),
-      levels: (projectKey: string) => stateRef.current.treeByProject[projectKey] ?? emptyLevels(),
-      listTree: (request) =>
-        clientFor('live').listTree(request.projectId, request.dir, request.cursor, undefined, request.snapshot),
-      dispatch,
-    }),
+    createTreeLevelLoader(
+      {
+        identity: (): TreeLoadIdentity => ({
+          mode: stateRef.current.mode,
+          syncMode: modeRef.current,
+          workspaceKey: stateRef.current.workspaceKey,
+          epoch: loadEpoch.current.current(),
+          activeProjectId: stateRef.current.activeProjectId,
+        }),
+        levels: (projectKey: string) => stateRef.current.treeByProject[projectKey] ?? emptyLevels(),
+        listTree: (request) =>
+          clientFor('live').listTree(request.projectId, request.dir, request.cursor, undefined, request.snapshot),
+        dispatch,
+      },
+      /**
+       * R2-01：显式创建**同一个**归属守卫，供逐层加载器与工作区加载链共用。
+       * loader 不传第二个参数时会自建一个，那样根层刷新就拿不到同一份代次。
+       */
+      createTreeOwnershipGuard(
+        (): TreeLoadIdentity => ({
+          mode: stateRef.current.mode,
+          syncMode: modeRef.current,
+          workspaceKey: stateRef.current.workspaceKey,
+          epoch: loadEpoch.current.current(),
+          activeProjectId: stateRef.current.activeProjectId,
+        }),
+      ),
+    ),
   );
 
   /**
@@ -264,6 +279,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         dispatch,
         clientFor: (mode) => (mode === 'live' ? liveClient : demoClient),
         isCancelled: cancelled,
+        treeOwnership: treeLoader.current.ownership,
       });
       // 加载期间用户接管了：结果不属于当前工作区，交出 null 让恢复流程收手
       if (cancelled()) return null;
@@ -362,6 +378,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       getState: () => stateRef.current,
       dispatch,
       clientFor: (target: ClientMode) => (target === 'live' ? liveClient : demoClient),
+      treeOwnership: treeLoader.current.ownership,
     };
 
     /**
@@ -626,6 +643,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
             dispatch,
             clientFor: (target) => (target === 'live' ? liveClient : demoClient),
             isCancelled: cancelled,
+            treeOwnership: treeLoader.current.ownership,
           });
         }
       },
@@ -649,6 +667,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
             refreshOpenTabs: (target) => opener.refreshOpenTabs(target),
             loadToken: () => loadEpoch.current.current(),
             isTokenCurrent: (token) => loadEpoch.current.isCurrent(token),
+            treeOwnership: treeLoader.current.ownership,
           },
           projectId,
         );

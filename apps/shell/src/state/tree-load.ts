@@ -1,10 +1,14 @@
 /**
- * UX-02B-TREE-R1：逐层目录加载的**异步编排**（纯 TS）。
+ * UX-02B-TREE-R1/R2：逐层目录加载的**异步编排与请求归属**（纯 TS）。
  *
  * 为什么单独成模块：`.tsx` 无法被 `node:test` import，而「迟到响应到底能不能回填」
  * 是典型的多分支时序问题，只靠 React 源码字符串断言证明不了。把 `loadTreeLevel`
  * 的编排移到这里之后，测试可以用可控的 deferred promise 精确制造
  * 「旧请求比新请求晚回来」并且逐条检查 dispatch。
+ *
+ * R2-01：`loadProjectResources()` 的**根层读取**也必须走同一套归属判定。
+ * 因此把代次/作废/票据抽成 `TreeOwnershipGuard`，由 Provider 创建**同一个实例**
+ * 同时供给逐层加载器与工作区加载链；不新增第二套状态机。
  *
  * 纪律：本模块**不碰网络、不碰 React、不碰磁盘**，所有外部能力经 `host` 注入。
  */
@@ -62,6 +66,8 @@ export interface TreeLevelLoader {
   invalidateProject(projectKey: string): void;
   /** 换模式 / 重新连接：作废所有在途请求。 */
   invalidateAll(): void;
+  /** 与工作区加载链共享的归属守卫（R2-01）。 */
+  readonly ownership: TreeOwnershipGuard;
 }
 
 /**
@@ -77,91 +83,136 @@ export interface TreeLevelLoader {
  * 注意 `activeProjectId` 刻意**不参与**判定：切换焦点、刷新另一个项目都不该
  * 取消一个目标明确的有效加载。
  */
-interface LoadTicket {
-  readonly mode: ClientMode;
-  readonly syncMode: ClientMode;
-  readonly workspaceKey: string | null;
-  readonly epoch: number;
+export interface TreeRequestTicket {
+  readonly identity: TreeLoadIdentity;
   readonly projectKey: string;
-  readonly levelDir: string;
+  readonly dir: string;
   /** 该 (项目, 目录) 层的请求序号；每次新请求 +1，旧票据立即失效。 */
-  readonly levelGeneration: number;
+  readonly generation: number;
   /** 项目级作废序号：刷新一个项目时它名下所有层一起失效。 */
   readonly projectGeneration: number;
   /** 全局作废序号：换模式 / 重新连接时所有在途一起失效。 */
   readonly workspaceGeneration: number;
 }
 
+export interface TreeOwnershipGuard {
+  /** 非 live 返回 null；否则推进该层代次、捕获身份并登记在途票据。 */
+  begin(projectKey: string, dir: string): TreeRequestTicket | null;
+  /** 该层是否还有**仍属当前代**的在途票据（单飞判定）。 */
+  inFlight(projectKey: string, dir: string): TreeRequestTicket | undefined;
+  /** 票据是否仍代表"当前这一份层表"；失败即一个 dispatch 都不发。 */
+  isCurrent(ticket: TreeRequestTicket): boolean;
+  /** 请求结束：只清理自己那条在途记录。 */
+  end(ticket: TreeRequestTicket): void;
+  invalidateProject(projectKey: string): void;
+  invalidateAll(): void;
+}
+
 function levelKeyOf(projectKey: string, dir: string): string {
   return `${projectKey}\u0000${dir}`;
 }
 
-export function createTreeLevelLoader(host: TreeLevelLoaderHost): TreeLevelLoader {
+/** 归属守卫工厂：所有请求（子层 / 根层 / 刷新）共用同一个实例才有意义。 */
+export function createTreeOwnershipGuard(
+  identity: () => TreeLoadIdentity,
+): TreeOwnershipGuard {
   let workspaceGeneration = 0;
   const projectGeneration = new Map<string, number>();
-  const levelGeneration = new Map<string, number>();
+  const generation = new Map<string, number>();
   /**
    * 该层当前在途请求的票据。单飞必须按"票据是否仍属当前代"判定，
    * 不能只看 `status === 'loading'`：上一代请求被作废后留下的 loading
    * 会把新一代请求永远挡在门外（R1-02-02 现场发现的边界）。
    */
-  const inFlight = new Map<string, LoadTicket>();
+  const inFlight = new Map<string, TreeRequestTicket>();
 
-  /** 票据是否仍代表"当前这一份层表"。失败即一个 dispatch 都不发。 */
-  const isCurrent = (ticket: LoadTicket): boolean => {
-    const now = host.identity();
-    const key = levelKeyOf(ticket.projectKey, ticket.levelDir);
+  const isCurrent = (ticket: TreeRequestTicket): boolean => {
+    const now = identity();
+    const key = levelKeyOf(ticket.projectKey, ticket.dir);
     return (
-      ticket.mode === 'live' &&
-      ticket.syncMode === 'live' &&
+      ticket.identity.mode === 'live' &&
+      ticket.identity.syncMode === 'live' &&
       now.mode === 'live' &&
       now.syncMode === 'live' &&
-      now.workspaceKey === ticket.workspaceKey &&
-      now.epoch === ticket.epoch &&
+      now.workspaceKey === ticket.identity.workspaceKey &&
+      now.epoch === ticket.identity.epoch &&
       workspaceGeneration === ticket.workspaceGeneration &&
       (projectGeneration.get(ticket.projectKey) ?? 0) === ticket.projectGeneration &&
-      (levelGeneration.get(key) ?? 0) === ticket.levelGeneration
+      (generation.get(key) ?? 0) === ticket.generation
     );
   };
 
   return {
+    begin(projectKey, dir) {
+      const at = identity();
+      if (at.mode !== 'live' || at.syncMode !== 'live') return null;
+      const key = levelKeyOf(projectKey, dir);
+      const next = (generation.get(key) ?? 0) + 1;
+      generation.set(key, next);
+      const ticket: TreeRequestTicket = {
+        identity: at,
+        projectKey,
+        dir,
+        generation: next,
+        projectGeneration: projectGeneration.get(projectKey) ?? 0,
+        workspaceGeneration,
+      };
+      inFlight.set(key, ticket);
+      return ticket;
+    },
+    inFlight(projectKey, dir) {
+      const key = levelKeyOf(projectKey, dir);
+      const ticket = inFlight.get(key);
+      if (!ticket) return undefined;
+      if (!isCurrent(ticket)) {
+        inFlight.delete(key);
+        return undefined;
+      }
+      return ticket;
+    },
+    isCurrent,
+    end(ticket) {
+      const key = levelKeyOf(ticket.projectKey, ticket.dir);
+      if (inFlight.get(key) === ticket) inFlight.delete(key);
+    },
+    invalidateProject(projectKey) {
+      projectGeneration.set(projectKey, (projectGeneration.get(projectKey) ?? 0) + 1);
+    },
+    invalidateAll() {
+      workspaceGeneration += 1;
+    },
+  };
+}
+
+export function createTreeLevelLoader(
+  host: TreeLevelLoaderHost,
+  ownership: TreeOwnershipGuard = createTreeOwnershipGuard(host.identity),
+): TreeLevelLoader {
+  return {
+    ownership,
     async load(projectId, dir, append) {
       const at = host.identity();
       if (at.mode !== 'live' || at.syncMode !== 'live') return 'skipped-mode';
       const projectKey = projectId ?? '';
       const levelDir = normalizeDir(dir);
-      const key = levelKeyOf(projectKey, levelDir);
       const levels = host.levels(projectKey);
       const current = levels[levelDir];
       // 同一层已有**仍属当前代**的在途请求：不重复发，也不推进代次。
       // 过期票据留下的 loading 不算在途，新一代必须能重新发起。
-      const running = inFlight.get(key);
-      if (running && isCurrent(running)) return 'skipped-inflight';
+      if (ownership.inFlight(projectKey, levelDir)) return 'skipped-inflight';
       const cursor = append ? (current?.nextCursor ?? null) : null;
       if (append && !cursor) return 'skipped-no-cursor';
       const snapshot = append ? (current?.snapshot ?? null) : null;
 
-      const nextGeneration = (levelGeneration.get(key) ?? 0) + 1;
-      levelGeneration.set(key, nextGeneration);
-      const ticket: LoadTicket = {
-        mode: at.mode,
-        syncMode: at.syncMode,
-        workspaceKey: at.workspaceKey,
-        epoch: at.epoch,
-        projectKey,
-        levelDir,
-        levelGeneration: nextGeneration,
-        projectGeneration: projectGeneration.get(projectKey) ?? 0,
-        workspaceGeneration,
-      };
+      const ticket = ownership.begin(projectKey, levelDir);
+      if (!ticket) return 'skipped-mode';
 
       host.dispatch({ type: 'TREE_LEVEL_BEGIN', projectId: projectKey, dir: levelDir, append });
-      inFlight.set(key, ticket);
       try {
         const outcome = await host.listTree({ projectId, dir: levelDir, cursor, snapshot });
         // 迟到响应属于上一个工作区 / 上一代 / 上一层：连 error 都不能派发，
         // 否则会覆盖新请求刚写下的 loading / ready / error 状态。
-        if (!isCurrent(ticket)) return 'stale';
+        if (!ownership.isCurrent(ticket)) return 'stale';
         if (outcome.status !== 'APPLIED') {
           host.dispatch({
             type: 'TREE_LEVEL_ERROR',
@@ -183,18 +234,18 @@ export function createTreeLevelLoader(host: TreeLevelLoaderHost): TreeLevelLoade
         });
         return 'applied';
       } catch {
-        if (!isCurrent(ticket)) return 'stale';
+        if (!ownership.isCurrent(ticket)) return 'stale';
         host.dispatch({ type: 'TREE_LEVEL_ERROR', projectId: projectKey, dir: levelDir, errorCode: null });
         return 'failed';
       } finally {
-        if (inFlight.get(key) === ticket) inFlight.delete(key);
+        ownership.end(ticket);
       }
     },
     invalidateProject(projectKey) {
-      projectGeneration.set(projectKey, (projectGeneration.get(projectKey) ?? 0) + 1);
+      ownership.invalidateProject(projectKey);
     },
     invalidateAll() {
-      workspaceGeneration += 1;
+      ownership.invalidateAll();
     },
   };
 }

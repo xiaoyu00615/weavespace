@@ -146,6 +146,9 @@ GET /api/tree?projectId=project-a&dir=docs&cursor=200&limit=200&snapshot=<首轮
   文件类型不决定是否显示；不支持预览的格式照样列出，由 Shell 的能力注册表决定能否打开。
   空目录正常返回 `entries: []`；`link`（符号链接 / junction / 重解析点）只显示、不跟随，
   把 `dir` 指向它 → `400 ERR_DIR_IS_LINK`。
+  **`dir=link/child` 一律拒绝**（`ERR_DIR_IS_LINK` / `ERR_PATH_OUTSIDE_ROOT`）：
+  StorageProvider 先校验父目录链，父级是链接时立即失败，
+  **不会先沿链接读取根外 `child` 的元数据**（UX-02B-TREE-R2，见 `packages/storage/README.md`）。
 - **三态不得混淆**：目录读不出来 → `403 ERR_DIR_UNREADABLE`（环境事实）；
   项目未授权 → `403 ERR_PERMISSION_DENIED`（策略事实）；
   目录不存在/不是目录 → `404 ERR_RESOURCE_NOT_FOUND`。

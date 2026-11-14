@@ -13,6 +13,7 @@
  */
 import type { ProjectSummary, WeaveSpaceClient, WorkspaceMode } from '../client/client-api.ts';
 import type { ClientMode, ResourceNodeState, WorkspaceAction, WorkspaceState } from './types.ts';
+import type { TreeOwnershipGuard } from './tree-load.ts';
 
 export interface WorkspaceLoadDeps {
   getState(): WorkspaceState;
@@ -39,6 +40,15 @@ export interface WorkspaceLoadDeps {
    * **默认不传**：S11-C 恢复被交互打断时仍按既有语义清零，避免 spinner 永久卡住。
    */
   preserveLoadingOnCancel?: boolean;
+  /**
+   * UX-02B-TREE-R2：与逐层加载**共用**的请求归属守卫。
+   *
+   * 根层读取（`loadProjectResources`）此前只看 `isCancelled()`，而手动刷新用
+   * `loadToken()` 只读不推进代次，连续两次刷新会共享同一个 token ——旧响应因此
+   * 能把新请求的层表、错误态与 loading 标记一并覆盖。注入同一个 guard 后，
+   * 根层与子层走完全相同的代次判定。不注入时保持既有语义（测试夹具可省略）。
+   */
+  treeOwnership?: TreeOwnershipGuard;
 }
 
 export interface LoadedWorkspace {
@@ -265,8 +275,30 @@ export async function loadProjectResources(
   projectId: string,
 ): Promise<boolean> {
   const { dispatch } = deps;
-  const cancelled = cancellationOf(deps);
-  if (cancelled()) return false;
+  const baseCancelled = cancellationOf(deps);
+
+  /**
+   * UX-02B-TREE-R2：根层读取与子目录读取**共用同一个归属守卫**。
+   *
+   * 以前这里只看 `isCancelled()`；手动刷新用 `loadToken()` 只读不推进代次，
+   * 连续两次刷新同项目会拿到完全相同的 token，于是「旧请求晚于新请求返回」
+   * 就能把新层表、error 与 loading 标记整份覆盖。`begin(projectId, '')` 每次
+   * 推进该层的请求代次，旧票据在 `isCurrent()` 里立即失效。
+   *
+   * 不注入守卫时（既有测试夹具 / 内部接线）保持原来的语义不变。
+   */
+  const ownership = deps.treeOwnership;
+  const ticket = ownership?.begin(projectId, '') ?? null;
+  const isStale = (): boolean =>
+    ownership !== undefined && ticket !== null && !ownership.isCurrent(ticket);
+  const cancelled = (): boolean => baseCancelled() || isStale();
+  /** 传给下游（含 `refreshProjectStatuses`）的依赖，确保连 SET_PROJECTS 都不越代回填。 */
+  const scopedDeps: WorkspaceLoadDeps = ownership ? { ...deps, isCancelled: cancelled } : deps;
+
+  if (cancelled()) {
+    if (ownership && ticket) ownership.end(ticket);
+    return false;
+  }
   dispatch({ type: 'SET_PROJECT_LOADING', projectId, loading: true });
   try {
     // UX-02B-TREE：只取根层；子目录在用户展开时才逐层加载（不递归扫描整个项目）
@@ -287,8 +319,9 @@ export async function loadProjectResources(
       cursor: null,
       nextCursor: outcome.page.nextCursor,
       total: outcome.page.total,
+      snapshot: outcome.page.snapshot ?? null,
     });
-    const projects = await refreshProjectStatuses(deps);
+    const projects = await refreshProjectStatuses(scopedDeps);
     if (cancelled()) return false;
     const status = projects?.find((project) => project.projectId === projectId);
     if (status?.status === 'UNAVAILABLE') {
@@ -307,8 +340,12 @@ export async function loadProjectResources(
     });
     return false;
   } finally {
-    // 同上：切到别的工作区后，项目级的加载中标记不属于那里
-    if (mayClearLoading(deps, cancelled)) dispatch({ type: 'SET_PROJECT_LOADING', projectId, loading: false });
+    if (ownership && ticket) ownership.end(ticket);
+    // 过期票据的 finally 无权清理 loading：那个标记已经属于新请求了（R2-01 要求 3）。
+    // 其余取消语义仍由 mayClearLoading 统一判定，既有恢复/切模式行为不变。
+    if (!isStale() && mayClearLoading(scopedDeps, cancelled)) {
+      dispatch({ type: 'SET_PROJECT_LOADING', projectId, loading: false });
+    }
   }
 }
 
