@@ -996,13 +996,25 @@ button {
   padding: 3px 8px 3px 6px;
 }
 
-.project__caret {
-  flex: 0 0 13px;
-  width: 13px;
+/* 根行的展开/折叠热区：箭头 + 文件夹图标 + 名称合成一个按钮（与子文件夹"点整行"一致） */
+.project__toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 0;
   border: none;
   background: none;
   cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.project__caret {
+  flex: 0 0 13px;
+  width: 13px;
   text-align: center;
   font-size: 10px;
   line-height: 1;
@@ -1012,9 +1024,6 @@ button {
 .project__title {
   flex: 1;
   min-width: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
   text-align: left;
   font-weight: 600;
   overflow: hidden;
@@ -1022,7 +1031,7 @@ button {
   white-space: nowrap;
 }
 
-.project__title:hover {
+.project__toggle:hover .project__title {
   color: var(--accent);
 }
 

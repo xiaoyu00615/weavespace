@@ -132,27 +132,29 @@ function ProjectSection({ project }: { project: ProjectSummary }) {
 
   return (
     <li className={active ? 'project project--active' : 'project'}>
-      {/* 第 1 层：项目根。箭头 / 图标 / 名称与其他层级严格对齐 */}
+      {/*
+        第 1 层：项目根。箭头 / 图标 / 名称是**同一个按钮**——
+        与子文件夹"点整行即展开"保持一致，也不会出现嵌套按钮导致一次点击折两次。
+        点击同时把该项目设为当前项目；切换只改焦点，不清标签、不动草稿（G2-05/G2-07）。
+      */}
       <div className="project__root">
         <button
           type="button"
-          className="project__caret"
+          className="project__toggle"
           aria-expanded={open}
-          aria-label={open ? `折叠 ${project.name}` : `展开 ${project.name}`}
-          onClick={() => setOpen((value) => !value)}
+          title={`${project.name}${active ? '（当前项目）' : '（点击切换为当前项目）'} · 点击展开或折叠`}
+          onClick={() => {
+            if (!active) void actions.switchProject(project.projectId);
+            setOpen((value) => !value);
+          }}
         >
-          {open ? '▾' : '▸'}
-        </button>
-        <span className="tree__icon-slot" aria-hidden="true">
-          <FolderGlyph open={open} />
-        </span>
-        <button
-          type="button"
-          className="project__title"
-          onClick={() => void actions.switchProject(project.projectId)}
-          title={`${project.name}${active ? '（当前项目）' : '（点击切换为当前项目）'}`}
-        >
-          {project.name}
+          <span className="project__caret" aria-hidden="true">
+            {open ? '▾' : '▸'}
+          </span>
+          <span className="tree__icon-slot" aria-hidden="true">
+            <FolderGlyph open={open} />
+          </span>
+          <span className="project__title">{project.name}</span>
         </button>
         <span
           className={ready ? 'project__state' : 'project__state project__state--unavailable'}
