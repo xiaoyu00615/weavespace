@@ -1,0 +1,136 @@
+{
+  "picker": "fake-picker（自动化选择器，非人工 Windows 弹窗）",
+  "projectsAdded": [
+    "tree01-proj1",
+    "tree01-proj2"
+  ],
+  "keyAfterAdd": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+  "treeRows": {
+    "tree01-proj1": [
+      "tree01-proj1",
+      "docs",
+      "guide.md",
+      "src",
+      "index.js",
+      "readme.md"
+    ],
+    "tree01-proj2": [
+      "tree01-proj2",
+      "docs",
+      "guide.md",
+      "src",
+      "app.py",
+      "readme.md"
+    ]
+  },
+  "diskBefore": {
+    "a": "86e52230f7551620deaece529b480ba3b909c30f25c98bb82772d07821c486dc",
+    "b": "8e47490b17150813066cae96c2f4a17535c8d18950c39d9bfd81f845805cd9dd"
+  },
+  "tabs": [
+    {
+      "label": "tree01-proj1guide.md真实",
+      "project": "tree01-proj1",
+      "dirty": false,
+      "active": false
+    },
+    {
+      "label": "tree01-proj2guide.md真实",
+      "project": "tree01-proj2",
+      "dirty": false,
+      "active": true
+    }
+  ],
+  "tabsCount": 2,
+  "tabProjects": [
+    "tree01-proj1",
+    "tree01-proj2"
+  ],
+  "switchedToA": "OK",
+  "editorBeforeEdit": "# A guide\n",
+  "dirtyAfterEdit": true,
+  "precheckWithOpenView": {
+    "status": "APPLIED",
+    "projectId": "tree01-proj1",
+    "allowed": false,
+    "blockedBy": [
+      "ACTIVE_VIEWS",
+      "DIRTY"
+    ],
+    "state": "ACTIVE"
+  },
+  "diskAfterEditA": {
+    "a": "fc6996b8490b81aa5926adbb3004081009bf1bb4477ae43a73aa79a2d7c86b89",
+    "b": "8e47490b17150813066cae96c2f4a17535c8d18950c39d9bfd81f845805cd9dd"
+  },
+  "diskAChanged": true,
+  "diskBUnchanged": true,
+  "diskAContentHasAppended": true,
+  "editorAfterSwitchToB": "# C guide\n",
+  "bBufferUnchanged": true,
+  "activeProjectLabel": "tree01-proj2",
+  "closeA": "OK",
+  "closeB": "OK",
+  "tabsAfterClose": [],
+  "removePhase": "ready",
+  "projectsAfterRemove": [
+    "tree01-proj2"
+  ],
+  "rowsOfRemaining": [
+    "tree01-proj2"
+  ],
+  "removedProjectDiskIntact": true,
+  "projectsAfterReadd": [
+    "tree01-proj2",
+    "tree01-proj3"
+  ],
+  "keyAfterReadd": "542688d3e88ef954cc3ac7e94525174fa99ffebc24df0f145eb559a7f5af816e",
+  "lastRecordAfterReadd": "542688d3e88ef954cc3ac7e94525174fa99ffebc24df0f145eb559a7f5af816e",
+  "lastRecordMatchesHost": true,
+  "recordKeys": [
+    "ws:workspace:v1:record:82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+    "ws:workspace:v1:record:df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+    "ws:workspace:v1:record:542688d3e88ef954cc3ac7e94525174fa99ffebc24df0f145eb559a7f5af816e"
+  ],
+  "afterReloadProjects": [
+    "tree01-proj2",
+    "tree01-proj3"
+  ],
+  "afterReloadKey": "542688d3e88ef954cc3ac7e94525174fa99ffebc24df0f145eb559a7f5af816e",
+  "afterReloadLastRecord": "542688d3e88ef954cc3ac7e94525174fa99ffebc24df0f145eb559a7f5af816e",
+  "afterReloadRecordMatches": true,
+  "afterReloadRows": [
+    "tree01-proj2",
+    "docs",
+    "guide.md",
+    "src",
+    "app.py",
+    "readme.md"
+  ],
+  "afterHostRestartProjects": [
+    "tree01-proj2",
+    "tree01-proj3"
+  ],
+  "afterHostRestartKey": "542688d3e88ef954cc3ac7e94525174fa99ffebc24df0f145eb559a7f5af816e",
+  "afterHostRestartMatches": true,
+  "finalHashes": {
+    "a": "fc6996b8490b81aa5926adbb3004081009bf1bb4477ae43a73aa79a2d7c86b89",
+    "b": "8e47490b17150813066cae96c2f4a17535c8d18950c39d9bfd81f845805cd9dd"
+  },
+  "removedProjectUntouched": true,
+  "otherProjectUntouched": true,
+  "postsToApi": [
+    "/api/projects/pick",
+    "/api/projects/pick",
+    "/api/open",
+    "/api/open",
+    "/api/edit",
+    "/api/projects/removal-precheck",
+    "/api/save",
+    "/api/close",
+    "/api/close",
+    "/api/projects/removal-precheck",
+    "/api/projects/remove",
+    "/api/projects/pick"
+  ]
+}

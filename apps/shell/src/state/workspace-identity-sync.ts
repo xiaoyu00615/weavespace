@@ -102,8 +102,19 @@ export function settleWorkspaceKey(
 }
 
 export function createWorkspaceIdentitySync(host: WorkspaceIdentitySyncHost): WorkspaceIdentitySync {
+  /**
+   * 同步序号（UX-02B-05-01）。
+   *
+   * 一次会话里可能连着发起多次刷新：移除 A 之后、移除 B 之后各一次。它们各自
+   * 异步返回，**只有最后发起的那次**代表当前的结构；更早的结果哪怕更晚到达，
+   * 也只反映"中间某个时刻的项目集合"，绝不能拿它改写摘要或释放写入门禁
+   * （否则会出现"界面已是空集合，摘要却停在只剩 B"这种认错工作区的状态）。
+   */
+  let issued = 0;
+
   return {
     async refresh(epoch) {
+      const ticket = ++issued;
       const before = host.currentKey();
 
       let identity: WorkspaceIdentity;
@@ -113,12 +124,16 @@ export function createWorkspaceIdentitySync(host: WorkspaceIdentitySyncHost): Wo
         // 探测失败：可能是 Host 正忙/重启中。此刻**已经知道项目集合变了**，
         // 继续沿用旧摘要就是伪造身份，因此统一收敛为"待同步"。
         if (!host.isCurrent(epoch)) return { status: 'stale' };
+        // 已有更晚的刷新发起：这次失败属于过期的结构，交给最新那次定论
+        if (ticket !== issued) return { status: 'stale' };
         host.onWorkspaceKey(null);
         return { status: 'pending', reason: 'probe-failed' };
       }
 
       // 迟到的探测：期间切模式 / 重连 / 换了工作区 → 一个 dispatch 都不发
       if (!host.isCurrent(epoch)) return { status: 'stale' };
+      // 被更晚发起的刷新取代：结果属于更早的结构，同样一个 dispatch 都不发
+      if (ticket !== issued) return { status: 'stale' };
 
       const next = identity.workspaceKey;
       if (next === null) {
