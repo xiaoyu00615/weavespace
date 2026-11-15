@@ -20,9 +20,15 @@
  * 本模块不负责编辑会话、冲突呈现或权限判定，那些属于 document / permission。
  */
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import type { ErrorCode } from '../contracts/errors.ts';
 import type { SaveResult } from '../contracts/types.ts';
+import {
+  entryRelativePath,
+  validateEntryName,
+  validateParentDir,
+} from './entry-name.ts';
 import {
   assertRootContinuity,
   claimRootDirectory,
@@ -83,7 +89,21 @@ export interface StorageFaultHooks {
    * 不注入时使用 `node:fs/promises.lstat`，生产行为不变。
    */
   lstatImpl?: LstatImpl;
+  /**
+   * 在**创建已发生**、尚未向调用方确认时抛出（UX-02C-01）。
+   *
+   * 用来确定性验证"磁盘副作用已存在但响应链中断"必须收敛为 `UNKNOWN`：
+   * 既不谎报失败，也不谎报成功，客户端因此不会自动重发一次创建。
+   */
+  afterCreate?: () => void;
 }
+
+export type CreateEntryKind = 'file' | 'directory';
+export type CreateEntryResult =
+  | { status: 'CREATED'; kind: CreateEntryKind; relativePath: string }
+  | { status: 'REJECTED'; errorCode: ErrorCode }
+  /** 副作用可能已发生，但根连续性/确认链无法证明结果。 */
+  | { status: 'UNKNOWN'; errorCode: 'ERR_OUTCOME_UNKNOWN' };
 
 export interface LocalProviderOptions {
   rootDir: string;
@@ -148,6 +168,18 @@ export interface StorageProvider {
    * - 不存在返回 `ERR_RESOURCE_NOT_FOUND`，与"存在但为空"严格区分。
    */
   readDir(dir?: string): Promise<DirEntry[]>;
+  /**
+   * 新建**真实磁盘对象**（UX-02C-01）：空文件或空目录，排他、不覆盖。
+   *
+   * 声明为可选是为了不强制所有历史测试替身实现它：没有该能力的 Provider
+   * （以及 Legacy / 静态 Multi 的端点）由 Host 明确返回"不支持"。
+   * 实现必须复用本 Provider 同一个 `RootBoundary`，不得另起一套路径判定。
+   */
+  createEntry?(
+    parentDir: string,
+    name: string,
+    kind: CreateEntryKind,
+  ): Promise<CreateEntryResult>;
 }
 
 export function contentVersionOf(content: string | Buffer): string {
@@ -156,6 +188,10 @@ export function contentVersionOf(content: string | Buffer): string {
 
 function isMissing(err: unknown): boolean {
   return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
+function codeOf(err: unknown): string | undefined {
+  return (err as NodeJS.ErrnoException | undefined)?.code;
 }
 
 function domainError(errorCode: string, message: string): Error {
@@ -653,6 +689,95 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       } catch (err) {
         throw toDirError(err);
       }
+    },
+
+    /**
+     * UX-02C-01：真实创建（空文件 / 空目录）。
+     *
+     * 与 `writeConditional` 的区别是**排他**：文件用 `open('wx')` 原子新建，
+     * 目录用非递归 `mkdir`；两者在同名目标存在时都直接 EEXIST，绝不会走
+     * 旧保存链路的"临时文件 + rename"（那会覆盖既有文件）。
+     *
+     * 检查顺序：名称/父目录形态（零 IO）→ 根连续性 C0 → 父目录真实存在且
+     * 为普通目录（不跟随重解析点）→ 目标路径在固定边界内 → C1 → 排他创建 →
+     * C4 根连续性复核。副作用之后的任何确认失败一律 `UNKNOWN`，**不回滚**
+     * （回滚本身可能删掉别人刚放进去的东西），也不谎报成功。
+     */
+    async createEntry(parentDir, name, kind): Promise<CreateEntryResult> {
+      const dirCheck = validateParentDir(parentDir);
+      if (!dirCheck.ok) return { status: 'REJECTED', errorCode: dirCheck.errorCode };
+      const nameCheck = validateEntryName(name);
+      if (!nameCheck.ok) return { status: 'REJECTED', errorCode: nameCheck.errorCode };
+      const relativePath = entryRelativePath(dirCheck.value, nameCheck.value);
+
+      const reject = (errorCode: ErrorCode): CreateEntryResult => ({
+        status: 'REJECTED',
+        errorCode,
+      });
+
+      // C0：解析之前先确认项目根仍连续。根失效时不能把"根没了"报成"文件不存在"。
+      try {
+        faults.atCheckpoint?.('C0');
+        assertRootContinuity(boundary, establishedToken);
+      } catch (err) {
+        return reject(mapStorageError(err));
+      }
+
+      const parentCheck = resolveInBoundary(boundary, dirCheck.value === '' ? '.' : dirCheck.value);
+      if (!parentCheck.ok) return reject(parentCheck.errorCode);
+
+      try {
+        const info = await lstat(parentCheck.absolutePath);
+        if (!info.isDirectory() || info.isSymbolicLink() || isUntrustedResolution(parentCheck.absolutePath)) {
+          return reject('ERR_ENTRY_PARENT_INVALID');
+        }
+      } catch (err) {
+        if (isMissing(err)) return reject('ERR_ENTRY_PARENT_INVALID');
+        return reject(mapStorageError(err));
+      }
+
+      // 目标全路径再解析一次：逐级确认父链里没有 junction / 符号链接
+      const targetCheck = resolveInBoundary(boundary, relativePath);
+      if (!targetCheck.ok) return reject(targetCheck.errorCode);
+      if (!isPathInsideRoot(boundary.canonicalRoot, targetCheck.absolutePath)) {
+        return reject('ERR_PATH_OUTSIDE_ROOT');
+      }
+      // 归一化不得悄悄改掉末段（否则输入的名字和真正落盘的名字会不一致）
+      if (basename(targetCheck.absolutePath) !== nameCheck.value) {
+        return reject('ERR_ENTRY_NAME_INVALID');
+      }
+
+      let sideEffect = false;
+      try {
+        faults.atCheckpoint?.('C1');
+        assertRootContinuity(boundary, establishedToken);
+        if (kind === 'file') {
+          // 'wx' = O_CREAT|O_EXCL：并发同名最多一个成功，且不跟随符号链接
+          const handle = await open(targetCheck.absolutePath, 'wx');
+          sideEffect = true;
+          await handle.close(); // 0 字节；绝不写入标题或模板
+        } else {
+          await mkdir(targetCheck.absolutePath); // 非递归：缺父目录时 ENOENT，不补建
+          sideEffect = true;
+        }
+      } catch (err) {
+        // 创建本身可能已落盘，只是 close / 后续确认失败：按 UNKNOWN 收敛
+        if (sideEffect) return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN' };
+        const code = codeOf(err);
+        if (code === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
+        if (code === 'ENOENT' || code === 'ENOTDIR') return reject('ERR_ENTRY_PARENT_INVALID');
+        return reject(mapStorageError(err));
+      }
+
+      // C4：副作用已发生之后的根连续性/确认链失败 → UNKNOWN（不是 FAILED）
+      try {
+        faults.atCheckpoint?.('C4');
+        assertRootContinuity(boundary, establishedToken);
+        faults.afterCreate?.();
+      } catch {
+        return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN' };
+      }
+      return { status: 'CREATED', kind, relativePath };
     },
   };
 }

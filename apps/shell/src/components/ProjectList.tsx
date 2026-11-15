@@ -19,7 +19,10 @@ import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { validateProjectName } from '../state/add-project.ts';
 import { AddProjectEntry } from './AddProjectEntry.tsx';
+import { InlineCreateSlot } from './InlineCreateRow.tsx';
 import { RemoveProjectEntry } from './RemoveProjectEntry.tsx';
+import { TreeToolbar } from './TreeToolbar.tsx';
+import { useTreeCommands } from './TreeCommandsContext.tsx';
 import { LevelStatus, TreeBranch } from './TreeBranch.tsx';
 import { TreeRow } from './FileTreeRow.tsx';
 import { countLoadedEntries, emptyLevels, materializeTree } from './tree-model.ts';
@@ -38,6 +41,7 @@ function ProjectRoot({
 }) {
   const { state } = useWorkspace();
   const actions = useDocumentActions();
+  const commands = useTreeCommands();
   const projectId = project.projectId;
   const active = state.activeProjectId === projectId;
   const ready = project.status === 'READY';
@@ -102,9 +106,11 @@ function ProjectRoot({
       expanded={open}
       selected={active}
       rowClassName="tree__row--with-rename"
+      onContextMenu={(event) => commands.openContextMenu(event, { origin: 'project-root', projectId })}
       onActivate={() => {
         // 切换当前项目只改焦点：不清标签、不动草稿、不影响其它项目（G2-05/G2-07）
         if (!active) void actions.switchProject(projectId);
+        commands.noteSelection(projectId, 'folder', '');
         onToggle();
       }}
       actions={
@@ -206,6 +212,7 @@ function ProjectRoot({
                 trails={[]}
                 isDemo={false}
               />
+              <InlineCreateSlot projectId={projectId} parentDir="" depth={1} />
               <LevelStatus
                 level={rootLevel}
                 depth={1}
@@ -226,6 +233,7 @@ function ProjectRoot({
 
 export function ProjectList() {
   const { state, dispatch } = useWorkspace();
+  const commands = useTreeCommands();
   // 各项目根独立展开；刷新只作废该项目的层表，不重置这里的展开状态
   const [openRoots, setOpenRoots] = useState<Record<string, boolean>>({});
   const toggleRoot = (projectId: string): void =>
@@ -261,6 +269,7 @@ export function ProjectList() {
           </div>
         </div>
         <div className="tree__actions">
+          <TreeToolbar />
           <AddProjectEntry />
           <button
             type="button"
@@ -273,7 +282,12 @@ export function ProjectList() {
         </div>
       </header>
 
-      <ul className="tree__root">
+      <ul
+        className="tree__root"
+        onContextMenu={(event) =>
+          commands.openContextMenu(event, { origin: 'blank', projectId: state.activeProjectId })
+        }
+      >
         {state.projects.map((project, index) => (
           <ProjectRoot
             key={project.projectId}

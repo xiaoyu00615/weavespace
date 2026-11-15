@@ -158,6 +158,23 @@ export const ERROR_CODES = {
   ERR_CAPABILITY_MISSING: 'ERR_CAPABILITY_MISSING',
   /** 插件 `requires` 中的依赖未注册或未激活（S10-A）。 */
   ERR_PLUGIN_DEPENDENCY_MISSING: 'ERR_PLUGIN_DEPENDENCY_MISSING',
+  /**
+   * 新建条目（UX-02C-01）：单段名称不合法（非法字符、保留设备名、尾随空格/句点、
+   * 绝对路径形态等）。必须在**任何磁盘访问之前**判完，输入框随即保留原值供修正。
+   */
+  ERR_ENTRY_NAME_INVALID: 'ERR_ENTRY_NAME_INVALID',
+  /**
+   * 新建条目：目标位置已经有同名文件或目录。
+   *
+   * 创建是排他语义（`wx` / 非递归 `mkdir`），因此本码代表"零变更、绝不覆盖"，
+   * 不表示"发现了同名文件 = 本次操作成功"。
+   */
+  ERR_ENTRY_EXISTS: 'ERR_ENTRY_EXISTS',
+  /**
+   * 新建条目：父目录不存在、不是普通目录，或是不可信的重解析点。
+   * 绝不静默递归创建缺失父目录。
+   */
+  ERR_ENTRY_PARENT_INVALID: 'ERR_ENTRY_PARENT_INVALID',
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

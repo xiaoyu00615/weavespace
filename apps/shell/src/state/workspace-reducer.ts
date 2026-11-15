@@ -147,6 +147,22 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         expanded: { ...state.expanded, [action.path]: !state.expanded[action.path] },
       };
 
+    case 'EXPAND_NODE':
+      if (state.expanded[action.path] === true) return state;
+      return { ...state, expanded: { ...state.expanded, [action.path]: true } };
+
+    case 'EXPAND_PROJECT_NODE': {
+      const current = state.expandedByProject[action.projectId] ?? {};
+      if (current[action.path] === true) return state;
+      return {
+        ...state,
+        expandedByProject: {
+          ...state.expandedByProject,
+          [action.projectId]: { ...current, [action.path]: true },
+        },
+      };
+    }
+
     case 'SET_MODE': {
       if (action.mode === state.mode) return state;
       return {

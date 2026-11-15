@@ -1,5 +1,6 @@
 import { CapabilityProvider } from './capabilities/CapabilityContext';
 import { ShellLayout } from './layout/ShellLayout';
+import { TreeCommandsProvider } from './components/TreeCommandsContext.tsx';
 import { DocumentActionsProvider } from './state/DocumentActionsContext';
 import { QuickFileProvider } from './state/QuickFileContext';
 import { WorkspaceProvider } from './state/WorkspaceContext';
@@ -17,7 +18,9 @@ export function App() {
       <CapabilityProvider>
         <DocumentActionsProvider>
           <QuickFileProvider>
-            <ShellLayout />
+            <TreeCommandsProvider>
+              <ShellLayout />
+            </TreeCommandsProvider>
           </QuickFileProvider>
         </DocumentActionsProvider>
       </CapabilityProvider>

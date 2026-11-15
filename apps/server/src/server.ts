@@ -54,6 +54,11 @@ import { createHostFolderPicker, type ExecFileImpl, type FolderPicker } from './
 import { createIntentRegistry, type IntentRegistry } from './project-intents.ts';
 import { createPickRegistry, type PickRegistry } from './pick-registry.ts';
 import { createSessionTokenStore, type SessionTokenStore } from './session-token.ts';
+import {
+  createManagedEntry,
+  parseCreateEntryBody,
+  type CreateEntryKind,
+} from './create-entry.ts';
 
 export type SaveOutcomeStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN';
 
@@ -172,6 +177,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     // 同一个 opId 不能代表两次事务：属于"请求与既有证据冲突"，不是可重试的 IO 失败
     case 'ERR_OP_ID_CONFLICT':
     case 'ERR_PICKER_BUSY':
+    // 同名目标必须零变更地拒绝：不是"可重试的 IO 失败"，而是明确的冲突
+    case 'ERR_ENTRY_EXISTS':
     // 目录在本轮分页期间发生变化：客户端必须刷新整层，不能拿旧游标续页
     case 'ERR_DIR_CHANGED':
       return 409;
@@ -221,6 +228,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     // 不是"服务端无法处理"（422）。UX-02B-03-R1 修正：此前落到默认 500，
     // 会让"名字太长"看起来像 Host 内部故障，且掩盖了零副作用的事实。
     case 'ERR_COMMAND_INVALID':
+    case 'ERR_ENTRY_NAME_INVALID':
+    case 'ERR_ENTRY_PARENT_INVALID':
       return 400;
     case 'ERR_PROJECT_NOT_FOUND':
       return 404;
@@ -271,6 +280,9 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_DOCUMENT_DIRTY: '存在未保存修改',
   ERR_DOCUMENT_VERSION_CONFLICT: '内容版本冲突',
   ERR_OUTCOME_UNKNOWN: '保存结果未确认',
+  ERR_ENTRY_NAME_INVALID: '名称不合法：请检查非法字符、系统保留名或结尾的空格与句点',
+  ERR_ENTRY_EXISTS: '该位置已有同名文件或文件夹，未覆盖任何内容',
+  ERR_ENTRY_PARENT_INVALID: '目标文件夹不存在或不是普通目录（不会自动创建缺失目录）',
   ERR_PROJECT_REQUIRED: '必须声明 projectId',
   ERR_PROJECT_NOT_FOUND: '项目不存在',
   ERR_PROJECT_UNAVAILABLE: '项目当前不可用（根目录缺失、被替换或不可读）',
@@ -1379,6 +1391,83 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     if (method === 'POST') {
       const body = await readJsonBody(req, maxBodyBytes);
       rejectTrustedFields(body, mode);
+
+      /**
+       * 真实创建（UX-02C-01）：空文件 / 空目录。
+       *
+       * 校验顺序即安全顺序：模式(501，Demo/Legacy/静态 Multi 一律不提供) →
+       * T1 令牌(403) → 显式同源 Origin(403) → 请求体禁字段与名称/父目录形状(400，零 IO)
+       * → 项目可用性(G-DISK 前置) → 项目级写授权 → Runtime `withDiskOp` →
+       * Provider 的排他创建。浏览器自始至终只提交 `projectId + 相对父目录 + 单段名称`。
+       *
+       * `UNKNOWN`（副作用可能已发生但无法确认）用 202 + `status:'UNKNOWN'` 明确报告，
+       * 客户端只读核对目录并提示人工确认，**绝不自动重发创建**。
+       */
+      const createKind: CreateEntryKind | null =
+        pathname === '/api/files/create'
+          ? 'file'
+          : pathname === '/api/directories/create'
+            ? 'directory'
+            : null;
+      if (createKind !== null) {
+        if (!runtime) {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持真实创建',
+          );
+        }
+        requireSessionToken(req);
+        if (req.headers.origin === undefined) {
+          throw new HttpError(403, 'ERR_PERMISSION_DENIED', '变更类请求必须声明 Origin');
+        }
+        const parsed = parseCreateEntryBody(body, createKind);
+        if (!parsed.ok) {
+          throw new HttpError(
+            httpStatusOfDomainError(parsed.errorCode),
+            parsed.errorCode,
+            publicMessageOf(parsed.errorCode),
+          );
+        }
+        const { request } = parsed;
+        const handle = requireProjectHandle(request.projectId);
+        const outcome = await createManagedEntry({
+          request,
+          provider: handle.provider,
+          providerId: handle.providerId,
+          permission,
+          actorId,
+          withDiskOp: <T,>(fn: () => Promise<T>) => withDiskOp(request.projectId, fn),
+        });
+        if (outcome.status === 'UNKNOWN') {
+          sendJson(res, 202, {
+            status: 'UNKNOWN',
+            errorCode: 'ERR_OUTCOME_UNKNOWN',
+            message: '创建结果未确认：请刷新该目录人工核对（不会自动重试）',
+            projectId: request.projectId,
+            parentDir: request.parentDir,
+            name: request.name,
+            kind: request.kind,
+          });
+          return;
+        }
+        if (outcome.status === 'REJECTED') {
+          throw new HttpError(
+            httpStatusOfDomainError(outcome.errorCode),
+            outcome.errorCode,
+            publicMessageOf(outcome.errorCode),
+          );
+        }
+        sendJson(res, 200, {
+          status: 'APPLIED',
+          projectId: request.projectId,
+          parentDir: request.parentDir,
+          name: request.name,
+          kind: request.kind,
+          relativePath: outcome.relativePath,
+        });
+        return;
+      }
 
       /**
        * 启动本机目录选择（ADR-021 §4）。

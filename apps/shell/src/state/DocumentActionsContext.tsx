@@ -23,6 +23,8 @@ import {
   type RemoveBlockerCode,
   type RemovalPrecheckOutcome,
   type WeaveSpaceClient,
+  type CreateEntryOutcome,
+  type CreateEntryKindDto,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
 import { backupDraftBeforeReload } from '../client/draft-backup';
@@ -147,6 +149,29 @@ export interface DocumentActions {
    * 确认框只显示原因，不提供确认按钮。**不替代** Host 门禁。
    */
   localRemovalBlockers(projectId: string): RemoveBlockerCode[];
+
+  /* ---- UX-02C-01：真实创建 ---- */
+
+  /**
+   * 创建空文件 / 空目录：只把 `(projectId, 相对父目录, 单段名称)` 交给 Host。
+   * 菜单与工具栏共用的提交编排在 `state/create-entry.ts`，这里不做第二次判定。
+   */
+  createEntry(
+    projectId: string,
+    parentDir: string,
+    name: string,
+    kind: CreateEntryKindDto,
+  ): Promise<CreateEntryOutcome>;
+  /**
+   * 只使**目标项目的目标目录层**失效并重新加载（不递归、不碰其他项目）。
+   * `options.expand` 用于"目标文件夹原本折叠"：用树里真实存在的节点 id 幂等展开，
+   * 绝不凭空声明分页尚未加载到的节点已经可见。
+   */
+  refreshTreeLevel(
+    projectId: string | null,
+    dir: string,
+    options?: { expand?: boolean },
+  ): Promise<void>;
 }
 
 const DocumentActionsContext = createContext<DocumentActions | null>(null);
@@ -805,6 +830,48 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       /** 本地危险状态（R2-02）：确认框据此提前拦住，不替代 Host 门禁。 */
       localRemovalBlockers(projectId: string): RemoveBlockerCode[] {
         return removeAction.localBlockers(projectId);
+      },
+
+      /**
+       * 真实创建（UX-02C-01）：只转发，不推断结果。
+       * Demo / Legacy / 静态 Multi 在这里与 Host 一起明确"不支持"，
+       * 不会出现"演示树里长出一个假节点"。
+       */
+      async createEntry(projectId, parentDir, name, kind) {
+        const current = stateRef.current;
+        if (current.mode !== 'live' || current.workspaceMode !== 'multi') {
+          return {
+            status: 'REJECTED' as const,
+            errorCode: 'ERR_COMMAND_UNSUPPORTED',
+            message: '当前模式不提供真实创建',
+            httpStatus: 501,
+          };
+        }
+        return liveClient.createEntry(projectId, parentDir, name, kind);
+      },
+
+      /**
+       * 创建成功后的层同步：`treeLoader.load(..., append=false)` 会为这一层
+       * 领取**新的**归属票据，上一代在途响应立即失效；其它项目、其它层、
+       * 标签与草稿一概不动，也不递归扫描整棵树。
+       */
+      async refreshTreeLevel(projectId, dir, options) {
+        const projectKey = projectId ?? '';
+        if (options?.expand && dir !== '') {
+          const levels = stateRef.current.treeByProject[projectKey] ?? {};
+          const folder = Object.values(levels)
+            .flatMap((level) => level.entries)
+            .find((node) => node.kind === 'folder' && (node.path ?? '') === dir);
+          // 只展开树里真实存在的节点；分页还没加载到的层不假装已经可见
+          if (folder) {
+            dispatch(
+              projectId
+                ? { type: 'EXPAND_PROJECT_NODE', projectId: projectKey, path: folder.id }
+                : { type: 'EXPAND_NODE', path: folder.id },
+            );
+          }
+        }
+        await treeLoader.current.load(projectId, dir, false);
       },
 
       async openNode(node: ResourceNodeState, projectId?: string | null) {        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）

@@ -27,6 +27,8 @@ export interface ShellPluginInfo {
   status: PluginStatus;
   capabilities: string[];
   fileExtensions: string[];
+  /** 清单里的显示名；缺省时由调用方按插件 id 兜底，不硬编码扩展名清单。 */
+  displayName?: string;
   errorCode?: string;
   errorMessage?: string;
 }
@@ -96,6 +98,9 @@ export function createShellCapabilityRegistry(
   ];
 
   const disabled = new Set(options.disabled ?? []);
+  /** 清单显示名：菜单只从注册表读，不另建一份会漂移的扩展名表。 */
+  const displayNameOf = (pluginId: string): string | undefined =>
+    plugins.find((plugin) => plugin.manifest.id === pluginId)?.manifest.displayName;
   /** 需要自动启用的插件（构造阶段只登记名单，不触发任何插件代码）。 */
   const autoStart: string[] = [];
 
@@ -132,6 +137,7 @@ export function createShellCapabilityRegistry(
         status: record.status,
         capabilities: [...record.capabilities],
         fileExtensions: [...record.fileExtensions],
+        ...(displayNameOf(record.pluginId) ? { displayName: displayNameOf(record.pluginId) } : {}),
         errorCode: record.lastErrorCode,
         errorMessage: record.lastErrorMessage,
       }));

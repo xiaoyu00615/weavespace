@@ -1535,3 +1535,154 @@ button {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ---------- UX-02C-01：右键菜单 / 行内创建 / 顶部高频按钮 ---------- */
+
+.tree__create-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+  padding-right: 5px;
+  border-right: 1px solid var(--border);
+}
+
+.tree__create-actions .icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 临时输入行：与树行同节奏，绝不预先插入一个"看起来成功"的节点 */
+.tree__create {
+  margin: 2px 8px 6px 0;
+  list-style: none;
+}
+
+.tree__create-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tree__create-glyph {
+  flex: 0 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.tree__create-input {
+  flex: 1 1 90px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.tree__create-input:focus {
+  outline: 2px solid var(--accent-soft);
+}
+
+.tree__create-input--invalid {
+  border-color: var(--warn);
+}
+
+.tree__create-input:disabled {
+  opacity: 0.65;
+}
+
+.tree__create-ok,
+.tree__create-cancel {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+}
+
+.tree__create-hint {
+  margin: 3px 0 0 18px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.tree__create-hint--error {
+  color: var(--warn);
+}
+
+/* portal 到 body：不受 .tree 的 overflow 裁切 */
+.ctx-menu {
+  position: fixed;
+  z-index: 80;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 18%);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.ctx-menu__item-wrap {
+  position: relative;
+}
+
+.ctx-menu__item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ctx-menu__item--active:not(:disabled),
+.ctx-menu__item:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.ctx-menu__item--disabled {
+  color: var(--muted);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ctx-menu__hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ctx-menu__arrow {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.ctx-menu--sub {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  min-width: 190px;
+}
+
+.ctx-menu--sub-left {
+  left: auto;
+  right: 100%;
+}
+
+.ctx-menu__focus-trap {
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  outline: none;
+}

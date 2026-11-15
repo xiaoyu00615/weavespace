@@ -12,7 +12,7 @@
  * - 祖先是本层末项时，它的后代不再画这条竖线（见 `tree-trails.ts`）；
  * - 叶子行没有箭头，但保留同宽占位，保证文件名起点一致。
  */
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import type { ResourceNodeState } from '../state/types';
 import { ancestorGuides, type TreeTrails } from './tree-trails';
 
@@ -169,6 +169,8 @@ export interface TreeRowProps {
    */
   rowClassName?: string;
   onActivate(): void;
+  /** 右键菜单（UX-02C-01）：由调用方按上下文决定命令；本组件不含任何命令逻辑。 */
+  onContextMenu?(event: MouseEvent<HTMLButtonElement>): void;
   /** 展开后的子层（渲染在同一个 `<li>` 内，保证语义与缩进引导线连续）。 */
   children?: ReactNode;
 }
@@ -191,6 +193,7 @@ export function TreeRow({
   actions,
   rowClassName,
   onActivate,
+  onContextMenu,
   children,
 }: TreeRowProps) {
   const isFolder = node.kind === 'folder';
@@ -214,6 +217,7 @@ export function TreeRow({
           aria-expanded={isFolder ? expanded : undefined}
           title={isLink ? `${node.name}（链接不展开，避免越过项目根）` : node.name}
           onClick={onActivate}
+          onContextMenu={onContextMenu}
         >
           <TreeIndent depth={depth} last={last} trails={trails} />
           <TreeCaret expanded={isFolder ? expanded : undefined} />

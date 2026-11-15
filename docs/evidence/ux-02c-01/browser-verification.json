@@ -1,0 +1,101 @@
+{
+  "picker": "fake-picker（自动化选择器，非 Windows 原生弹窗）",
+  "steps": {
+    "projectsAdded": [
+      "ux02c01e-projA",
+      "ux02c01e-projB"
+    ],
+    "projectA": "ux02c01e-projA",
+    "rightClickRoot": "OK",
+    "menuLabels": [
+      "新建文件",
+      "新建文件夹",
+      "创建已支持的扩展文件›",
+      "刷新项目根"
+    ],
+    "clickSupportedParent": "OK",
+    "submenuLabels": [
+      "Markdown (.md)",
+      "Markdown (.markdown)",
+      "纯文本 (.txt)"
+    ],
+    "keyboardSubmenu": [
+      "OK",
+      "OK",
+      "OK",
+      "OK"
+    ],
+    "keyboardOpenedNaming": true,
+    "rightClickFolder": "OK",
+    "folderMenuLabels": [
+      "新建文件",
+      "新建文件夹",
+      "创建已支持的扩展文件›",
+      "刷新此目录"
+    ],
+    "clickSupportedParent2": "OK",
+    "clickMd": "OK",
+    "inlineInitialValue": ".md",
+    "inlineSelection": [
+      0,
+      0
+    ],
+    "created123": {
+      "diskExists": true,
+      "size": 0,
+      "inTree": true
+    },
+    "clickNewFile": "OK",
+    "escapeCancelled": {
+      "inputGone": true,
+      "diskUnchanged": true,
+      "fileAbsent": true
+    },
+    "toolbarNewFolder": "OK",
+    "createdFolder": {
+      "diskIsDirectory": true,
+      "inTree": true
+    },
+    "toolbarRefresh": "OK",
+    "afterRefreshHas123": true,
+    "invalidName": {
+      "error": "名称是系统保留名，请换一个",
+      "diskAbsent": true
+    },
+    "duplicateName": {
+      "error": "该位置已有同名文件或文件夹，未覆盖任何内容",
+      "shaUnchanged": true
+    },
+    "otherProject": {
+      "diskBFiles": [
+        "b.md"
+      ],
+      "hasOnlyAFile": true
+    },
+    "postBodies": [
+      {
+        "url": "/api/files/create",
+        "body": "{\"projectId\":\"ux02c01e-proja\",\"parentDir\":\"\",\"name\":\"123.md\"}"
+      },
+      {
+        "url": "/api/directories/create",
+        "body": "{\"projectId\":\"ux02c01e-proja\",\"parentDir\":\"\",\"name\":\"新建文件夹\"}"
+      },
+      {
+        "url": "/api/files/create",
+        "body": "{\"projectId\":\"ux02c01e-proja\",\"parentDir\":\"\",\"name\":\"123.md\"}"
+      }
+    ],
+    "postCount": 3,
+    "realMouseHover": {
+      "menuOpen": true,
+      "submenuLabels": [
+        "Markdown (.md)",
+        "Markdown (.markdown)",
+        "纯文本 (.txt)"
+      ],
+      "ok": true
+    }
+  },
+  "ok": true
+}

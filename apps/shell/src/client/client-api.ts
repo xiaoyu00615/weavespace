@@ -261,6 +261,31 @@ export type RemovalOpOutcome =
     }
   | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
 
+/**
+ * 真实创建（UX-02C-01）的客户端结论。
+ *
+ * `UNKNOWN` 是**独立**的一种，不能折成 REJECTED：网络断开 / 5xx / Host 明确报告
+ * "副作用可能已发生但无法确认"，都只许做一次**只读**目录核对并提示人工确认，
+ * 绝不自动重发创建，更不能因为"目录里出现了同名文件"就宣称本次操作成功。
+ */
+export type CreateEntryKindDto = 'file' | 'directory';
+export type CreateEntryOutcome =
+  | {
+      status: 'APPLIED';
+      projectId: string;
+      parentDir: string;
+      name: string;
+      kind: CreateEntryKindDto;
+      relativePath: string;
+    }
+  | {
+      status: 'UNKNOWN';
+      errorCode: 'ERR_OUTCOME_UNKNOWN';
+      message: string;
+      httpStatus: number;
+    }
+  | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
+
 export interface WeaveSpaceClient {
   readonly mode: ClientMode;
   /** 服务端运行模式（`/api/health`）；demo 恒为 `legacy`。 */
@@ -361,6 +386,21 @@ export interface WeaveSpaceClient {
   removeProject(projectId: string, opId: string): Promise<RemoveProjectOutcome>;
   /** 按 `opId` 查询持久事务证据（只读磁盘）；证据缺失即 `unknown`。 */
   queryRemovalOp(opId: string): Promise<RemovalOpOutcome>;
+
+  /* ---- UX-02C-01：真实创建 ---- */
+
+  /**
+   * 在**已授权项目**的指定相对目录里创建一个空文件 / 空目录。
+   *
+   * 请求体只有 `projectId / parentDir / name`：绝不含绝对路径、rootDir、
+   * rootToken、providerId 或正文。名称合法性与目录边界都由 Host 判定。
+   */
+  createEntry(
+    projectId: string,
+    parentDir: string,
+    name: string,
+    kind: CreateEntryKindDto,
+  ): Promise<CreateEntryOutcome>;
 }
 
 interface ApiEnvelope {
@@ -859,6 +899,70 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         httpStatus,
       };
     },
+
+    async createEntry(projectId, parentDir, name, kind) {
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return {
+          status: 'REJECTED' as const,
+          errorCode: 'ERR_PERMISSION_DENIED',
+          message: '无法获取会话令牌',
+          httpStatus: 403,
+        };
+      }
+      const endpoint = kind === 'file' ? '/api/files/create' : '/api/directories/create';
+      let response: { httpStatus: number; body: ApiEnvelope };
+      try {
+        response = await request(baseUrl, endpoint, {
+          method: 'POST',
+          headers: { 'x-ws-token': token },
+          // 只提交相对目录 + 单段名称：没有任何路径/根/令牌/providerId 字段
+          body: JSON.stringify({ projectId, parentDir, name }),
+        });
+      } catch {
+        /**
+         * 断线 / AbortError / 代理重置：请求**可能已经到达 Host 并创建了对象**。
+         * 只能是 UNKNOWN：不许重发，由编排层做一次只读目录核对 + 人工确认提示。
+         */
+        return {
+          status: 'UNKNOWN' as const,
+          errorCode: 'ERR_OUTCOME_UNKNOWN',
+          message: '网络中断或请求超时，创建结果未知',
+          httpStatus: 0,
+        };
+      }
+      const { httpStatus, body } = response;
+      if (httpStatus === 202 && body.status === 'UNKNOWN') {
+        return {
+          status: 'UNKNOWN' as const,
+          errorCode: 'ERR_OUTCOME_UNKNOWN',
+          message: body.message ?? '创建结果未确认，请刷新目录人工核对',
+          httpStatus,
+        };
+      }
+      if (httpStatus === 200 && body.status === 'APPLIED') {
+        const applied = body as unknown as { relativePath?: unknown };
+        // 回执形状不完整时不冒充成功：客户端不能自己猜相对路径
+        if (typeof applied.relativePath === 'string' && applied.relativePath !== '') {
+          return {
+            status: 'APPLIED' as const,
+            projectId,
+            parentDir,
+            name,
+            kind,
+            relativePath: applied.relativePath,
+          };
+        }
+      }
+      return {
+        status: 'REJECTED' as const,
+        errorCode: body.errorCode ?? (httpStatus === 200 ? 'ERR_COMMAND_INTERNAL' : null),
+        message: body.message ?? '创建失败',
+        httpStatus,
+      };
+    },
   };
 }
 
@@ -1071,6 +1175,15 @@ export function createDemoClient(
         status: 'REJECTED' as const,
         errorCode: 'ERR_COMMAND_UNSUPPORTED',
         message: '演示数据没有真实项目，无法查询移除结果',
+        httpStatus: 501,
+      };
+    },
+
+    async createEntry() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式不创建真实文件',
         httpStatus: 501,
       };
     },

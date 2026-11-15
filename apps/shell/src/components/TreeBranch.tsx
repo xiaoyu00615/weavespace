@@ -18,6 +18,8 @@ import { useQuickFile } from '../state/QuickFileContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { makeDocId } from '../state/doc-identity.ts';
 import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
+import { InlineCreateSlot } from './InlineCreateRow.tsx';
+import { useTreeCommands } from './TreeCommandsContext.tsx';
 import { LinkGlyph, TreeRow } from './FileTreeRow.tsx';
 import { descend, type TreeTrails } from './tree-trails';
 import { normalizeDir, type TreeLevelState, type TreeLevels } from './tree-model.ts';
@@ -126,6 +128,7 @@ function TreeItem({
   const { state, dispatch } = useWorkspace();
   const actions = useDocumentActions();
   const quick = useQuickFile();
+  const commands = useTreeCommands();
   const { ready, resolveViewer } = useCapabilities();
   const childTrails = descend(trails, last);
   const expanded = expandedMap[node.id] ?? false;
@@ -157,9 +160,13 @@ function TreeItem({
         last={last}
         trails={trails}
         expanded={expanded}
+        onContextMenu={(event) =>
+          commands.openContextMenu(event, { origin: 'folder', projectId, nodePath: dir })
+        }
         onActivate={() => {
           const willExpand = !expanded;
           toggle();
+          if (projectId) commands.noteSelection(projectId, 'folder', dir);
           // 只在首次展开（或失败后重试）时取该层；已缓存的层不重复请求（T-17）
           if (willExpand && !isDemo && (!level || level.status === 'idle' || level.status === 'error')) {
             void actions.loadTreeLevel(projectId, dir, false);
@@ -179,6 +186,7 @@ function TreeItem({
                 isDemo={isDemo}
               />
             )}
+            <InlineCreateSlot projectId={projectKey} parentDir={dir} depth={depth + 1} />
             <LevelStatus
               level={level}
               depth={depth}
@@ -193,12 +201,16 @@ function TreeItem({
   }
 
   if (node.kind === 'link') {
+    const linkPath = node.path ?? node.name;
     return (
       <TreeRow
         node={node}
         depth={depth}
         last={last}
         trails={trails}
+        onContextMenu={(event) =>
+          commands.openContextMenu(event, { origin: 'link', projectId, nodePath: linkPath })
+        }
         onActivate={() =>
           dispatch({ type: 'NOTICE', message: `「${node.name}」是链接，不展开也不打开（避免越过项目根）` })
         }
@@ -222,6 +234,9 @@ function TreeItem({
       selected={selected}
       opened={Boolean(tab)}
       dirty={tab?.dirty ?? false}
+      onContextMenu={(event) =>
+        commands.openContextMenu(event, { origin: 'file', projectId, nodePath: node.path ?? node.name })
+      }
       onActivate={() => {
         // 契约 B.1：不支持预览的文件仍是普通文件节点，但点击**不得**进入文本编辑器。
         // 能力注册表就绪时先问一次；未就绪时沿用既有打开链路，避免启动瞬间全部被挡。
@@ -233,6 +248,7 @@ function TreeItem({
           return;
         }
         quick.deactivate();
+        if (projectId) commands.noteSelection(projectId, 'file', node.path ?? node.name);
         void actions.openNode(node, projectId);
       }}
     />

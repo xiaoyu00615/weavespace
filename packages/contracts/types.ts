@@ -95,6 +95,8 @@ export interface PluginManifest {
   requires: string[];
   requestedPermissions: string[];
   activationEvents: string[];
+  /** 可选显示名（UX-02C-01）：菜单用注册表里的真实名称，不维护第二份硬编码列表。 */
+  displayName?: string;
   entrypoints: { host?: string; client?: string };
 }
 

@@ -11,6 +11,8 @@ export {
   type FileStat,
   type StorageFaultHooks,
   type StorageProvider,
+  type CreateEntryKind,
+  type CreateEntryResult,
   type LstatImpl,
   type LstatResultLike,
 } from './local-provider.ts';
@@ -31,3 +33,11 @@ export {
   type RootCheckpoint,
   type RootStatLike,
 } from './path-safety.ts';
+export {
+  validateEntryName,
+  validateParentDir,
+  entryRelativePath,
+  MAX_ENTRY_NAME_LENGTH,
+  MAX_PARENT_DIR_LENGTH,
+  type EntryNameCheck,
+} from './entry-name.ts';

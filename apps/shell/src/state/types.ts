@@ -197,6 +197,10 @@ export type WorkspaceAction =
   /** 刷新：只作废这一个项目的层表，其他项目引用不变。 */
   | { type: 'TREE_RESET'; projectId: string }
   | { type: 'TOGGLE_PROJECT_NODE'; projectId: string; path: string }
+  /** 幂等展开（UX-02C-01）：创建成功后把目标文件夹打开，重复调用不会把它折叠回去。 */
+  | { type: 'EXPAND_PROJECT_NODE'; projectId: string; path: string }
+  /** 幂等展开（Demo / Legacy 单根）。 */
+  | { type: 'EXPAND_NODE'; path: string }
   | { type: 'SELECT_PROJECT_NODE'; projectId: string; path: string | null }
   | { type: 'OPEN_TAB'; tab: DocTab }
   /**

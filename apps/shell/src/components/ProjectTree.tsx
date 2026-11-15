@@ -14,6 +14,9 @@ import type { ResourceNodeState } from '../state/types.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { AddProjectEntry } from './AddProjectEntry.tsx';
+import { InlineCreateSlot } from './InlineCreateRow.tsx';
+import { TreeToolbar } from './TreeToolbar.tsx';
+import { useTreeCommands } from './TreeCommandsContext.tsx';
 import { LevelStatus, TreeBranch } from './TreeBranch.tsx';
 import { TreeRow } from './FileTreeRow.tsx';
 import { countLoadedEntries, emptyLevels, fromStaticTree, materializeTree } from './tree-model.ts';
@@ -23,6 +26,7 @@ const LEGACY_PROJECT_NAME = '本地测试项目';
 export function ProjectTree() {
   const { state, dispatch } = useWorkspace();
   const actions = useDocumentActions();
+  const commands = useTreeCommands();
   const isDemo = state.mode === 'demo';
   // 项目根的展开是纯 UI 状态；刷新文件树不会重置它
   const [rootOpen, setRootOpen] = useState(true);
@@ -67,6 +71,7 @@ export function ProjectTree() {
           </div>
         </div>
         <div className="tree__actions">
+          <TreeToolbar />
           <AddProjectEntry />
           {!isDemo && (
             <button
@@ -89,13 +94,19 @@ export function ProjectTree() {
         </div>
       </header>
 
-      <ul className="tree__root">
+      <ul
+        className="tree__root"
+        onContextMenu={(event) => commands.openContextMenu(event, { origin: 'blank', projectId: null })}
+      >
         <TreeRow
           node={rootNode}
           depth={0}
           last
           trails={[]}
           expanded={rootOpen}
+          onContextMenu={(event) =>
+            commands.openContextMenu(event, { origin: 'project-root', projectId: null })
+          }
           onActivate={() => setRootOpen((value) => !value)}
         >
           {rootOpen && (
@@ -109,6 +120,7 @@ export function ProjectTree() {
                 trails={[]}
                 isDemo={isDemo}
               />
+              <InlineCreateSlot projectId="" parentDir="" depth={1} />
               <LevelStatus
                 level={rootLevel}
                 depth={1}
