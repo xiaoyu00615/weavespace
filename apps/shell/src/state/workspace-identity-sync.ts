@@ -30,10 +30,39 @@ export interface WorkspaceIdentitySyncHost {
   currentKey(): string | null;
   /** 给定代次是否仍是当前工作区（切模式 / 重连 / 换工作区都会推进 epoch）。 */
   isCurrent(epoch: number): boolean;
+  /**
+   * 身份修订号（UX-02B-05-E）。
+   *
+   * 只靠"代次 + 本次同步的 issued 序号"不足以保证归属：04A 的添加流程**不推进**
+   * `loadEpoch`（它只登记项目、更新摘要），也**不经过** `refresh()`，于是移除时发起的
+   * 旧探测会通过两道判定，把添加流程刚确认的摘要覆盖回"中间态"。
+   *
+   * 修订号是"身份已经落定的次数"：任何一处在界面里写定摘要（添加 / 只读 resync /
+   * 本模块自己的探测结论）都 +1。探测只在"发起时的修订号仍然成立"时才允许写，
+   * 因此**添加、移除、只读重新同步能共同使旧探测失效**。
+   */
+  revision?: WorkspaceKeyRevision;
   /** 写入新摘要；`null` = 待同步（让自动保存停下来，而不是写一条假记录）。 */
   onWorkspaceKey(key: string | null): void;
   /** 旧摘要的本地记录不再代表本工作区：清掉，避免被认领成"新工作区的旧记录"。 */
   onDropRecord?(workspaceKey: string): void;
+}
+
+/** 身份修订号：单调递增，只用来判"这条探测的归属是否已经被后来者取代"。 */
+export interface WorkspaceKeyRevision {
+  current(): number;
+  /** 一处身份刚刚落定（摘要已写入界面）。 */
+  bump(): void;
+}
+
+export function createWorkspaceKeyRevision(): WorkspaceKeyRevision {
+  let value = 0;
+  return {
+    current: () => value,
+    bump: () => {
+      value += 1;
+    },
+  };
 }
 
 export type IdentitySyncOutcome =
@@ -112,10 +141,25 @@ export function createWorkspaceIdentitySync(host: WorkspaceIdentitySyncHost): Wo
    */
   let issued = 0;
 
+  /**
+   * 这条探测是否已经被**后来落定的身份**取代（UX-02B-05-E）。
+   *
+   * `issued` 只能发现"又发起了一次 refresh"。真正的对手是添加项目与只读重新同步：
+   * 它们不走 `refresh()`、也不推进 `loadEpoch`，却在 `applyWorkspaceKey` 里写下了
+   * 一个**更新**的摘要。若还按 `issued` 判，移除时那条旧探测会理直气壮地把
+   * `keyBC` 改回 `keyB`（成功分支）或置成 `null`（失败分支）。
+   *
+   * 判据改成"身份修订号是否还是发起时那个"：一旦别处落定了新身份，这条探测
+   * 反映的就是**已被取代的结构**，无论返回什么都只能丢弃。
+   */
+  const superseded = (revisionAtStart: number): boolean =>
+    (host.revision?.current() ?? 0) !== revisionAtStart;
+
   return {
     async refresh(epoch) {
       const ticket = ++issued;
       const before = host.currentKey();
+      const revisionAtStart = host.revision?.current() ?? 0;
 
       let identity: WorkspaceIdentity;
       try {
@@ -126,7 +170,11 @@ export function createWorkspaceIdentitySync(host: WorkspaceIdentitySyncHost): Wo
         if (!host.isCurrent(epoch)) return { status: 'stale' };
         // 已有更晚的刷新发起：这次失败属于过期的结构，交给最新那次定论
         if (ticket !== issued) return { status: 'stale' };
+        // 期间别处已经确认过身份（添加项目 / 只读 resync）：这次失败没有裁决权，
+        // 更不能把已确认的摘要打回 null
+        if (superseded(revisionAtStart)) return { status: 'stale' };
         host.onWorkspaceKey(null);
+        host.revision?.bump();
         return { status: 'pending', reason: 'probe-failed' };
       }
 
@@ -134,15 +182,19 @@ export function createWorkspaceIdentitySync(host: WorkspaceIdentitySyncHost): Wo
       if (!host.isCurrent(epoch)) return { status: 'stale' };
       // 被更晚发起的刷新取代：结果属于更早的结构，同样一个 dispatch 都不发
       if (ticket !== issued) return { status: 'stale' };
+      // 期间别处落定了更新的摘要：本探测已被取代，不得覆盖
+      if (superseded(revisionAtStart)) return { status: 'stale' };
 
       const next = identity.workspaceKey;
       if (next === null) {
         host.onWorkspaceKey(null);
+        host.revision?.bump();
         return { status: 'pending', reason: 'identity-absent' };
       }
       if (!isWorkspaceKey(next)) {
         // 形状不对就当"没拿到"：不写进状态，避免把垃圾串当成工作区身份
         host.onWorkspaceKey(null);
+        host.revision?.bump();
         return { status: 'pending', reason: 'invalid-key' };
       }
       if (next === before) {
@@ -152,7 +204,56 @@ export function createWorkspaceIdentitySync(host: WorkspaceIdentitySyncHost): Wo
       // 旧摘要的记录属于"上一个项目集合"，留着只会被下次启动误认领
       if (before !== null && isWorkspaceKey(before)) host.onDropRecord?.(before);
       host.onWorkspaceKey(next);
+      // 本模块自己的写入同样计数：`issued` 已经兜住同模块内的先后，这里是为了让
+      // "修订号 = 身份落定次数"对所有写入（含待同步的 null）都成立，不留例外。
+      host.revision?.bump();
       return { status: 'updated', workspaceKey: next, previousKey: before };
+    },
+  };
+}
+
+/**
+ * 「摘要落地」的统一入口（UX-02B-05-E）。
+ *
+ * Provider 的 `applyWorkspaceKey` 与测试共用这一个函数，规则只有一处：
+ * 1. **先**推进身份修订号 —— 这一刻的身份由调用方确认，任何更早发起的探测
+ *    都已属于被取代的结构（`refresh` 据此丢弃结果）；
+ * 2. 再写入摘要并按"能否确认身份"收放写入门禁；
+ * 3. 放行后重新排一次自动保存；只有从"待同步"回到确定身份才补提示。
+ *
+ * 顺序不可交换：修订号与摘要写入同属一个**同步片段**（中间没有 await，探测无法穿插），
+ * 但"先记落定、再写界面"让语义自解释——修订号的含义是"已有更新的身份落定"，
+ * 而不是"摘要恰好被写过一次"。后来者改这里时最容易犯的错就是把它挪到探测之后。
+ */
+export interface WorkspaceKeyApplierHost {
+  readonly revision: WorkspaceKeyRevision;
+  readonly gate: {
+    holdIdentity(): void;
+    releaseIdentity(): void;
+    identityPending(): boolean;
+  };
+  /** 写入界面状态（`SET_WORKSPACE_KEY`）。 */
+  setKey(workspaceKey: string | null): void;
+  /** 身份确定后重新排程自动保存。 */
+  schedule(): void;
+  /** 从"待同步"回到确定身份时的提示（可选）。 */
+  onIdentityRecovered?(): void;
+}
+
+export interface WorkspaceKeyApplier {
+  apply(workspaceKey: string | null): 'released' | 'held';
+}
+
+export function createWorkspaceKeyApplier(host: WorkspaceKeyApplierHost): WorkspaceKeyApplier {
+  return {
+    apply(workspaceKey) {
+      host.revision.bump();
+      const wasPending = host.gate.identityPending();
+      host.setKey(workspaceKey);
+      if (settleWorkspaceKey(host.gate, workspaceKey) !== 'released') return 'held';
+      host.schedule();
+      if (wasPending) host.onIdentityRecovered?.();
+      return 'released';
     },
   };
 }

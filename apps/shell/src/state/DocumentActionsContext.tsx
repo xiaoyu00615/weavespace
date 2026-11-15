@@ -60,8 +60,9 @@ import {
 } from './remove-project.ts';
 import {
   createWorkspaceIdentitySync,
+  createWorkspaceKeyApplier,
+  createWorkspaceKeyRevision,
   settleIdentitySync,
-  settleWorkspaceKey,
   type IdentitySyncOutcome,
 } from './workspace-identity-sync.ts';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
@@ -270,34 +271,50 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   const gate = useMemo(() => createWorkspaceWriteGate(), []);
 
   /**
+   * 身份修订号（UX-02B-05-E）。
+   *
+   * "最后一次落定的身份"计数器：添加项目、只读 resync、移除后的身份同步，任一处
+   * 写定摘要都 +1。移除时发起的那条健康检查据此自检——只要期间别处确认过新身份，
+   * 它反映的就是**已被取代的结构**，返回什么都只能丢弃（否则会把 `keyBC` 改回
+   * `keyB`，或把已确认的摘要重新置空）。
+   */
+  const keyRevision = useMemo(() => createWorkspaceKeyRevision(), []);
+
+  /**
    * `autosave` 在 `restorer` 之后构造（它要读恢复流程的结转列表），
    * 而 `restorer` 的终态回调又要请求一次提交，因此用一个 ref 打通这两个方向。
    */
   const autosaveRef = useRef<Autosave | null>(null);
 
   /**
-   * 「摘要落地」的唯一入口：添加项目、只读重新读取都走这里（R2E E-01）。
+   * 「摘要落地」的唯一入口：添加项目、只读重新读取都走这里（R2E E-01 / 05-E）。
    *
-   * 派发摘要之后立刻按"能不能确认身份"收放写入门禁：
-   * - 有效摘要 → 放开写入并重新排程（移除最后一个项目后再添加，靠这一条恢复）；
-   * - `null` / 形状非法 → 继续待同步，绝不伪造一个空工作区摘要。
-   *
-   * 归属由调用方保证：添加流程与 resync 都在**代次仍属当前工作区**时才调用，
-   * 因此迟到的旧结果不会跑到这里把新工作区的门禁放开。
+   * 规则抽在 `createWorkspaceKeyApplier`（纯 TS，与测试共用同一条实现）：
+   * - 先推进身份修订号 → 在途的旧探测一律作废（添加 / resync 也能让它们失效，
+   *   不必依赖 `loadEpoch` 是否推进）；
+   * - 有效摘要 → 放开写入并重新排程；`null` / 形状非法 → 继续待同步，绝不伪造；
+   * - 归属由调用方保证：添加流程与 resync 都在**代次仍属当前工作区**时才调用。
    */
+  const keyApplier = useMemo(
+    () =>
+      createWorkspaceKeyApplier({
+        revision: keyRevision,
+        gate,
+        setKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
+        schedule: () => autosaveRef.current?.schedule(),
+        // 从"待同步"回到确定身份时补一句：否则状态栏会一直挂着上一条
+        // "工作区身份待同步"，与事实相反
+        onIdentityRecovered: () =>
+          dispatch({ type: 'NOTICE', message: '工作区身份已同步，自动保存已恢复' }),
+      }),
+    [dispatch, gate, keyRevision],
+  );
+
   const applyWorkspaceKey = useCallback(
     (workspaceKey: string | null): void => {
-      const wasPending = gate.identityPending();
-      dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey });
-      if (settleWorkspaceKey(gate, workspaceKey) !== 'released') return;
-      autosaveRef.current?.schedule();
-      // 从"待同步"回到确定身份时补一句：否则状态栏会一直挂着上一条
-      // "工作区身份待同步"，与事实相反
-      if (wasPending) {
-        dispatch({ type: 'NOTICE', message: '工作区身份已同步，自动保存已恢复' });
-      }
+      keyApplier.apply(workspaceKey);
     },
-    [dispatch, gate],
+    [keyApplier],
   );
 
   /**
@@ -433,10 +450,12 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         port: { workspaceIdentity: () => liveClient.workspaceIdentity() },
         currentKey: () => stateRef.current.workspaceKey,
         isCurrent: (value) => loadEpoch.current.isCurrent(value),
+        // 与添加 / 只读 resync 共用同一个修订号：任一处的写入都能让在途探测失效
+        revision: keyRevision,
         onWorkspaceKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
         onDropRecord: (workspaceKey) => store.clear(workspaceKey),
       }),
-    [dispatch, liveClient, store],
+    [dispatch, keyRevision, liveClient, store],
   );
 
   /**

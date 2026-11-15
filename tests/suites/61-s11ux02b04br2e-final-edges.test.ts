@@ -32,8 +32,9 @@ import {
 } from '../../apps/shell/src/state/remove-project.ts';
 import {
   createWorkspaceIdentitySync,
+  createWorkspaceKeyApplier,
+  createWorkspaceKeyRevision,
   settleIdentitySync,
-  settleWorkspaceKey,
   type IdentitySyncOutcome,
 } from '../../apps/shell/src/state/workspace-identity-sync.ts';
 import {
@@ -129,6 +130,8 @@ function storeSpy(): StoreSpy {
  */
 function assemble(options: { projects?: ProjectSummary[] } = {}) {
   const gate = createWorkspaceWriteGate();
+  /** 身份修订号：与身份同步共用（UX-02B-05-E）。 */
+  const revision = createWorkspaceKeyRevision();
   const store = storeSpy();
   const timers = manualTimers();
   const probes: Deferred<WorkspaceIdentity>[] = [];
@@ -168,6 +171,7 @@ function assemble(options: { projects?: ProjectSummary[] } = {}) {
     },
     currentKey: () => state.workspaceKey,
     isCurrent: (value) => epoch.value === value,
+    revision,
     onWorkspaceKey: (workspaceKey) => {
       state = workspaceReducer(state, { type: 'SET_WORKSPACE_KEY', workspaceKey });
     },
@@ -230,6 +234,17 @@ function assemble(options: { projects?: ProjectSummary[] } = {}) {
     notify: (message) => notices.push(message),
   });
 
+  /** 摘要落地：生产实现（`createWorkspaceKeyApplier`），与 Provider 共用同一条规则。 */
+  const applier = createWorkspaceKeyApplier({
+    revision,
+    gate,
+    setKey: (key) => {
+      state = workspaceReducer(state, { type: 'SET_WORKSPACE_KEY', workspaceKey: key });
+    },
+    schedule: () => autosave.schedule(),
+    onIdentityRecovered: () => notices.push('工作区身份已同步，自动保存已恢复'),
+  });
+
   return {
     gate,
     store,
@@ -249,17 +264,9 @@ function assemble(options: { projects?: ProjectSummary[] } = {}) {
     probe: () => probes[probes.length - 1],
     removeDeferred: () => removeDs[removeDs.length - 1],
     getState: () => state,
-    /**
-     * 添加 / 重新读取路径的摘要落地（Provider 的 `applyWorkspaceKey`）：
-     * 派发摘要 + 按摘要能否确认来收放写入门禁。
-     */
+    /** 添加 / 重新读取路径的摘要落地：走生产实现（与 Provider 同一函数）。 */
     applyWorkspaceKey(key: string | null) {
-      const wasPending = gate.identityPending();
-      state = workspaceReducer(state, { type: 'SET_WORKSPACE_KEY', workspaceKey: key });
-      if (settleWorkspaceKey(gate, key) !== 'released') return;
-      autosave.schedule();
-      // 与 Provider 一致：只有"从待同步回到确定身份"才补一条提示
-      if (wasPending) notices.push('工作区身份已同步，自动保存已恢复');
+      applier.apply(key);
     },
     setProjects(projects: ProjectSummary[]) {
       state = workspaceReducer(state, { type: 'SET_PROJECTS', projects });
