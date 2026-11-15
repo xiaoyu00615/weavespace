@@ -52,6 +52,7 @@ import {
 import type { RenameOutcome } from '../client/client-api.ts';
 import { refreshProject } from './refresh-project';
 import { createProjectRemover, defaultNewOpId, type RemoveUiResult } from './remove-project.ts';
+import { createWorkspaceIdentitySync } from './workspace-identity-sync.ts';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
 import { useWorkspace } from './WorkspaceContext';
@@ -371,6 +372,25 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   const gate = useMemo(() => createWorkspaceWriteGate(), []);
 
   /**
+   * 项目移除之后的工作区摘要同步（UX-02B-04B-R1-03）。
+   *
+   * 只写摘要（`SET_WORKSPACE_KEY`），不清标签、不动树：摘要变化不该让用户
+   * 正在编辑的内容消失。旧摘要的本地记录会被清掉——它代表的是"上一个项目集合"，
+   * 留着只会被下次启动误认领。
+   */
+  const identitySync = useMemo(
+    () =>
+      createWorkspaceIdentitySync({
+        port: { workspaceIdentity: () => liveClient.workspaceIdentity() },
+        currentKey: () => stateRef.current.workspaceKey,
+        isCurrent: (value) => loadEpoch.current.isCurrent(value),
+        onWorkspaceKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
+        onDropRecord: (workspaceKey) => store.clear(workspaceKey),
+      }),
+    [dispatch, liveClient, store],
+  );
+
+  /**
    * `autosave` 在 `restorer` 之后构造（它要读恢复流程的结转列表），
    * 而 `restorer` 的终态回调又要请求一次提交，因此用一个 ref 打通这两个方向。
    */
@@ -652,6 +672,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
        * 确保迟到的目录响应不会把已移除项目重新长出来。
        */
       async removeProject(projectId: string): Promise<RemoveUiResult> {
+        // 本次操作的归属代次：响应/探测回来时若已经不是这个工作区，一律不回填
+        const epoch = loadEpoch.current.current();
         const remover = createProjectRemover({
           port: {
             removalPrecheck: (pid) => clientFor('live').removalPrecheck(pid),
@@ -661,7 +683,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           },
           newOpId: defaultNewOpId,
           identity: () => ({ mode: stateRef.current.mode, epoch: loadEpoch.current.current() }),
-          isCurrent: (epoch) => loadEpoch.current.isCurrent(epoch),
+          isCurrent: (value) => loadEpoch.current.isCurrent(value),
           onRemoved: (pid) => {
             // 先作废该项目所有在途层请求（推高 projectGeneration，迟到响应一律 stale），
             // 再从列表移除并清空层表缓存——两道防线共同阻止旧行复活。
@@ -671,12 +693,28 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
         });
         const result = await remover.remove(projectId);
+
+        /**
+         * 身份同步（R1-03）：Host 的 `workspaceKey` 按**项目集合**重算，移除成功后
+         * 摘要必然变化。不刷新就会把"新项目列表 + 旧摘要"写成一条看起来有效的恢复
+         * 记录。`unknown` 也可能已经改变了集合，所以同样刷新一次（只读、幂等）。
+         */
+        const synced =
+          result.kind === 'removed' || result.kind === 'unknown'
+            ? await identitySync.refresh(epoch)
+            : null;
+        const needsSync = synced !== null && synced.status === 'pending';
+
         if (result.kind === 'removed') {
+          const base =
+            result.configPersisted === true
+              ? '已从工作台移除该项目（磁盘文件未改动）'
+              : result.configPersisted === false
+                ? '已移除该项目（撤销已生效，配置补写待完成；磁盘文件未改动）'
+                : '已移除该项目（已按操作编号核对：撤销生效；磁盘文件未改动）';
           dispatch({
             type: 'NOTICE',
-            message: result.configPersisted
-              ? '已从工作台移除该项目（磁盘文件未改动）'
-              : '已移除该项目（撤销已生效，配置补写待完成；磁盘文件未改动）',
+            message: needsSync ? `${base}；工作区身份待同步` : base,
           });
         } else if (result.kind === 'unknown') {
           dispatch({ type: 'NOTICE', message: result.message });

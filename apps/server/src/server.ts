@@ -169,6 +169,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_PROJECT_BUSY':
     case 'ERR_STORE_LOCKED':
     case 'ERR_STORE_ID_REUSED':
+    // 同一个 opId 不能代表两次事务：属于"请求与既有证据冲突"，不是可重试的 IO 失败
+    case 'ERR_OP_ID_CONFLICT':
     case 'ERR_PICKER_BUSY':
     // 目录在本轮分页期间发生变化：客户端必须刷新整层，不能拿旧游标续页
     case 'ERR_DIR_CHANGED':
@@ -282,6 +284,7 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_STORE_LOCKED: '工作区存储已被另一个实例占用',
   ERR_STORE_RESTRICTED: '工作区存储处于受限状态，暂不接受变更（需重启或人工修复）',
   ERR_STORE_ID_REUSED: '项目标识已签发过，不能复用',
+  ERR_OP_ID_CONFLICT: '操作编号已被另一次变更占用，请重新发起',
   ERR_SESSION_STALE: '会话已失效（项目不可用），草稿仍保留',
   ERR_PICKER_UNAVAILABLE:
     '本机目录选择器不可用（无图形界面 / 被策略拦截 / 超时），请改用静态配置启动',
@@ -1174,8 +1177,14 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       if (opId === '' || opId.length > 128) {
         throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少或非法的 opId');
       }
-      const outcome = managedFileStore.queryOp(opId);
-      sendJson(res, 200, { status: 'APPLIED', opId, outcome });
+      // 归属必须一起返回：否则调用方会把"别的项目的撤销证据"当成本次移除成功
+      const evidence = managedFileStore.opEvidence(opId);
+      sendJson(res, 200, {
+        status: 'APPLIED',
+        opId,
+        outcome: evidence.outcome,
+        projectId: evidence.projectId,
+      });
       return;
     }
 

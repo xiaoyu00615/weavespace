@@ -122,7 +122,7 @@ function isProjectId(value: unknown): value is string {
   return isSafeRelativePath(value) && !value.includes('/');
 }
 
-function isWorkspaceKey(value: unknown): value is string {
+export function isWorkspaceKey(value: unknown): value is string {
   // Host 生成的是 SHA-256 hex；这里只要求"像摘要"，不接受空串或超长值
   return typeof value === 'string' && /^[0-9a-zA-Z_-]{16,128}$/.test(value);
 }

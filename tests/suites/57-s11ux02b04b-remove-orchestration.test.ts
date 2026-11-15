@@ -158,7 +158,7 @@ test('PB-06-02 超时(REJECTED) → 按 opId 查证据命中 revoked：判为已
   assert.equal(h.removeCalls.length, 1, '超时后绝不自动重发 remove');
   assert.equal(h.queryCalls.length, 1, '必须按 opId 查询持久证据');
   assert.equal(h.queryCalls[0], 'op-fixed-0001');
-  h.queryDeferred().resolve({ status: 'APPLIED', opId: 'op-fixed-0001', outcome: 'revoked' });
+  h.queryDeferred().resolve({ status: 'APPLIED', opId: 'op-fixed-0001', outcome: 'revoked', projectId: 'p-a' });
   const result = await p;
   assert.equal(result.kind, 'removed');
   assert.deepEqual(h.removed, ['p-a']);
@@ -169,7 +169,7 @@ test('PB-06-03 超时 → 查询 unknown：只读刷新列表 + 提示人工核�
   const p = h.remover.remove('p-a');
   h.removeDeferred().resolve({ status: 'REJECTED', errorCode: null, message: 'timeout', httpStatus: 0 });
   await flush();
-  h.queryDeferred().resolve({ status: 'APPLIED', opId: 'op-fixed-0001', outcome: 'unknown' });
+  h.queryDeferred().resolve({ status: 'APPLIED', opId: 'op-fixed-0001', outcome: 'unknown', projectId: null });
   await flush();
   assert.equal(h.getListCalls(), 1, '结果不确定时必须只读刷新项目列表');
   h.listDeferred().resolve([{ projectId: 'p-a', name: 'A', status: 'READY' }]);
@@ -229,6 +229,126 @@ test('removalPrecheck 透传端口（只读）', async () => {
   const pre = await p;
   assert.equal(pre.status, 'APPLIED');
   assert.deepEqual(pre.status === 'APPLIED' ? pre.blockedBy : [], ['DIRTY']);
+});
+
+/* ---------------- R1-01 · 真实网络异常（Promise reject / AbortError）---------------- */
+
+test('R1-01-01 remove 端口 reject（断线 / Abort）→ 收敛为 unknown：一次 op 查询 + 一次只读刷新，绝不重发', async () => {
+  const h = makeHarness();
+  const p = h.remover.remove('p-a');
+  assert.equal(h.removeCalls.length, 1);
+  h.removeDeferred().reject(Object.assign(new Error('network down'), { name: 'TypeError' }));
+  await flush();
+
+  assert.equal(h.queryCalls.length, 1, '必须保留原 opId 并只查一次持久证据');
+  assert.equal(h.queryCalls[0], 'op-fixed-0001', '查询必须用提交前落定的原 opId');
+  h.queryDeferred().resolve({ status: 'APPLIED', opId: 'op-fixed-0001', outcome: 'unknown', projectId: null });
+  await flush();
+
+  assert.equal(h.getListCalls(), 1, '无证据时必须只读刷新项目列表');
+  h.listDeferred().resolve([{ projectId: 'p-a', name: 'A', status: 'READY' }]);
+  const result = await p;
+
+  assert.equal(result.kind, 'unknown', '端口 reject 不能把异常抛给界面（否则模态永久停在 removing）');
+  assert.equal(h.removeCalls.length, 1, '绝不自动重发 remove');
+  assert.deepEqual(h.removed, [], '结果不明时不得在本地移除项目');
+});
+
+test('R1-01-02 remove 端口 reject，但 op 证据命中本次 opId → 判为已移除', async () => {
+  const h = makeHarness();
+  const p = h.remover.remove('p-a');
+  h.removeDeferred().reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+  await flush();
+  h.queryDeferred().resolve({ status: 'APPLIED', opId: 'op-fixed-0001', outcome: 'revoked', projectId: 'p-a' });
+  const result = await p;
+
+  assert.equal(result.kind, 'removed', '持久证据优先于丢失的响应');
+  assert.deepEqual(h.removed, ['p-a']);
+  assert.equal(h.removeCalls.length, 1);
+});
+
+test('R1-01-03 同一项目的重复确认不得并发发出多个 remove（共享同一次提交）', async () => {
+  const h = makeHarness();
+  const first = h.remover.remove('p-a');
+  const second = h.remover.remove('p-a');
+  assert.equal(h.removeCalls.length, 1, '并发确认必须复用同一次提交');
+
+  h.removeDeferred().resolve({ status: 'APPLIED', projectId: 'p-a', opId: 'op-fixed-0001', configPersisted: true });
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a.kind, 'removed');
+  assert.equal(b.kind, 'removed', '两次确认必须得到同一个结论');
+  assert.deepEqual(h.removed, ['p-a'], '不得重复清理/重复派发');
+});
+
+test('R1-01-04 查询端点自身 reject → 仍返回 unknown（不抛出、不重发 remove）', async () => {
+  const h = makeHarness();
+  const p = h.remover.remove('p-a');
+  h.removeDeferred().reject(new Error('offline'));
+  await flush();
+  h.queryDeferred().reject(new Error('op endpoint down'));
+  await flush();
+  assert.equal(h.getListCalls(), 1);
+  h.listDeferred().reject(new Error('list down'));
+  const result = await p;
+  assert.equal(result.kind, 'unknown');
+  assert.equal(h.removeCalls.length, 1);
+});
+
+/* ---------------- R1-02-05 · 证据归属：A 的 opId 不能被 B 认领 ---------------- */
+
+test('R1-02-05 op 证据属于另一个项目 → 不得认领为"本项目已移除"', async () => {
+  const h = makeHarness();
+  const p = h.remover.remove('p-a');
+  h.removeDeferred().resolve({ status: 'REJECTED', errorCode: null, message: 'timeout', httpStatus: 0 });
+  await flush();
+  // 这个 opId 的持久证据其实属于另一个项目
+  h.queryDeferred().resolve({ status: 'APPLIED', opId: 'op-fixed-0001', outcome: 'revoked', projectId: 'p-other' });
+  await flush();
+  assert.equal(h.getListCalls(), 1, '归属不符 → 只能按未知处理并刷新列表');
+  h.listDeferred().resolve([{ projectId: 'p-a', name: 'A', status: 'READY' }]);
+  const result = await p;
+
+  assert.equal(result.kind, 'unknown', '不得把别的项目的撤销证据算成本次移除');
+  assert.deepEqual(h.removed, [], '不得在本地移除 p-a');
+});
+
+test('R1-03-07 PROJECT_REMOVED 收掉被移除项目的标签，其它项目的标签/草稿原样保留', () => {
+  const tab = (docId: string, projectId: string | null, buffer: string, dirty: boolean) => ({
+    docId,
+    projectId,
+    path: `${docId}.md`,
+    title: docId,
+    extension: '.md',
+    buffer,
+    dirty,
+    mode: 'live' as const,
+    sessionId: `s-${docId}`,
+    viewId: `v-${docId}`,
+    baseVersion: 'v1',
+    revision: 1,
+    documentState: dirty ? 'EDITING_DIRTY' : 'CLEAN',
+    saving: false,
+    lastStatus: (dirty ? 'UNKNOWN' : 'COMMITTED') as 'COMMITTED' | 'UNKNOWN',
+    errorCode: null,
+  });
+  const before = {
+    ...INITIAL_STATE,
+    mode: 'live' as const,
+    workspaceMode: 'multi' as const,
+    projects: [
+      { projectId: 'p-a', name: 'A', status: 'READY' as const },
+      { projectId: 'p-b', name: 'B', status: 'READY' as const },
+    ],
+    tabs: [tab('a1', 'p-a', 'draft-a', true), tab('b1', 'p-b', 'draft-b', true)],
+    panes: { primary: { docId: 'a1', mode: 'editor' as const }, secondary: { docId: null, mode: 'preview' as const } },
+  };
+  const next = workspaceReducer(before, { type: 'PROJECT_REMOVED', projectId: 'p-a' });
+
+  assert.deepEqual(next.tabs.map((t) => t.docId), ['b1'], '被移除项目的标签必须收掉');
+  assert.equal(next.tabs[0].buffer, 'draft-b', '其它项目的草稿内容不得被改动');
+  assert.equal(next.tabs[0].dirty, true, '其它项目的未保存状态不得被清掉');
+  assert.notEqual(next.panes.primary.docId, 'a1', '窗格不得继续指向已经不存在的标签');
+  assert.equal(next.panes.primary.docId, 'b1');
 });
 
 test('PROJECT_REMOVED 只清被移除项目：其它项目树/展开/选中引用不变，活动项目回退', () => {

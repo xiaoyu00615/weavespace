@@ -1,0 +1,49 @@
+{
+  "twoProjects": [
+    "tree01-proj1",
+    "tree01-proj2"
+  ],
+  "workspaceKeyBefore": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+  "lastRecordBefore": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+  "diskBefore": {
+    "readme1": "042cba86e8620e759a28a01cae9023aac461eeb9858a1fada9603fd23ca11c35",
+    "guide1": "86e52230f7551620deaece529b480ba3b909c30f25c98bb82772d07821c486dc",
+    "readme2": "6d860554846987d90e12a902d594a3567ab63264c9a9d02a580924bf7d988ecc"
+  },
+  "removeBlockedByNetwork": true,
+  "phaseAfterNetworkFailure": "result",
+  "textAfterNetworkFailure": "移除项目「tree01-proj1」无法确认本次移除是否生效：已按操作编号查询并重新读取项目列表，请人工核对（不会自动重试移除）好的",
+  "stuckInRemoving": false,
+  "projectsAfterNetworkFailure": [
+    "tree01-proj1",
+    "tree01-proj2"
+  ],
+  "removeUnblocked": true,
+  "readyPhase": "ready",
+  "projectsAfterRemove": [
+    "tree01-proj2"
+  ],
+  "workspaceKeyAfter": "df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+  "workspaceKeyChanged": true,
+  "lastRecordAfter": "df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+  "lastRecordMatchesHost": true,
+  "oldRecordCleared": true,
+  "recordKeys": [
+    "ws:workspace:v1:record:82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+    "ws:workspace:v1:record:df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498"
+  ],
+  "openSecondProjectFile": "OK",
+  "tabCountAfterReopen": 1,
+  "secondProjectTreeLoaded": true,
+  "diskAfter": {
+    "readme1": "042cba86e8620e759a28a01cae9023aac461eeb9858a1fada9603fd23ca11c35",
+    "guide1": "86e52230f7551620deaece529b480ba3b909c30f25c98bb82772d07821c486dc",
+    "readme2": "6d860554846987d90e12a902d594a3567ab63264c9a9d02a580924bf7d988ecc"
+  },
+  "diskUnchanged": true,
+  "afterReload": [
+    "tree01-proj2"
+  ],
+  "afterReloadLastRecord": "df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+  "afterReloadKey": "df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498"
+}

@@ -246,9 +246,19 @@ export type RemoveProjectOutcome =
   | { status: 'ABORTED'; projectId: string; blockedBy: RemoveBlockerCode[] }
   | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
 
-/** `opId` 的持久证据结论（ADR-022 §7.1）；`unknown` 时不得反推具体结果。 */
+/**
+ * `opId` 的持久证据结论（ADR-022 §7.1）；`unknown` 时不得反推具体结果。
+ *
+ * `projectId` 是该证据**归属的项目**（`unknown` 时恒为 `null`）：调用方必须比对
+ * 它才能认领结果，否则"另一个项目的撤销证据"会被错算成本次移除。
+ */
 export type RemovalOpOutcome =
-  | { status: 'APPLIED'; opId: string; outcome: 'revoked' | 'created' | 'aborted' | 'unknown' }
+  | {
+      status: 'APPLIED';
+      opId: string;
+      outcome: 'revoked' | 'created' | 'aborted' | 'unknown';
+      projectId: string | null;
+    }
   | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
 
 export interface WeaveSpaceClient {
@@ -745,12 +755,28 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       } catch {
         return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED', message: '无法获取会话令牌', httpStatus: 403 };
       }
-      const { httpStatus, body } = await request(baseUrl, '/api/projects/remove', {
-        method: 'POST',
-        headers: { 'x-ws-token': token },
-        // 确认字段是硬性契约：缺失即 400；opId 由调用方先落定，超时后才能查证据
-        body: JSON.stringify({ projectId, confirm: 'remove-from-workspace', opId }),
-      });
+      let response: { httpStatus: number; body: ApiEnvelope };
+      try {
+        response = await request(baseUrl, '/api/projects/remove', {
+          method: 'POST',
+          headers: { 'x-ws-token': token },
+          // 确认字段是硬性契约：缺失即 400；opId 由调用方先落定，超时后才能查证据
+          body: JSON.stringify({ projectId, confirm: 'remove-from-workspace', opId }),
+        });
+      } catch {
+        /**
+         * 断线 / AbortError（20s 超时）/ 代理重置：请求**可能已经到达 Host**。
+         * 这里不能抛：调用方需要拿到"结果不明"这个结论，才能用同一个 `opId`
+         * 去查持久证据。抛出去只会让界面停在"正在移除…"。
+         */
+        return {
+          status: 'REJECTED' as const,
+          errorCode: 'ERR_OUTCOME_UNKNOWN',
+          message: '网络中断或请求超时，移除结果未知',
+          httpStatus: 0,
+        };
+      }
+      const { httpStatus, body } = response;
       const asRemove = body as {
         outcome?: unknown;
         blockedBy?: unknown;
@@ -790,12 +816,27 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       } catch {
         return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED', message: '无法获取会话令牌', httpStatus: 403 };
       }
-      const { httpStatus, body } = await request(
-        baseUrl,
-        `/api/projects/op?opId=${encodeURIComponent(opId)}`,
-        { headers: { 'x-ws-token': token } },
-      );
-      const asOp = body as { outcome?: unknown; errorCode?: string | null; message?: string };
+      let response: { httpStatus: number; body: ApiEnvelope };
+      try {
+        response = await request(baseUrl, `/api/projects/op?opId=${encodeURIComponent(opId)}`, {
+          headers: { 'x-ws-token': token },
+        });
+      } catch {
+        // 只读查询失败同样是"没有证据"，不抛：调用方会退到"只读刷新列表 + 人工核对"
+        return {
+          status: 'REJECTED' as const,
+          errorCode: 'ERR_STORAGE_IO',
+          message: '无法查询操作结果',
+          httpStatus: 0,
+        };
+      }
+      const { httpStatus, body } = response;
+      const asOp = body as {
+        outcome?: unknown;
+        projectId?: unknown;
+        errorCode?: string | null;
+        message?: string;
+      };
       if (
         httpStatus === 200 &&
         (asOp.outcome === 'revoked' ||
@@ -803,7 +844,13 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
           asOp.outcome === 'aborted' ||
           asOp.outcome === 'unknown')
       ) {
-        return { status: 'APPLIED' as const, opId, outcome: asOp.outcome };
+        return {
+          status: 'APPLIED' as const,
+          opId,
+          outcome: asOp.outcome,
+          // 归属由 Host 的持久证据给出；缺失即视为"没有归属"，调用方不得据此认领
+          projectId: typeof asOp.projectId === 'string' && asOp.projectId !== '' ? asOp.projectId : null,
+        };
       }
       return {
         status: 'REJECTED' as const,

@@ -421,9 +421,29 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         return next;
       };
       const fallback = projects.find((project) => project.status === 'READY')?.projectId ?? null;
+      /**
+       * 被移除项目的标签必须一起收掉（R1-03）。
+       *
+       * 否则下一次自动保存会把"已不存在项目的标签"写进新摘要的记录里：下次启动
+       * 逐个重开时必然失败，用户会看到一批打不开的标签。其它项目的标签、
+       * 草稿与选中状态**原样保留**——这里只按 `projectId` 精确过滤。
+       */
+      const tabs = state.tabs.filter((tab) => tab.projectId !== removed);
+      const panes = { ...state.panes };
+      if (tabs.length !== state.tabs.length) {
+        const nextDocId = tabs.length > 0 ? tabs[0].docId : null;
+        (['primary', 'secondary'] as const).forEach((pane) => {
+          const docId = panes[pane].docId;
+          if (docId && !tabs.some((tab) => tab.docId === docId)) {
+            panes[pane] = { ...panes[pane], docId: nextDocId };
+          }
+        });
+      }
       return {
         ...state,
         projects,
+        tabs,
+        panes,
         activeProjectId:
           state.activeProjectId === removed ? fallback : state.activeProjectId,
         resourcesByProject: drop(state.resourcesByProject),

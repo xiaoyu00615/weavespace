@@ -8,7 +8,7 @@
  * - 不得自动关闭未保存文件、丢弃草稿或强制保存；
  * - 只有 Host 明确撤销后才从列表移除；结果不确定时提示人工核对，**不自动重试**。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ProjectSummary, RemoveBlockerCode } from '../client/client-api.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
@@ -48,6 +48,13 @@ export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
     setResult(null);
   }, []);
 
+  /**
+   * 在途标记用 ref（而不是 `phase`）：`setPhase('removing')` 要等一次渲染才生效，
+   * 手快连点两次会在同一个 tick 里都读到 `phase === 'ready'`，从而发出两次确认。
+   * 编排层还有一层"同项目复用同一 promise"的兜底，两处都不依赖渲染时序。
+   */
+  const confirming = useRef(false);
+
   const open = useCallback(async () => {
     setPhase('checking');
     setBlocked(null);
@@ -66,17 +73,38 @@ export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
   }, [actions, project.projectId]);
 
   const confirm = useCallback(async () => {
-    if (phase !== 'ready') return;
+    if (phase !== 'ready' || confirming.current) return;
+    confirming.current = true;
     setPhase('removing');
-    const outcome: RemoveUiResult = await actions.removeProject(project.projectId);
+    let outcome: RemoveUiResult;
+    try {
+      outcome = await actions.removeProject(project.projectId);
+    } catch {
+      /**
+       * 兜底：编排层已经把断线/超时收敛成 `unknown`，这里再挡一层，
+       * 保证模态绝不会永久停在"正在移除…"（用户连"好的"都点不到）。
+       */
+      setResult({
+        tone: 'warn',
+        title: '移除结果待核对',
+        body: '与本地服务的连接中断，无法确认本次移除是否生效。请刷新页面核对（不会自动重试移除）。',
+      });
+      setPhase('result');
+      return;
+    } finally {
+      confirming.current = false;
+    }
     if (outcome.kind === 'removed') {
       // 项目已从列表移除：组件会随 ProjectRoot 卸载；这里收敛状态即可
       setResult({
-        tone: outcome.configPersisted ? 'ok' : 'warn',
+        tone: outcome.configPersisted === false ? 'warn' : 'ok',
         title: '已移除项目',
-        body: outcome.configPersisted
-          ? '该项目已从工作台移除。磁盘上的文件没有被删除或修改。'
-          : '撤销已生效，项目已不可访问；配置补写待完成，磁盘上的文件没有被删除。',
+        body:
+          outcome.configPersisted === false
+            ? '撤销已生效，项目已不可访问；配置补写待完成，磁盘上的文件没有被删除。'
+            : outcome.configPersisted === null
+              ? '该项目已从工作台移除（已按操作编号核对：撤销生效）。磁盘上的文件没有被删除或修改。'
+              : '该项目已从工作台移除。磁盘上的文件没有被删除或修改。',
       });
       setPhase('result');
       return;
@@ -95,7 +123,7 @@ export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
     setResult({
       tone: 'error',
       title: '未能移除',
-      body: outcome.kind === 'unsupported' ? outcome.message : outcome.message,
+      body: outcome.message,
     });
     setPhase('result');
   }, [actions, phase, project.projectId]);

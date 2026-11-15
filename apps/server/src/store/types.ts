@@ -34,6 +34,17 @@ export interface StoreLoadState {
 export type OpOutcome = 'created' | 'revoked' | 'aborted' | 'unknown';
 
 /**
+ * `opId` 的持久证据 + **归属**（UX-02B-04B-R1）。
+ *
+ * 只有归属对上，调用方才能把"撤销已生效"这个结论算到自己这次操作上；
+ * 没有证据时 `projectId` 恒为 `null`——不得用"项目现在在不在"反推归属。
+ */
+export interface OpEvidence {
+  readonly outcome: OpOutcome;
+  readonly projectId: string | null;
+}
+
+/**
  * 撤销提交回执。
  *
  * `configPersisted === false` 表示墓碑已生效但配置补写失败

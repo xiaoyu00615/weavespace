@@ -28,8 +28,13 @@ export interface RemoveProjectPort {
 }
 
 export type RemoveUiResult =
-  /** Host 明确撤销（或在 op 证据里命中本次 opId）：项目已从工作台移除。 */
-  | { kind: 'removed'; projectId: string; configPersisted: boolean }
+  /**
+   * Host 明确撤销（或在 op 证据里命中本次 opId）：项目已从工作台移除。
+   *
+   * `configPersisted` 为 `null` 表示**只拿到了墓碑证据**（响应在网络上丢了）：
+   * 撤销已生效，但配置文件是否补齐无法从证据里读出，因此不替 Host 宣称"已保存"。
+   */
+  | { kind: 'removed'; projectId: string; configPersisted: boolean | null }
   /** Host 复检未通过：零变更，附阻断原因。 */
   | { kind: 'blocked'; projectId: string; blockedBy: RemoveBlockerCode[]; state: string }
   /** 当前运行模式不支持（Demo / 静态 / Legacy）。 */
@@ -75,61 +80,114 @@ function defaultNewOpId(): string {
 }
 
 export function createProjectRemover(host: RemoveProjectHost): ProjectRemover {
+  /**
+   * 同一次移除只允许一个在途提交。
+   *
+   * 双重确认（手快点了两次、或模态重新渲染后再点一次）必须复用同一次提交：
+   * 既不能并发发出多个 remove，也不能用同一个 opId 提交两次（Host 会按
+   * "opId 已被占用"拒绝，界面反而会显示一次莫名的失败）。
+   */
+  const inflight = new Map<string, Promise<RemoveUiResult>>();
+
+  /**
+   * 结果不明（响应丢失 / 断线 / 5xx）时的收敛路径。
+   *
+   * 只有一个动作序列，**绝不重发 remove**：
+   * 1. 用提交前落定的 opId 做**一次**只读证据查询；
+   * 2. 证据命中且归属本项目 → 判为已移除（`configPersisted` 记为未知）；
+   * 3. 否则只读刷新项目列表，返回 unknown 并提示人工核对。
+   */
+  const reconcileUnknown = async (
+    projectId: string,
+    opId: string,
+    epoch: number,
+  ): Promise<RemoveUiResult> => {
+    const op = await host.port.queryRemovalOp(opId).catch(
+      (): RemovalOpOutcome => ({
+        status: 'REJECTED',
+        errorCode: null,
+        message: '查询失败',
+        httpStatus: 0,
+      }),
+    );
+    if (!host.isCurrent(epoch)) return { kind: 'unknown', projectId, message: STALE_MESSAGE };
+
+    // 归属必须对上：别的项目（甚至上一次事务）的 revoked 不能算成这次移除
+    if (op.status === 'APPLIED' && op.outcome === 'revoked' && op.projectId === projectId) {
+      host.onRemoved(projectId);
+      return { kind: 'removed', projectId, configPersisted: null };
+    }
+
+    try {
+      const projects = await host.port.listProjects();
+      if (host.isCurrent(epoch)) host.onProjects(projects);
+    } catch {
+      /* 刷新失败也照样返回 unknown：不能因为刷新失败就谎报成功 */
+    }
+    return { kind: 'unknown', projectId, message: UNKNOWN_MESSAGE };
+  };
+
+  const runRemove = async (projectId: string): Promise<RemoveUiResult> => {
+    const start = host.identity();
+    if (start.mode !== 'live') {
+      return { kind: 'unsupported', message: '演示模式没有真实项目，无法移除' };
+    }
+    const epoch = start.epoch;
+    // 幂等键在**提交前**落定：这样结果丢失后仍能按它查询持久证据
+    const opId = host.newOpId();
+
+    let result: RemoveProjectOutcome;
+    try {
+      result = await host.port.removeProject(projectId, opId);
+    } catch {
+      // 断线 / AbortError / 请求超时：一律按"结果不明"收敛，
+      // 绝不把异常抛给界面（否则模态会永久停在"正在移除…"）
+      return reconcileUnknown(projectId, opId, epoch);
+    }
+
+    // 提交期间用户切走：不把结果写进新工作区（也不清缓存）
+    if (!host.isCurrent(epoch)) return { kind: 'unknown', projectId, message: STALE_MESSAGE };
+
+    if (result.status === 'APPLIED') {
+      host.onRemoved(result.projectId);
+      return { kind: 'removed', projectId: result.projectId, configPersisted: result.configPersisted };
+    }
+    if (result.status === 'ABORTED') {
+      return { kind: 'blocked', projectId, blockedBy: result.blockedBy, state: 'ACTIVE' };
+    }
+
+    // ---- REJECTED：可能是超时 / 5xx / 未知；绝不据此断言"已移除"，也绝不自动重试 ----
+    if (result.httpStatus === 501) {
+      return { kind: 'unsupported', message: result.message || '当前运行模式不支持移除项目' };
+    }
+
+    // 提交已被 Host 明确拒绝且**零变更**（opId 冲突 / 项目已不存在等）：
+    // 这类结论不需要查证据，也不该刷新列表把界面改成"好像成功过"。
+    if (
+      result.errorCode === 'ERR_OP_ID_CONFLICT' ||
+      result.errorCode === 'ERR_PROJECT_NOT_FOUND' ||
+      result.httpStatus === 400 ||
+      result.httpStatus === 409
+    ) {
+      return { kind: 'failed', message: result.message || UNKNOWN_MESSAGE };
+    }
+
+    return reconcileUnknown(projectId, opId, epoch);
+  };
+
   return {
     precheck(projectId) {
       return host.port.removalPrecheck(projectId);
     },
 
-    async remove(projectId) {
-      const start = host.identity();
-      if (start.mode !== 'live') {
-        return { kind: 'unsupported', message: '演示模式没有真实项目，无法移除' };
-      }
-      const epoch = start.epoch;
-      // 幂等键在**提交前**落定：这样结果丢失后仍能按它查询持久证据
-      const opId = host.newOpId();
-
-      const result = await host.port.removeProject(projectId, opId);
-
-      // 提交期间用户切走：不把结果写进新工作区（也不清缓存）
-      if (!host.isCurrent(epoch)) return { kind: 'unknown', projectId, message: STALE_MESSAGE };
-
-      if (result.status === 'APPLIED') {
-        host.onRemoved(result.projectId);
-        return { kind: 'removed', projectId: result.projectId, configPersisted: result.configPersisted };
-      }
-      if (result.status === 'ABORTED') {
-        return { kind: 'blocked', projectId, blockedBy: result.blockedBy, state: 'ACTIVE' };
-      }
-
-      // ---- REJECTED：可能是超时 / 5xx / 未知；绝不据此断言"已移除"，也绝不自动重试 ----
-      if (result.httpStatus === 501) {
-        return { kind: 'unsupported', message: result.message || '当前运行模式不支持移除项目' };
-      }
-
-      // 优先按 opId 查询持久事务证据（只读磁盘）
-      const op = await host.port.queryRemovalOp(opId).catch((): RemovalOpOutcome => ({
-        status: 'REJECTED',
-        errorCode: null,
-        message: '查询失败',
-        httpStatus: 0,
-      }));
-      if (!host.isCurrent(epoch)) return { kind: 'unknown', projectId, message: STALE_MESSAGE };
-
-      if (op.status === 'APPLIED' && op.outcome === 'revoked') {
-        // 持久证据命中本次 opId → 移除确实已生效
-        host.onRemoved(projectId);
-        return { kind: 'removed', projectId, configPersisted: true };
-      }
-
-      // 其余（unknown / 无法查询）：只读刷新列表，明确说明结果仍需人工核对
-      try {
-        const projects = await host.port.listProjects();
-        if (host.isCurrent(epoch)) host.onProjects(projects);
-      } catch {
-        /* 刷新失败也照样返回 unknown：不能因为刷新失败就谎报成功 */
-      }
-      return { kind: 'unknown', projectId, message: UNKNOWN_MESSAGE };
+    remove(projectId) {
+      const existing = inflight.get(projectId);
+      if (existing) return existing;
+      const task = runRemove(projectId).finally(() => {
+        inflight.delete(projectId);
+      });
+      inflight.set(projectId, task);
+      return task;
     },
   };
 }

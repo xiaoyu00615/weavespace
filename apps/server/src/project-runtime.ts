@@ -97,6 +97,13 @@ export interface ProjectStore {
   /** `opId` 的最终结果（只读磁盘；证据缺失即 `unknown`）。 */
   queryOp?(opId: string): OpOutcome;
   /**
+   * 该 `opId` 是否已被持久证据占用（添加或撤销）。
+   *
+   * `opId` 是事务身份：同一个编号不得代表两次变更，否则"撤销已生效"这条证据
+   * 会同时被两个项目认领。缺省（fake Store）视为"从不冲突"，与 02B-01 一致。
+   */
+  opIdUsed?(opId: string): boolean;
+  /**
    * 已签发过的 id（含已撤销）。Runtime 启动时**必须**继承它，
    * 否则重启后会把旧 id 当成"从未签发"而重新分配（P0-02）。
    */
@@ -715,11 +722,21 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     err: unknown,
   ): Error {
     const commitState = (err as { commitState?: StoreCommitState } | undefined)?.commitState;
+    const code = (err as { errorCode?: string } | undefined)?.errorCode;
     // 提交前的可信性复核失败（日志缺失/断裂/无法核对）：零变更，
     // 但**必须**把 Store 的受限结论原样抛给调用方，不能降级成"可重试的持久化失败"。
-    if ((err as { errorCode?: string } | undefined)?.errorCode === ERROR_CODES.ERR_STORE_RESTRICTED) {
+    if (code === ERROR_CODES.ERR_STORE_RESTRICTED) {
       entry.state = previousState;
       return err instanceof Error ? err : domainError(ERROR_CODES.ERR_STORE_RESTRICTED, '存储处于受限状态');
+    }
+    // opId 冲突：Store 在写入**之前**就拒绝了，零变更，绝不能落成 REVOKE_UNKNOWN
+    // （那会让一个完全正常的项目被永久拒盘）。
+    if (code === ERROR_CODES.ERR_OP_ID_CONFLICT) {
+      entry.state = previousState;
+      return domainError(
+        ERROR_CODES.ERR_OP_ID_CONFLICT,
+        '操作编号已被另一次变更占用，本次撤销未提交（零变更），请重新发起',
+      );
     }
     if (commitState === 'not-committed') {
       entry.state = previousState;
@@ -921,6 +938,17 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       // 上一次撤销的提交结果还不可证：不允许再提交一次（会伪造第二条持久证据）
       if (entry.state === 'REVOKE_UNKNOWN') throw revokeUnknownError(projectId);
 
+      // ---- opId 唯一归属（R1-02）----
+      // 编号在**屏障之前**就确定：冲突必须零变更（不进入 QUIESCING、不建任何屏障），
+      // 这样一次重复确认不会把正常项目拖进"移除中"的中间状态。
+      const opId = opts?.opId ?? `op-${randomUUID()}`;
+      if (deps.store.opIdUsed?.(opId)) {
+        throw domainError(
+          ERROR_CODES.ERR_OP_ID_CONFLICT,
+          '操作编号已被另一次变更占用，请重新发起（本次未做任何变更）',
+        );
+      }
+
       mutating = true;
       try {
         // ---- 屏障：先关门，再等在途操作结束 ----
@@ -944,8 +972,6 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
 
         // ---- 提交点：墓碑 fsync（真实 Store）；fake Store 只有内存提交 ----
         entry.state = 'REMOVING';
-        // 调用方已先落定 opId 时沿用它（超时后可用它查询持久证据）；否则自行签发。
-        const opId = opts?.opId ?? `op-${randomUUID()}`;
         let receipt: StoreRevokeReceipt | undefined;
         try {
           const result = await deps.store.commitRevoke({ projectId, opId });

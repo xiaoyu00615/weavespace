@@ -46,7 +46,13 @@ function sha(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 
-async function makeStore(base: string, rootA: string, rootB: string): Promise<string> {
+async function makeStore(
+  base: string,
+  rootA: string,
+  rootB: string,
+  /** R1-02：让某个项目带上"添加事务"的 opId（`createdByOp`），用于跨事务复用测试。 */
+  opts: { createdByOp?: string } = {},
+): Promise<string> {
   const storeDir = join(base, 'store');
   await mkdir(storeDir, { recursive: true });
   const mk = (projectId: string, name: string, rootDir: string) => ({
@@ -57,6 +63,7 @@ async function makeStore(base: string, rootA: string, rootB: string): Promise<st
     rootToken: rootTokenOf(rootDir),
     grantedAt: '2026-11-15T00:00:00.000Z',
     grantSource: 'os-dialog',
+    ...(projectId === PROJ_B && opts.createdByOp ? { createdByOp: opts.createdByOp } : {}),
   });
   const file = serializeConfig({
     version: 2,
@@ -70,7 +77,10 @@ async function makeStore(base: string, rootA: string, rootB: string): Promise<st
   return storeDir;
 }
 
-async function withRemoval(fn: (ctx: RemovalCtx) => Promise<void>): Promise<void> {
+async function withRemoval(
+  fn: (ctx: RemovalCtx) => Promise<void>,
+  opts: { createdByOp?: string } = {},
+): Promise<void> {
   const base = await mkdtemp(join(tmpdir(), 'ws-ux04b-'));
   const rootA = join(base, 'project-a');
   const rootB = join(base, 'project-b');
@@ -80,7 +90,7 @@ async function withRemoval(fn: (ctx: RemovalCtx) => Promise<void>): Promise<void
   await writeFile(join(rootA, 'docs', 'guide.md'), '# guide\n', 'utf8');
   await writeFile(join(rootB, 'readme.md'), '# B readme\n', 'utf8');
 
-  const storeDir = await makeStore(base, rootA, rootB);
+  const storeDir = await makeStore(base, rootA, rootB, opts);
   let server = await createShellServer({
     port: 0,
     managedStore: { dir: storeDir, picker: createFakePicker([{ status: 'cancelled' }]) },
@@ -309,5 +319,130 @@ test('PB-07 重启 Host 后：已移除项目不复活，另一个项目仍在',
       await restarted.close();
     }
     // h.server 已关闭；withRemoval 的 finally 对二次 close 容错
+  });
+});
+
+/* --------------------------- R1-02 · opId 唯一归属 --------------------------- */
+
+test('R1-02-01 同一 opId 不得用于另一个项目的撤销（409 + 零变更 + 只有一条墓碑）', async () => {
+  await withRemoval(async (h) => {
+    const first = await h.post('/api/projects/remove', {
+      projectId: PROJ_A,
+      confirm: 'remove-from-workspace',
+      opId: 'op-shared-0001',
+    });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.outcome, 'revoked');
+
+    // 复用同一个 opId 去撤销另一个项目：必须被拒，且不能写入第二条墓碑
+    const second = await h.post('/api/projects/remove', {
+      projectId: PROJ_B,
+      confirm: 'remove-from-workspace',
+      opId: 'op-shared-0001',
+    });
+    assert.equal(second.status, 409, JSON.stringify(second.body));
+    assert.equal(second.body.errorCode, 'ERR_OP_ID_CONFLICT');
+
+    const list = await h.get('/api/projects');
+    assert.deepEqual(
+      (list.body.projects as { projectId: string }[]).map((p) => p.projectId),
+      [PROJ_B],
+      '被拒的项目必须仍然存在',
+    );
+    assert.equal(existsSync(join(h.rootB, 'readme.md')), true);
+
+    const log = await readFile(join(h.storeDir, 'revocations.jsonl'), 'utf8').catch(() => '');
+    const hits = log.split('\n').filter((line) => line.includes('op-shared-0001'));
+    assert.equal(hits.length, 1, '同一个 opId 只能有一条撤销证据');
+
+    // 证据归属仍是 A：不能被 B 认领
+    const op = await h.get('/api/projects/op?opId=op-shared-0001');
+    assert.equal(op.body.outcome, 'revoked');
+    assert.equal(op.body.projectId, PROJ_A, 'op 证据必须带归属项目');
+  });
+});
+
+test('R1-02-02 op 查询返回证据归属：未知 opId 的归属必须为 null', async () => {
+  await withRemoval(async (h) => {
+    const res = await h.post('/api/projects/remove', {
+      projectId: PROJ_A,
+      confirm: 'remove-from-workspace',
+      opId: 'op-owner-0001',
+    });
+    assert.equal(res.body.outcome, 'revoked');
+
+    const hit = await h.get('/api/projects/op?opId=op-owner-0001');
+    assert.equal(hit.body.outcome, 'revoked');
+    assert.equal(hit.body.projectId, PROJ_A);
+
+    const miss = await h.get('/api/projects/op?opId=op-owner-never-0002');
+    assert.equal(miss.body.outcome, 'unknown');
+    assert.equal(miss.body.projectId, null, '没有证据时不得给出任何归属');
+  });
+});
+
+test('R1-02-03 已被"添加事务"使用的 opId 不得再用于撤销（409 + 项目与证据都不变）', async () => {
+  await withRemoval(
+    async (h) => {
+      const res = await h.post('/api/projects/remove', {
+        projectId: PROJ_A,
+        confirm: 'remove-from-workspace',
+        opId: 'op-add-b-0001',
+      });
+      assert.equal(res.status, 409, JSON.stringify(res.body));
+      assert.equal(res.body.errorCode, 'ERR_OP_ID_CONFLICT');
+
+      const list = await h.get('/api/projects');
+      assert.equal((list.body.projects as unknown[]).length, 2, '两个项目都必须还在');
+
+      const op = await h.get('/api/projects/op?opId=op-add-b-0001');
+      assert.equal(op.body.outcome, 'created', '证据仍是那次添加事务');
+      assert.equal(op.body.projectId, PROJ_B);
+    },
+    { createdByOp: 'op-add-b-0001' },
+  );
+});
+
+test('R1-02-04 重启后重复使用同一 opId 仍被拒（持久证据优先于进程内状态）', async () => {
+  await withRemoval(async (h) => {
+    const first = await h.post('/api/projects/remove', {
+      projectId: PROJ_A,
+      confirm: 'remove-from-workspace',
+      opId: 'op-restart-0001',
+    });
+    assert.equal(first.body.outcome, 'revoked');
+
+    await h.server.close();
+    const restarted = await createShellServer({
+      port: 0,
+      managedStore: { dir: h.storeDir, picker: createFakePicker([{ status: 'cancelled' }]) },
+    });
+    h.server = restarted;
+    try {
+      const tokenRes = await fetch(`${restarted.url}/api/session-token`);
+      const token = ((await tokenRes.json()) as { token?: string }).token ?? '';
+      const again = await fetch(`${restarted.url}/api/projects/remove`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-ws-token': token,
+          origin: new URL(restarted.url).origin,
+        },
+        body: JSON.stringify({
+          projectId: PROJ_B,
+          confirm: 'remove-from-workspace',
+          opId: 'op-restart-0001',
+        }),
+      });
+      assert.equal(again.status, 409, '重启后仍必须识别出这个 opId 已被使用');
+      const body = (await again.json()) as { errorCode?: string };
+      assert.equal(body.errorCode, 'ERR_OP_ID_CONFLICT');
+
+      const listRes = await fetch(`${restarted.url}/api/projects`);
+      const listBody = (await listRes.json()) as { projects?: { projectId: string }[] };
+      assert.deepEqual((listBody.projects ?? []).map((p) => p.projectId), [PROJ_B]);
+    } finally {
+      await restarted.close();
+    }
   });
 });

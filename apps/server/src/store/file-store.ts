@@ -32,6 +32,7 @@ import { parseConfig, serializeConfig, type ConfigRevokedEntry, type ConfigState
 import { appendRevocation, headerLine, readLog, type LogReadResult } from './revocation-log.ts';
 import type {
   ConfigSource,
+  OpEvidence,
   OpOutcome,
   StoreIntegrity,
   StoreLoadState,
@@ -63,6 +64,14 @@ export interface FileProjectStore {
   commitRename(input: { projectId: string; name: string; opId: string }): Promise<void>;
   commitRevoke(input: { projectId: string; opId: string }): Promise<StoreRevokeReceipt>;
   queryOp(opId: string): OpOutcome;
+  /** 证据 + 归属（只读磁盘）：`unknown` 时归属恒为 `null`。 */
+  opEvidence(opId: string): OpEvidence;
+  /**
+   * 该 `opId` 是否已被持久证据占用（添加的 `createdByOp` 或撤销墓碑）。
+   *
+   * `opId` 是事务身份，不是可复用的关联字段：同一个编号不得代表两次变更。
+   */
+  opIdUsed(opId: string): boolean;
   /** 供 Runtime 在"持久化成功但内存提交失败"时降级（ADR-022 §4.4）。 */
   markDegraded(reason: string): void;
   close(): void;
@@ -477,6 +486,74 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     return project;
   }
 
+  /**
+   * `opId` 的唯一归属（R1-02）。
+   *
+   * 依次在"配置里已登记的添加事务"、"配置里已声明的撤销"、"日志里的墓碑"里找。
+   * 三处都要查：配置补写失败时墓碑只存在于日志，重启后仍必须认出这个编号被用过。
+   */
+  function opClaimant(
+    opId: string,
+    logNow?: LogReadResult,
+  ): { projectId: string; kind: 'created' | 'revoked' } | null {
+    const created = current.projects.find((project) => project.createdByOp === opId);
+    if (created) return { projectId: created.projectId, kind: 'created' };
+    const revoked = current.revoked.find((entry) => entry.opId === opId);
+    if (revoked) return { projectId: revoked.projectId, kind: 'revoked' };
+    const log = logNow ?? readLogSafe();
+    if (log && log.status === 'ok') {
+      const tomb = log.entries.find((entry) => entry.opId === opId);
+      if (tomb) return { projectId: tomb.projectId, kind: 'revoked' };
+    }
+    return null;
+  }
+
+  /** `opId` 已被占用：明确拒绝（零变更），绝不能被当成"可重试的持久化失败"。 */
+  function opConflictError(
+    opId: string,
+    claimant: { projectId: string; kind: 'created' | 'revoked' },
+  ): Error {
+    return Object.assign(
+      new Error(
+        `操作编号 ${opId} 已被项目 ${claimant.projectId} 的${claimant.kind === 'created' ? '添加' : '撤销'}事务占用`,
+      ),
+      { errorCode: ERROR_CODES.ERR_OP_ID_CONFLICT, opConflict: true },
+    );
+  }
+
+  /**
+   * 只读磁盘上的 `opId` 证据 + 归属（ADR-022 §7.1 / R1-02）。
+   *
+   * 结论必须**跨进程一致**：因此只看磁盘（配置主副 + 撤销日志），不看任何内存态。
+   * 没有证据时归属恒为 `null`——绝不按"项目现在还在不在"猜归属或猜结果。
+   *
+   * 读不到磁盘时同样返回 `unknown`（"没有可核对的证据"），**不抛**：这个方法
+   * 也会被撤销前的预检调用，抛出去会把"存储受限"变成一次莫名其妙的 I/O 异常。
+   * 真正的 fail-closed 仍然发生在提交点——`commitRevoke` 在写盘前会重新做
+   * `assertMutationsAllowed()`，那一步才把 `ERR_STORE_RESTRICTED` 交给调用方。
+   */
+  function opEvidenceOf(opId: string): OpEvidence {
+    try {
+      const primary = readPrimary();
+      const parsed = primary ?? readBackup();
+      if (parsed) {
+        const created = parsed.state.projects.find((project) => project.createdByOp === opId);
+        if (created) return { outcome: 'created', projectId: created.projectId };
+        const revoked = parsed.state.revoked.find((entry) => entry.opId === opId);
+        if (revoked) return { outcome: 'revoked', projectId: revoked.projectId };
+      }
+      const log = readLog(io.readText(LOG_PATH));
+      if (log.status === 'ok') {
+        const tomb = log.entries.find((entry) => entry.opId === opId);
+        if (tomb) return { outcome: 'revoked', projectId: tomb.projectId };
+      }
+    } catch {
+      // 磁盘暂时读不到：没有可核对的证据。提交点会按存储状态单独把关。
+      return { outcome: 'unknown', projectId: null };
+    }
+    return { outcome: 'unknown', projectId: null };
+  }
+
   function applyConfig(next: ConfigState): void {
     current = next;
     projects = next.projects.map((project) => toRecord(project));
@@ -552,6 +629,12 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       assertOpen();
       const logNow = assertMutationsAllowed();
       assertProjectKnown(input.projectId);
+
+      // ---- opId 唯一归属：写任何字节之前就拒绝（R1-02）----
+      // 同一个编号代表两次事务会让证据产生歧义：A 的撤销证据会被 B 认领。
+      // 这里必须零变更——既不追加第二条墓碑，也不改动配置。
+      const claimant = opClaimant(input.opId, logNow);
+      if (claimant) throw opConflictError(input.opId, claimant);
 
       const seq = Math.max(current.commitSeq, logNow.lastSeq) + 1;
       const at = clock().toISOString();
@@ -648,16 +731,15 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     },
 
     queryOp(opId) {
-      // 只读磁盘：重启前后结论一致（ADR-022 §7.1）
-      const primary = readPrimary();
-      const parsed = primary ?? readBackup();
-      if (parsed) {
-        if (parsed.state.projects.some((project) => project.createdByOp === opId)) return 'created';
-        if (parsed.state.revoked.some((entry) => entry.opId === opId)) return 'revoked';
-      }
-      const log = readLog(io.readText(LOG_PATH));
-      if (log.status === 'ok' && log.entries.some((entry) => entry.opId === opId)) return 'revoked';
-      return 'unknown';
+      return opEvidenceOf(opId).outcome;
+    },
+
+    opEvidence(opId) {
+      return opEvidenceOf(opId);
+    },
+
+    opIdUsed(opId) {
+      return opEvidenceOf(opId).outcome !== 'unknown';
     },
 
     markDegraded(reason) {
