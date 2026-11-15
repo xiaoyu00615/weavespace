@@ -1,0 +1,87 @@
+{
+  "run": "red3",
+  "picker": "fake-picker（自动化选择器，非 Windows 原生弹窗）",
+  "steps": {
+    "projects": [
+      "ux02c01r1-red3-projA",
+      "ux02c01r1-red3-projB"
+    ],
+    "otherRootExpandedBefore": "true",
+    "r1_01a": {
+      "docsInitiallyCollapsed": true,
+      "rc": "OK",
+      "clicked": "OK",
+      "input": null,
+      "docsExpandedAfter": "false"
+    },
+    "r1_01b": {
+      "rootInitiallyCollapsed": true,
+      "rc": "OK",
+      "clicked": "OK",
+      "input": null,
+      "rootExpandedAfter": "false"
+    },
+    "r1_02_rootExpandedBefore": "true",
+    "r1_02": {
+      "menuLabels": [
+        "新建文件",
+        "新建文件夹",
+        "创建已支持的扩展文件›",
+        "刷新项目根"
+      ],
+      "parentClicked": "OK",
+      "mdClicked": "OK",
+      "initial": {
+        "value": ".md",
+        "focused": true,
+        "selection": [
+          0,
+          0
+        ],
+        "disabled": false
+      },
+      "afterEmptyEnter": {
+        "createRequestsDelta": 1,
+        "dotMdOnDisk": true,
+        "inlineError": null,
+        "inputStillPresent": false
+      },
+      "freeDotFileCreated": true
+    },
+    "otherProjectFiles": [
+      "b.md"
+    ],
+    "otherRootExpandedAfter": "true",
+    "createBodies": [
+      {
+        "url": "/api/files/create",
+        "body": "{\"projectId\":\"ux02c01r1-red3-proja\",\"parentDir\":\"\",\"name\":\".md\"}"
+      },
+      {
+        "url": "/api/files/create",
+        "body": "{\"projectId\":\"ux02c01r1-red3-proja\",\"parentDir\":\"\",\"name\":\".env\"}"
+      }
+    ],
+    "originalASha": "aa1237b773c38dbddef583c4868aaea7a44c5237ea7923aecca5513764b42d80"
+  },
+  "checks": {
+    "R1-01a 折叠文件夹输入行可见": false,
+    "R1-01a 输入行自动聚焦": false,
+    "R1-01a 自动展开目标文件夹": false,
+    "R1-01a Enter 后文件在 docs 内": false,
+    "R1-01a Esc 取消零磁盘变更": false,
+    "R1-01b 折叠项目根输入行可见": false,
+    "R1-01b 输入行自动聚焦": false,
+    "R1-01b 自动展开项目根": false,
+    "R1-01b Enter 后文件在项目根": false,
+    "R1-01b Esc 取消零磁盘变更": false,
+    "R1-02 空主名不提交创建": false,
+    "R1-02 行内提示「请先填写文件名」": false,
+    "R1-02 保留输入供修正": false,
+    "R1-02 填入 notes.md 后正常创建": false,
+    "R1-02 自由输入仍允许合法点文件名": true,
+    "不写入其它项目": true,
+    "不影响其它项目展开态": true
+  },
+  "ok": false
+}

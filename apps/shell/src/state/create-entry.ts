@@ -109,6 +109,89 @@ export function selectionForPreset(draft: string, presetExtension?: string): [nu
   return [0, stemLength];
 }
 
+/**
+ * 预设扩展名模式（UX-02C-01-R1 / R1-02）：**主文件名为空**时不得提交。
+ *
+ * 只在这一种模式下生效：初值 `.md` 只是一个待填的模板，直接 Enter 会生成
+ * 一个名叫 `.md` 的隐藏文件，既不是用户想要的，也很难在文件树里发现。
+ * 自由输入模式没有 `presetExtension`，因此 `.env` / `.gitignore` 这类合法的
+ * 点文件名仍由 Host 通用规则裁决，Shell 不额外加禁。
+ *
+ * 这里**不改** `packages/storage/entry-name.ts`（Host 通用校验与磁盘 API 不变）。
+ */
+export const EMPTY_PRESET_STEM_MESSAGE = '请先填写文件名';
+
+export function missingPresetStem(draft: string, presetExtension?: string): boolean {
+  if (!presetExtension) return false;
+  // 扩展名可能被用户手工改掉：此时剩下的整段就是主名，不能强行要求它带 .md
+  const stem = draft.endsWith(presetExtension)
+    ? draft.slice(0, draft.length - presetExtension.length)
+    : draft;
+  return stem.trim().length === 0;
+}
+
+/**
+ * 层表条目的最小视图：state 层不反向依赖 `components/tree-model.ts`。
+ */
+export interface TreeEntryView {
+  readonly id: string;
+  readonly kind: string;
+  readonly path?: string | null;
+}
+
+export interface TreeLevelsView {
+  readonly [dir: string]: { readonly entries: readonly TreeEntryView[] };
+}
+
+/**
+ * 在已加载的层表里找到目标目录对应的**真实**文件夹节点 id。
+ *
+ * 分页还没加载到的目录返回 `null`：绝不凭路径猜一个 id 去展开幻影节点。
+ */
+export function folderNodeIdOf(levels: TreeLevelsView, dir: string): string | null {
+  if (dir === '') return null;
+  for (const level of Object.values(levels)) {
+    const found = level.entries.find(
+      (entry) => entry.kind === 'folder' && (entry.path ?? '') === dir,
+    );
+    if (found) return found.id;
+  }
+  return null;
+}
+
+export interface CreateExpansionPlan {
+  /** 需要打开的项目根容器（Multi 的项目 id）；本阶段创建只在托管 Multi 可用。 */
+  readonly rootProjectId: string | null;
+  /** 需要**幂等**展开的文件夹节点 id；`null` = 目标就是项目根。 */
+  readonly folderNodeId: string | null;
+}
+
+/**
+ * 创建开始时的可见性计划（UX-02C-01-R1 / R1-01）。
+ *
+ * 行内输入行只在展开的目录里渲染，所以 `beginCreate` 必须同时保证：
+ * 1. 项目根容器是打开的（折叠的项目根右键创建同样要看得见输入框）；
+ * 2. 目标文件夹是展开的（折叠的 docs 右键创建要立刻看到输入框）。
+ *
+ * 这里只返回**幂等展开**所需的节点：调用方用 `EXPAND_PROJECT_NODE`
+ * （已展开则原样返回 state），绝不能用 `TOGGLE_*`，否则会把本来就展开的
+ * 目录折叠回去。右键文件夹行时 `nodeId` 直接来自该行，最精确；
+ * 空白区 / 工具栏走层表查找。
+ */
+export function createExpansionPlan(input: {
+  readonly projectId: string;
+  readonly parentDir: string;
+  readonly levels: TreeLevelsView;
+  readonly nodeId?: string | null;
+}): CreateExpansionPlan {
+  const dir = normalizeDir(input.parentDir);
+  return {
+    rootProjectId: input.projectId,
+    folderNodeId:
+      dir === '' ? null : input.nodeId ?? folderNodeIdOf(input.levels, dir),
+  };
+}
+
 export interface CreateEntryRunnerHost {
   create(input: {
     projectId: string;
@@ -125,13 +208,17 @@ export interface CreateEntryRunnerHost {
 
 export type CreateRunResult = 'applied' | 'rejected' | 'unknown' | 'busy';
 
+/** 提交入参：`presetExtension` 只用于本地预检，绝不进入 Host 请求体。 */
+export interface CreateSubmitInput {
+  readonly projectId: string;
+  readonly parentDir: string;
+  readonly name: string;
+  readonly kind: CreateEntryKindDto;
+  readonly presetExtension?: string;
+}
+
 export interface CreateEntryRunner {
-  submit(input: {
-    projectId: string;
-    parentDir: string;
-    name: string;
-    kind: CreateEntryKindDto;
-  }): Promise<CreateRunResult>;
+  submit(input: CreateSubmitInput): Promise<CreateRunResult>;
   /** 是否正在提交（菜单/输入框据此禁用重复提交）。 */
   busy(): boolean;
 }
@@ -153,14 +240,27 @@ export function createEntryRunner(host: CreateEntryRunnerHost): CreateEntryRunne
       if (inflight) return 'busy';
       inflight = true;
       try {
+        // 纵深防御：即使 UI 漏了预检，预设模式的空主名也绝不发给 Host。
+        // 组件层还会提前拦一次，避免输入框因"提交中"禁用而失焦。
+        if (missingPresetStem(input.name, input.presetExtension)) {
+          host.onNotice(EMPTY_PRESET_STEM_MESSAGE);
+          return 'rejected';
+        }
         const checked = validateEntryName(input.name);
         if (!checked.ok) {
           host.onNotice(checked.message);
           return 'rejected';
         }
+        // 显式拼装请求：presetExtension 等 UI 字段一概不进入 Host
+        const request = {
+          projectId: input.projectId,
+          parentDir: input.parentDir,
+          name: input.name,
+          kind: input.kind,
+        };
         let outcome: CreateEntryOutcome;
         try {
-          outcome = await host.create(input);
+          outcome = await host.create(request);
         } catch {
           // 传输层抛出：同样按"结果不明"收敛，绝不重发
           await host.checkDirectory(input.projectId, input.parentDir).catch(() => {});

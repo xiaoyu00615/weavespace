@@ -15,7 +15,10 @@ import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
 import { supportedFileExtensions, type SupportedExtension } from '../capabilities/supported-extensions.ts';
 import {
   createEntryRunner,
+  createExpansionPlan,
+  EMPTY_PRESET_STEM_MESSAGE,
   initialNamingDraft,
+  missingPresetStem,
   parentDirOf,
   resolveCreateTarget,
   type CreateOrigin,
@@ -30,6 +33,8 @@ export interface TreeTarget {
   readonly projectId: string | null;
   /** folder：自身相对路径；file：文件相对路径。 */
   readonly nodePath?: string | null;
+  /** 右键文件夹行时该行的节点 id：折叠目录中创建可以精确、幂等地展开它。 */
+  readonly nodeId?: string | null;
 }
 
 export interface NamingState {
@@ -58,6 +63,9 @@ interface TreeCommandsValue {
   toolbarCreate(kind: CreateEntryKindDto): void;
   toolbarRefresh(): void;
   noteSelection(projectId: string, kind: 'folder' | 'file', path: string): void;
+  /** 项目根容器的展开态（R1-01）：与创建编排放在同一处，保证开始创建时一定可见。 */
+  isRootOpen(projectId: string): boolean;
+  toggleRoot(projectId: string): void;
   readonly naming: NamingState | null;
   setDraft(value: string): void;
   submitNaming(): Promise<void>;
@@ -76,6 +84,24 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
   const [naming, setNaming] = useState<NamingState | null>(null);
   /** "当前明确选中的目录"按项目记录：空白区 / 工具栏据此决定创建位置。 */
   const [selectedDirByProject, setSelectedDirByProject] = useState<Record<string, string>>({});
+  /**
+   * 项目根容器展开态（UX-02C-01-R1）。
+   *
+   * 从 `ProjectList` 上提到命令编排里：右键折叠的项目根开始创建时，
+   * `beginCreate` 能在**同一次渲染**里既打开根、又挂上输入行，输入框因此
+   * 立刻可见且自动聚焦。缺席即默认展开，与之前 `?? true` 的语义一致。
+   */
+  const [openRoots, setOpenRoots] = useState<Record<string, boolean>>({});
+  const isRootOpen = useCallback((projectId: string): boolean => openRoots[projectId] ?? true, [openRoots]);
+  const toggleRoot = useCallback((projectId: string): void => {
+    setOpenRoots((current) => ({ ...current, [projectId]: !(current[projectId] ?? true) }));
+  }, []);
+  /** 幂等打开：已经展开（或缺席即默认展开）时返回原 state，绝不误折叠。 */
+  const ensureRootOpen = useCallback((projectId: string): void => {
+    setOpenRoots((current) =>
+      current[projectId] === false ? { ...current, [projectId]: true } : current,
+    );
+  }, []);
 
   const supportedExtensions = useMemo(
     () => supportedFileExtensions({ list: () => registry.list(), resolveViewer }, ready),
@@ -137,6 +163,26 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'NOTICE', message: resolved.reason });
         return;
       }
+      /**
+       * R1-01：输入行只在展开的目录里渲染，所以开始创建时先把"项目根 +
+       * 目标文件夹"打开。两处都用**幂等**动作（`ensureRootOpen` /
+       * `EXPAND_PROJECT_NODE`），已展开的目录不会被 toggle 折叠回去；
+       * `nodeId` 直接来自被右键的那一行，分页没加载到的层不会展开幻影节点。
+       */
+      const plan = createExpansionPlan({
+        projectId: resolved.projectId,
+        parentDir: resolved.parentDir,
+        levels: state.treeByProject[resolved.projectId] ?? {},
+        nodeId: target.nodeId ?? null,
+      });
+      if (plan.rootProjectId) ensureRootOpen(plan.rootProjectId);
+      if (plan.folderNodeId && plan.rootProjectId) {
+        dispatch({
+          type: 'EXPAND_PROJECT_NODE',
+          projectId: plan.rootProjectId,
+          path: plan.folderNodeId,
+        });
+      }
       setNaming({
         projectId: resolved.projectId,
         parentDir: resolved.parentDir,
@@ -147,19 +193,26 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         submitting: false,
       });
     },
-    [dispatch, resolve],
+    [dispatch, resolve, ensureRootOpen, state.treeByProject],
   );
 
   const cancelNaming = useCallback(() => setNaming(null), []);
 
   const submitNaming = useCallback(async (): Promise<void> => {
     if (!naming || naming.submitting) return;
+    // R1-02：预设扩展名还没填主名时连"提交中"都不进入——否则输入框会被
+    // disabled 一下而失焦；直接留着输入并给行内提示，用户改完按 Enter 即可。
+    if (missingPresetStem(naming.draft, naming.presetExtension)) {
+      setNaming((current) => (current ? { ...current, error: EMPTY_PRESET_STEM_MESSAGE } : current));
+      return;
+    }
     setNaming((current) => (current ? { ...current, submitting: true, error: null } : current));
     const result = await runner.submit({
       projectId: naming.projectId,
       parentDir: naming.parentDir,
       name: naming.draft,
       kind: naming.kind,
+      ...(naming.presetExtension ? { presetExtension: naming.presetExtension } : {}),
     });
     if (result === 'applied' || result === 'unknown' || result === 'busy') {
       // 成功或结果未知都收起输入行：绝不留一个"看起来还能再点一次"的入口
@@ -257,6 +310,8 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       toolbarCreate,
       toolbarRefresh,
       noteSelection,
+      isRootOpen,
+      toggleRoot,
       naming,
       setDraft: (draft) =>
         setNaming((current) => (current ? { ...current, draft, error: null } : current)),
@@ -270,6 +325,8 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       toolbarCreate,
       toolbarRefresh,
       noteSelection,
+      isRootOpen,
+      toggleRoot,
       naming,
       submitNaming,
       cancelNaming,

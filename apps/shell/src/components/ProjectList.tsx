@@ -234,10 +234,8 @@ function ProjectRoot({
 export function ProjectList() {
   const { state, dispatch } = useWorkspace();
   const commands = useTreeCommands();
-  // 各项目根独立展开；刷新只作废该项目的层表，不重置这里的展开状态
-  const [openRoots, setOpenRoots] = useState<Record<string, boolean>>({});
-  const toggleRoot = (projectId: string): void =>
-    setOpenRoots((current) => ({ ...current, [projectId]: !(current[projectId] ?? true) }));
+  // 项目根展开态由命令编排统一持有（UX-02C-01-R1）：右键折叠的项目根开始创建时，
+  // "打开根"与"挂上输入行"在同一次渲染里完成，输入框立刻可见并聚焦。
 
   if (state.treeCollapsed) {
     return (
@@ -293,8 +291,8 @@ export function ProjectList() {
             key={project.projectId}
             project={project}
             last={index === state.projects.length - 1}
-            open={openRoots[project.projectId] ?? true}
-            onToggle={() => toggleRoot(project.projectId)}
+            open={commands.isRootOpen(project.projectId)}
+            onToggle={() => commands.toggleRoot(project.projectId)}
           />
         ))}
       </ul>

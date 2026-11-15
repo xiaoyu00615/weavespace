@@ -161,7 +161,13 @@ function TreeItem({
         trails={trails}
         expanded={expanded}
         onContextMenu={(event) =>
-          commands.openContextMenu(event, { origin: 'folder', projectId, nodePath: dir })
+          commands.openContextMenu(event, {
+            origin: 'folder',
+            projectId,
+            nodePath: dir,
+            // R1-01：折叠目录中创建时按这一行的真实节点 id 幂等展开
+            nodeId: node.id,
+          })
         }
         onActivate={() => {
           const willExpand = !expanded;
