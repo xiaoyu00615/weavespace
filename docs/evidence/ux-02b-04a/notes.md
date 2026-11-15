@@ -39,6 +39,8 @@
 | `22-applied.png` | R1 添加成功 |
 | `23-tree.png` | R1 新项目立即可见（`projR1 / docs / README.md`） |
 | `24-renamed.png` | R1 回归：重命名仍只改显示名 |
+| `25-registered-unsynced.png` | **R1-03**：Host 已 APPLIED 但项目表读取失败 → 「项目已注册，但页面尚未同步」 |
+| `26-resynced-tree.png` | **R1-03**：点「重新读取」后项目自己长出来（全程只有 1 次 pick） |
 
 ## R1 补充：点击入口零请求 + 待确认状态（真实网络记录）
 
@@ -56,6 +58,24 @@
 `apiTrail` 也能看出探测时机：`/api/health → /api/projects/registration → /api/projects`
 （进入真实模式时），添加成功后因 `workspaceKey` 变化又出现一次
 `/api/projects/registration`（工作区变化 = 重新探测），全程没有"点击触发探测"的痕迹。
+
+## R1 补充：「已注册但未同步」与只读恢复（`browser-verification-r1-unsynced.json`）
+
+不靠 mock，直接在真实链路上制造这个状态：
+
+1. CDP `Fetch.enable` 拦截 `*api/projects`（精确到该路径，不含 `/registration`），
+   其余请求一律 `continueRequest`；
+2. pick 返回 `APPLIED` 之后，把 Shell 紧接着发出的那一次 `GET /api/projects`
+   **`failRequest`** —— 于是项目在 Host 上已经登记，但界面拿不到列表；
+3. 面板显示标题「项目已注册，但页面尚未同步」、正文说明**不需要重新选择文件夹**，
+   按钮为「重新读取」+「好的」，此时 `projectRows = 0`；
+4. 点「重新读取」→ `GET /api/projects` + `GET /api/health` + `GET /api/tree` 全部成功，
+   面板自动关闭，树里出现 `projR1 / docs / README.md`，状态栏提示「已重新读取项目列表」；
+5. `pickCalls = 1` —— 恢复过程**没有**重发 `POST /api/projects/pick`。
+
+这一步证明的是 R1-03 的用户可见承诺：Host 已登记时，界面不会说"添加失败"，
+也不会要求用户重选同一个文件夹；而"结果未知"走的是同一个只读恢复入口。
+
 
 
 ## 关键读数

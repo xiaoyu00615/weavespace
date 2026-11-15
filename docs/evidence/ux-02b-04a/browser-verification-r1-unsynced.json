@@ -1,0 +1,46 @@
+{
+  "switchToLive": "OK",
+  "confirmPick": "OK",
+  "unsynced": {
+    "title": "项目已注册，但页面尚未同步",
+    "body": "项目已注册，但读取项目列表失败。「projR1」已经在 Host 端登记，不需要重新选择文件夹，点「重新读取」即可把列表同步过来。",
+    "buttons": [
+      {
+        "text": "重新读取",
+        "disabled": false
+      },
+      {
+        "text": "好的",
+        "disabled": false
+      }
+    ],
+    "projectRows": 0
+  },
+  "resyncClick": "OK",
+  "recovered": {
+    "rows": [
+      "projR1",
+      "docs",
+      "guide.md",
+      "README.md"
+    ],
+    "notice": "真实文件 · 保存会写盘已重新读取项目列表projR1无活动文档——单视图"
+  },
+  "pickCalls": 1,
+  "apiTrail": [
+    "GET http://127.0.0.1:5212/api/health",
+    "GET http://127.0.0.1:5212/api/projects/registration",
+    "GET http://127.0.0.1:5212/api/projects",
+    "GET http://127.0.0.1:5212/api/projects/registration",
+    "GET http://127.0.0.1:5212/api/session-token",
+    "POST http://127.0.0.1:5212/api/projects/pick",
+    "GET http://127.0.0.1:5212/api/projects/pick?requestId=pick-b40af43a-33b1-42c7-8082-fde6acd19606",
+    "GET http://127.0.0.1:5212/api/projects",
+    "GET http://127.0.0.1:5212/api/health",
+    "GET http://127.0.0.1:5212/api/projects/registration",
+    "GET http://127.0.0.1:5212/api/projects",
+    "GET http://127.0.0.1:5212/api/tree?projectId=projr1",
+    "GET http://127.0.0.1:5212/api/health",
+    "GET http://127.0.0.1:5212/api/tree?projectId=projr1&dir=docs"
+  ]
+}
