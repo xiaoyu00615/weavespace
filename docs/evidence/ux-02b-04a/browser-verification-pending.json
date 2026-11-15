@@ -1,0 +1,103 @@
+{
+  "doubleClick": "twice",
+  "picking": {
+    "title": "请在系统窗口中选择文件夹",
+    "lead": "本机文件夹选择窗口已经打开。如果没看到它，请在任务栏里找一下（它可能被其它窗口挡住）。",
+    "buttons": []
+  },
+  "apiCalls": [
+    {
+      "url": "/api/health",
+      "status": 200
+    },
+    {
+      "url": "/api/projects/registration",
+      "status": 200
+    },
+    {
+      "url": "/api/projects",
+      "status": 200
+    },
+    {
+      "url": "/api/projects/registration",
+      "status": 200
+    },
+    {
+      "url": "/api/projects/registration",
+      "status": 200
+    },
+    {
+      "url": "/api/projects/registration",
+      "status": 200
+    },
+    {
+      "url": "/api/session-token",
+      "status": 200
+    },
+    {
+      "url": "/api/projects/pick",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 202
+    },
+    {
+      "url": "/api/projects/pick?requestId=pick-bb1372ea-cc55-4c66-abda-0e18edb9b419",
+      "status": 200
+    }
+  ],
+  "afterPending": {
+    "title": "已取消选择",
+    "lead": "你在系统窗口里取消了选择：没有添加任何项目，也没有记录任何授权。",
+    "projectRows": 0
+  }
+}

@@ -163,6 +163,11 @@ export interface TreeRowProps {
    * 把它放进主按钮会让项目根行的刷新按钮变成无效交互元素。
    */
   actions?: ReactNode;
+  /**
+   * 追加到行上的类名（例如项目根有更多右侧操作时，需要单独放宽右内边距）。
+   * 只做展示微调，不影响层级/缩进计算。
+   */
+  rowClassName?: string;
   onActivate(): void;
   /** 展开后的子层（渲染在同一个 `<li>` 内，保证语义与缩进引导线连续）。 */
   children?: ReactNode;
@@ -184,6 +189,7 @@ export function TreeRow({
   opened,
   dirty,
   actions,
+  rowClassName,
   onActivate,
   children,
 }: TreeRowProps) {
@@ -201,6 +207,7 @@ export function TreeRow({
             selected ? 'tree__row--selected' : '',
             opened ? 'tree__row--opened' : '',
             actions ? 'tree__row--with-actions' : '',
+            rowClassName ?? '',
           ]
             .filter(Boolean)
             .join(' ')}

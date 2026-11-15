@@ -17,6 +17,8 @@ import type { ProjectSummary } from '../client/client-api.ts';
 import type { ResourceNodeState } from '../state/types.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
+import { validateProjectName } from '../state/add-project.ts';
+import { AddProjectEntry } from './AddProjectEntry.tsx';
 import { LevelStatus, TreeBranch } from './TreeBranch.tsx';
 import { TreeRow } from './FileTreeRow.tsx';
 import { countLoadedEntries, emptyLevels, materializeTree } from './tree-model.ts';
@@ -40,6 +42,47 @@ function ProjectRoot({
   const ready = project.status === 'READY';
   const loading = state.loadingByProject[projectId] ?? false;
 
+  /**
+   * 行内重命名（UX-02B-04A）。
+   *
+   * 编辑器渲染在项目根行**下方**、缩进对齐名称列，而不是塞进标题按钮里：
+   * `<button>` 内嵌 `<input>` 是无效 HTML，点击/聚焦行为在各浏览器上都会走形。
+   */
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(project.name);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const startRename = (): void => {
+    setDraft(project.name);
+    setError(null);
+    setRenaming(true);
+  };
+  const cancelRename = (): void => {
+    setRenaming(false);
+    setError(null);
+    setDraft(project.name);
+  };
+  const submit = async (): Promise<void> => {
+    if (saving) return;
+    const checked = validateProjectName(draft);
+    // 本地预检只挡"注定失败"的请求；权威判断仍在 Host
+    if (!checked.ok) {
+      setError(checked.message);
+      return;
+    }
+    setSaving(true);
+    const outcome = await actions.renameProject(projectId, checked.name);
+    setSaving(false);
+    if (outcome.status === 'APPLIED') {
+      setRenaming(false);
+      setError(null);
+      return;
+    }
+    // 失败：界面保持原名（未派发任何改名），把输入框留在原处让用户修正
+    setError(outcome.message);
+  };
+
   const levels = state.treeByProject[projectId] ?? emptyLevels();
   const nodes = useMemo(() => materializeTree(levels), [levels]);
   const rootLevel = levels[''];
@@ -57,6 +100,7 @@ function ProjectRoot({
       trails={[]}
       expanded={open}
       selected={active}
+      rowClassName="tree__row--with-rename"
       onActivate={() => {
         // 切换当前项目只改焦点：不清标签、不动草稿、不影响其它项目（G2-05/G2-07）
         if (!active) void actions.switchProject(projectId);
@@ -80,9 +124,68 @@ function ProjectRoot({
               ↻
             </button>
           )}
+          <button
+            type="button"
+            className="icon-button project__refresh project__rename"
+            title={`修改「${project.name}」的显示名称`}
+            aria-label={`修改「${project.name}」的显示名称`}
+            onClick={renaming ? cancelRename : startRename}
+          >
+            {renaming ? '×' : '✎'}
+          </button>
         </>
       }
     >
+      {renaming && (
+        <div className="tree__rename">
+          <input
+            className={error ? 'tree__rename-input tree__rename-input--invalid' : 'tree__rename-input'}
+            value={draft}
+            // 打开即聚焦：重命名是"点一下就开始打字"的动作
+            autoFocus
+            disabled={saving}
+            aria-label="项目显示名称"
+            aria-invalid={error !== null}
+            maxLength={80}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              if (error) setError(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void submit();
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelRename();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="icon-button project__refresh"
+            title="保存名称（Enter）"
+            aria-label="保存名称"
+            disabled={saving}
+            onClick={() => void submit()}
+          >
+            ✓
+          </button>
+          <button
+            type="button"
+            className="icon-button project__refresh"
+            title="放弃修改（Esc）"
+            aria-label="放弃修改"
+            disabled={saving}
+            onClick={cancelRename}
+          >
+            ×
+          </button>
+          <p className="tree__rename-hint">
+            {error ?? (saving ? '正在保存…' : '只改显示名称：磁盘目录名、文件树与草稿都不变')}
+          </p>
+        </div>
+      )}
       {open && (
         <>
           {!ready && (
@@ -156,6 +259,7 @@ export function ProjectList() {
           </div>
         </div>
         <div className="tree__actions">
+          <AddProjectEntry />
           <button
             type="button"
             className="icon-button"
@@ -178,6 +282,12 @@ export function ProjectList() {
           />
         ))}
       </ul>
+
+      {state.projects.length === 0 && (
+        <p className="tree__empty">
+          工作区里还没有项目。点右上角的「添加项目」，选择一个本机文件夹作为项目根。
+        </p>
+      )}
 
       <footer className="tree__footer">真实文件 · 独立授权 · 逐层加载</footer>
     </aside>

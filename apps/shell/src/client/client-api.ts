@@ -150,6 +150,68 @@ export interface WorkspaceIdentity {
   workspaceKey: string | null;
 }
 
+/* ---- UX-02B-04A：项目注册、本机目录选择、显示名称 ---- */
+
+/**
+ * 信任披露的协议标记（与 Host 侧常量一字不差）。
+ *
+ * **它不是授权凭据**：Host 不会因为它存在就多授予一毫秒的目录权限，也不会把它写进
+ * 任何持久记录。它唯一的作用，是让"客户端跳过了披露这一步"在协议层可被发现。
+ */
+export const ACKNOWLEDGE_SCOPE = 'browse-subtree' as const;
+
+/**
+ * Host 是否支持"在界面里添加项目"。
+ *
+ * - `managed`：带 `--workspace-store` 启动的托管模式，可以弹本机目录选择；
+ * - `static` / `legacy`：配置是只读的，动态注册不可能成功；
+ * - `demo`：演示模式，根本没有 Host；
+ * - `unknown`：旧版/异常 Host —— 一律按"不支持"处理，绝不假定可用。
+ */
+export type ProjectRegistrationSupport = 'managed' | 'static' | 'legacy' | 'demo' | 'unknown';
+
+export interface ProjectRegistrationInfo {
+  support: ProjectRegistrationSupport;
+  /** Host 上报的原始模式（`managed` / `multi` / `static` / `legacy`），仅用于解释原因。 */
+  mode: string;
+}
+
+/** 启动本机选择器的结果：只有 `PENDING` 才代表"对话框已经打开"。 */
+export interface PickStartOutcome {
+  status: 'PENDING' | 'REJECTED';
+  requestId?: string;
+  errorCode?: string | null;
+  message?: string;
+  httpStatus: number;
+}
+
+/**
+ * 选择结果的四态（契约 D.4）。
+ *
+ * `CANCELLED` / `REJECTED` 都是**零副作用**：没有项目被注册，没有授权被记录。
+ */
+export interface PickQueryOutcome {
+  status: 'PENDING' | 'APPLIED' | 'CANCELLED' | 'REJECTED';
+  requestId?: string;
+  /** 仅 `APPLIED` 携带；不含任何本机路径。 */
+  project?: ProjectSummary;
+  errorCode?: string | null;
+  /** Host 记录的机读原因（如 `timeout` / `unavailable`），供界面区分文案。 */
+  reason?: string;
+  message?: string;
+  httpStatus: number;
+}
+
+/**
+ * 重命名显示名称的结果。
+ *
+ * `APPLIED` 时以 Host 返回的 `project` 为权威（名称已 trim、已校验），
+ * 客户端不得自行"乐观改名"。
+ */
+export type RenameOutcome =
+  | { status: 'APPLIED'; project: ProjectSummary }
+  | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
+
 export interface WeaveSpaceClient {
   readonly mode: ClientMode;
   /** 服务端运行模式（`/api/health`）；demo 恒为 `legacy`。 */
@@ -198,6 +260,44 @@ export interface WeaveSpaceClient {
    * `discardDraft: true`），否则草稿会被丢弃。
    */
   reloadDocument(sessionId: string, viewId: string): Promise<ReloadOutcome>;
+
+  /* ---- UX-02B-04A ---- */
+
+  /**
+   * 只读能力探测：这个 Host 能不能在界面里注册新项目。
+   *
+   * 必须在用户点「添加项目」**之前**就能回答，否则只能让用户读完披露再撞一次 501，
+   * 把"不支持"伪装成"操作失败"。只读端点，不需要令牌，也不涉及任何路径。
+   */
+  registrationSupport(): Promise<ProjectRegistrationInfo>;
+  /**
+   * T1 + T2 引导：取会话令牌（证明来自本机页面）与一次性意图（证明这次操作没被重放）。
+   *
+   * 两者都**不是**目录授权证据。`intentId === null` 表示当前 Host 不发放意图
+   * （静态 / Legacy），此时调用方必须直接放弃，而不是继续发 pick 请求。
+   */
+  bootstrapPick(): Promise<{ token: string; intentId: string | null }>;
+  /**
+   * 启动 Host 进程内的本机目录选择器（T3 唯一入口）。
+   *
+   * 请求体只允许 `intentId` / `acknowledgeScope` / `name`：**绝不**提交
+   * `rootDir` / `path` / `grantSource` —— 目标目录只能由用户在系统对话框里选。
+   */
+  startPick(input: {
+    token: string;
+    intentId: string;
+    acknowledgeScope: typeof ACKNOWLEDGE_SCOPE;
+    name?: string;
+  }): Promise<PickStartOutcome>;
+  /** 按 `requestId` 查询选择结果；`PENDING` 表示系统对话框还开着。 */
+  queryPick(input: { token: string; requestId: string }): Promise<PickQueryOutcome>;
+  /**
+   * 修改项目的**显示名称**。
+   *
+   * 只改名称：`projectId`、磁盘目录名、文件树、标签与草稿都不变。校验（trim / 64 字 /
+   * 控制字符）由 Host 的 `ProjectRuntime` 执行，这里不复制一份规则。
+   */
+  renameProject(projectId: string, name: string): Promise<RenameOutcome>;
 }
 
 interface ApiEnvelope {
@@ -236,6 +336,21 @@ async function request(
  * 不缓存任何内容；每次操作都以服务端返回的会话状态为准。
  */
 export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
+  /**
+   * 取一个会话令牌（T1）。
+   *
+   * 令牌只证明"请求来自本机 Host 的页面"，不证明任何目录权限；它会被放在
+   * `x-ws-token` 头里，由 Host 在每个变更类请求上重新校验。
+   */
+  const sessionToken = async (): Promise<string> => {
+    const { httpStatus, body } = await request(baseUrl, '/api/session-token');
+    const token = (body as { token?: unknown }).token;
+    if (httpStatus !== 200 || typeof token !== 'string' || token === '') {
+      throw new Error(`session-token ${httpStatus}`);
+    }
+    return token;
+  };
+
   return {
     mode: 'live',
     async workspaceMode() {
@@ -414,6 +529,125 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         previousDraft: (body as { previousDraft?: string }).previousDraft,
       };
     },
+
+    async registrationSupport() {
+      const { httpStatus, body } = await request(baseUrl, '/api/projects/registration');
+      const asReg = body as { supported?: unknown; mode?: unknown };
+      const mode = typeof asReg.mode === 'string' ? asReg.mode : '';
+      if (httpStatus !== 200 || body.status !== 'APPLIED') {
+        // 旧版 Host 没有这个端点：不得假定"可以添加"，也不得猜一个模式
+        return { support: 'unknown' as const, mode: mode || 'unknown' };
+      }
+      const support: ProjectRegistrationSupport =
+        asReg.supported === true
+          ? 'managed'
+          : mode === 'static'
+            ? 'static'
+            : mode === 'legacy'
+              ? 'legacy'
+              : 'unknown';
+      return { support, mode: mode || support };
+    },
+
+    async bootstrapPick() {
+      const { httpStatus, body } = await request(baseUrl, '/api/session-token');
+      const token = (body as { token?: unknown }).token;
+      if (httpStatus !== 200 || typeof token !== 'string' || token === '') {
+        throw new Error(`session-token ${httpStatus}`);
+      }
+      const intent = (body as { intent?: { intentId?: unknown } }).intent;
+      const intentId =
+        intent && typeof intent.intentId === 'string' && intent.intentId !== '' ? intent.intentId : null;
+      return { token, intentId };
+    },
+
+    async startPick(input) {
+      const { httpStatus, body } = await request(baseUrl, '/api/projects/pick', {
+        method: 'POST',
+        headers: { 'x-ws-token': input.token },
+        // 只发协议字段：目录与授权凭据只能由 Host 内部产生
+        body: JSON.stringify({
+          intentId: input.intentId,
+          acknowledgeScope: input.acknowledgeScope,
+          ...(input.name && input.name.trim() !== '' ? { name: input.name.trim() } : {}),
+        }),
+      });
+      const requestId = (body as { requestId?: unknown }).requestId;
+      if (httpStatus === 202 && body.status === 'PENDING' && typeof requestId === 'string' && requestId !== '') {
+        return { status: 'PENDING' as const, requestId, httpStatus };
+      }
+      return {
+        status: 'REJECTED' as const,
+        errorCode: body.errorCode ?? null,
+        message: body.message,
+        httpStatus,
+      };
+    },
+
+    async queryPick(input) {
+      const query = new URLSearchParams({ requestId: input.requestId });
+      const { httpStatus, body } = await request(baseUrl, `/api/projects/pick?${query.toString()}`, {
+        headers: { 'x-ws-token': input.token },
+      });
+      const asPick = body as { requestId?: unknown; project?: ProjectSummary };
+      /**
+       * 判定依据是 **HTTP 2xx + body.status**，不是"200"。
+       *
+       * `PENDING` 记录的 HTTP 状态是 `202 Accepted`（已受理、尚未完成）。若把 202 当错误，
+       * 用户在系统窗口里慢慢挑文件夹时，界面会立刻报"添加失败"并停止轮询 —— 而这一次
+       * 选择其实完全正常。非 2xx（403/410/501）才是真的拒绝。
+       */
+      const accepted = httpStatus >= 200 && httpStatus < 300;
+      if (accepted) {
+        if (body.status === 'APPLIED' && asPick.project) {
+          return {
+            status: 'APPLIED' as const,
+            project: asPick.project,
+            requestId: typeof asPick.requestId === 'string' ? asPick.requestId : input.requestId,
+            httpStatus,
+          };
+        }
+        if (body.status === 'PENDING') {
+          return { status: 'PENDING' as const, requestId: input.requestId, httpStatus };
+        }
+        if (body.status === 'CANCELLED') {
+          return { status: 'CANCELLED' as const, requestId: input.requestId, httpStatus };
+        }
+      }
+      return {
+        status: 'REJECTED' as const,
+        requestId: input.requestId,
+        errorCode: body.errorCode ?? null,
+        reason: (body as { reason?: string }).reason,
+        message: body.message,
+        httpStatus,
+      };
+    },
+
+    async renameProject(projectId: string, name: string) {
+      // 重命名属于变更类请求：先取令牌，Host 会重新校验（T1），不是"取过一次就长期有效"
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED', message: '无法获取会话令牌', httpStatus: 403 };
+      }
+      const { httpStatus, body } = await request(baseUrl, '/api/projects/rename', {
+        method: 'POST',
+        headers: { 'x-ws-token': token },
+        body: JSON.stringify({ projectId, name }),
+      });
+      const project = (body as { project?: ProjectSummary }).project;
+      if (httpStatus === 200 && body.status === 'APPLIED' && project) {
+        return { status: 'APPLIED' as const, project };
+      }
+      return {
+        status: 'REJECTED' as const,
+        errorCode: body.errorCode ?? null,
+        message: body.message ?? '重命名失败',
+        httpStatus,
+      };
+    },
   };
 }
 
@@ -575,6 +809,31 @@ export function createDemoClient(
           dirty: false,
           documentState: 'DEMO',
         },
+      };
+    },
+
+    /*
+     * 演示模式没有任何 Host：不弹对话框、不注册项目、不改名称。
+     * 返回值刻意不是"失败"而是"不支持"，界面据此给出说明而不是报错。
+     */
+    async registrationSupport() {
+      return { support: 'demo' as const, mode: 'demo' };
+    },
+    async bootstrapPick() {
+      return { token: '', intentId: null };
+    },
+    async startPick() {
+      return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_UNSUPPORTED', httpStatus: 501 };
+    },
+    async queryPick() {
+      return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_UNSUPPORTED', httpStatus: 501 };
+    },
+    async renameProject() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示数据没有真实项目，无法重命名',
+        httpStatus: 501,
       };
     },
   };

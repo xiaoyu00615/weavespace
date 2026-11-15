@@ -13,6 +13,7 @@ import { DEMO_NODES, DEMO_PROJECT_NAME } from '../data/demo-project';
 import type { ResourceNodeState } from '../state/types.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
+import { AddProjectEntry } from './AddProjectEntry.tsx';
 import { LevelStatus, TreeBranch } from './TreeBranch.tsx';
 import { TreeRow } from './FileTreeRow.tsx';
 import { countLoadedEntries, emptyLevels, fromStaticTree, materializeTree } from './tree-model.ts';
@@ -66,6 +67,7 @@ export function ProjectTree() {
           </div>
         </div>
         <div className="tree__actions">
+          <AddProjectEntry />
           {!isDemo && (
             <button
               type="button"

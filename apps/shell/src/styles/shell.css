@@ -1376,3 +1376,162 @@ button {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---------- UX-02B-04A：添加项目 / 重命名（模态 + 行内编辑） ---------- */
+
+/*
+ * 「添加项目」是文字按钮而不是图标：
+ * 它是这一列里唯一会改变"项目集合"的动作，不该藏在需要悬停才能认出的符号后面。
+ */
+.tree__add {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  font-size: 11px;
+  line-height: 16px;
+  border-radius: 5px;
+  color: var(--accent);
+}
+
+.tree__add:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+/* 项目根行有三个右侧操作（状态 / 刷新 / 重命名），需要比 74px 更宽 */
+.tree__row--with-rename {
+  padding-right: 96px;
+}
+
+.tree__empty {
+  margin: 8px 12px 12px 12px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/*
+ * 行内重命名：渲染在项目根行下方、与名称列对齐。
+ * 不做成"把输入框塞进行内的按钮里"——`<button>` 内嵌 `<input>` 是无效 HTML。
+ */
+.tree__rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 10px 6px 42px;
+}
+
+.tree__rename-input {
+  flex: 1 1 110px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.tree__rename-input:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.tree__rename-input--invalid {
+  border-color: var(--warn);
+}
+
+.tree__rename-input:disabled {
+  opacity: 0.7;
+}
+
+.tree__rename-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* ---------- 模态：信任披露 / 选择中 / 结果 ---------- */
+
+.modal__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(20 27 38 / 42%);
+}
+
+.modal {
+  width: min(520px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  padding: 18px 20px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgb(16 24 36 / 22%);
+}
+
+.modal__title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.modal__lead {
+  margin: 0 0 10px;
+  line-height: 1.65;
+}
+
+.modal__lead--warn {
+  color: var(--warn);
+}
+
+.modal__lead--error {
+  color: #b42318;
+}
+
+.modal__list {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  line-height: 1.7;
+}
+
+.modal__list li {
+  margin-bottom: 4px;
+}
+
+/*
+ * "当前环境不支持"的说明：刻意用中性提示色而不是错误红 ——
+ * 这不是失败，而是这个 Host 本来就没有这项能力。
+ */
+.modal__note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid #f0dcc0;
+  border-radius: 8px;
+  background: #fdf6ec;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.modal__hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

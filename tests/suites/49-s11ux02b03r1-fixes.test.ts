@@ -66,6 +66,8 @@ async function postPick(
       origin: server.url,
     },
     body: JSON.stringify({
+      // UX-02B-04A 契约 D.5：pick 必须声明"已读过信任披露"
+      acknowledgeScope: 'browse-subtree',
       intentId: options.intentId,
       ...(options.name !== undefined ? { name: options.name } : {}),
     }),

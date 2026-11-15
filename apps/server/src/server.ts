@@ -935,6 +935,15 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     }
   }
 
+  /**
+   * 信任披露的协议标记（契约 D.5 / UX-02B-04A）。
+   *
+   * **它不是授权凭据**：Host 不会因为它存在就多授予一毫秒的目录权限，也不会把它写进
+   * 任何持久记录。真正的授权证据仍然只有 T3 的 `grantSource: 'os-dialog'`。
+   * 它存在的唯一理由，是让"客户端跳过了披露这一步"在协议层可被发现与断言。
+   */
+  const ACKNOWLEDGE_SCOPE = 'browse-subtree';
+
   /** 准入/提交失败对应的 HTTP 语义（S-11 / S-12 需要区分 422 与 409）。 */
   function pickStatusOf(errorCode: string | undefined): number {
     switch (errorCode) {
@@ -1154,6 +1163,25 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       );
     }
 
+    /**
+     * 项目注册能力探测（UX-02B-04A，只读）。
+     *
+     * 为什么需要它：界面必须在用户点「添加项目」**之前**就知道这个 Host 能不能
+     * 动态注册项目，否则只能让用户先读完披露、再撞一次 501 —— 那既违反"不假装成功"，
+     * 也把"不支持"伪装成"操作失败"。
+     *
+     * 只回答能力，不回答任何路径、项目或授权信息，因此与 `/api/projects` 一样
+     * 不需要令牌；也不改变 `/api/health` 的既有形状（WK-04 把它当白名单断言）。
+     */
+    if (method === 'GET' && pathname === '/api/projects/registration') {
+      sendJson(res, 200, {
+        status: 'APPLIED',
+        supported: runtime !== undefined,
+        mode: runtime ? 'managed' : mode,
+      });
+      return;
+    }
+
     // Multi 专用：项目列表只给 Summary（不含 rootDir / canonicalRoot / rootToken）
     if (method === 'GET' && pathname === '/api/projects') {
       const authority = runtime ?? registry;
@@ -1353,6 +1381,15 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           throw new HttpError(403, 'ERR_PERMISSION_DENIED', '变更类请求必须声明 Origin');
         }
         rejectPickFields(body);
+        // 披露形状校验必须早于意图消费：否则一次"没读披露"的请求会把一次性意图用掉，
+        // 用户随后照着模态再点一次就只会拿到 410，而错误其实出在上一个请求。
+        if (body.acknowledgeScope !== ACKNOWLEDGE_SCOPE) {
+          throw new HttpError(
+            400,
+            'ERR_COMMAND_INVALID',
+            '缺少或错误的 acknowledgeScope：目录选择必须由信任披露确认发起',
+          );
+        }
         if (pickRequests.isBusy()) {
           throw new HttpError(
             409,
@@ -1383,7 +1420,42 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         return;
       }
 
-      // 本阶段未实现的变更端点（remove / rename / removal-precheck / …）：
+      /**
+       * 项目显示名称重命名（UX-02B-04A，契约 §4.2）。
+       *
+       * 只转发给 `ProjectRuntime.renameProject`：事务、持久化、名称校验（trim / 64 字 /
+       * 控制字符）与 `REVOKE_UNKNOWN` 拒改都在 Runtime 里，Host 不复制一份规则，
+       * 也不在这里"先假装成功"。磁盘目录名永远不动 —— 名称是显示属性，不是路径。
+       */
+      if (pathname === '/api/projects/rename') {
+        if (!runtime) {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持重命名项目',
+          );
+        }
+        requireSessionToken(req);
+        const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+        if (projectId === '') throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 projectId');
+        if (typeof body.name !== 'string') {
+          throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少项目名称');
+        }
+        try {
+          const project = await runtime.renameProject(projectId, body.name);
+          sendJson(res, 200, { status: 'APPLIED', project });
+        } catch (err) {
+          const code = (err as { errorCode?: ErrorCode }).errorCode;
+          throw new HttpError(
+            httpStatusOfDomainError(code),
+            code ?? 'ERR_STORAGE_IO',
+            code ? publicMessageOf(code) : '重命名失败',
+          );
+        }
+        return;
+      }
+
+      // 本阶段未实现的变更端点（remove / removal-precheck / …）：
       // 统一 501，绝不留下"看起来能用但没有鉴权/没有事务"的部分实现。
       if (pathname.startsWith('/api/projects/')) {
         if (runtime) requireSessionToken(req);

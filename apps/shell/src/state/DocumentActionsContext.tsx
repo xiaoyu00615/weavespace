@@ -38,6 +38,15 @@ import {
 import { createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
 import { emptyLevels } from '../components/tree-model.ts';
 import { createTreeLevelLoader, createTreeOwnershipGuard, type TreeLoadIdentity } from './tree-load.ts';
+import {
+  createAddProjectFlow,
+  createProjectAdder,
+  validateProjectName,
+  type AddProjectHandle,
+  type AddProjectPort,
+  type ProjectRegistrationSupport,
+} from './add-project.ts';
+import type { RenameOutcome } from '../client/client-api.ts';
 import { refreshProject } from './refresh-project';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
@@ -89,6 +98,20 @@ export interface DocumentActions {
    * 调用前会把草稿备份到本标签页并在可能时复制到剪贴板。
    */
   reloadFromDisk(docId: string): Promise<boolean>;
+  /**
+   * 添加项目的编排句柄（UX-02B-04A）。
+   *
+   * 披露模态只是个知情披露：`flow.open()` 零请求；只有 `confirm()` 才走
+   * T1（令牌）→ T2（一次性意图）→ T3（Host 进程内选择器）。浏览器永远不提供路径。
+   */
+  addProject: AddProjectHandle;
+  /**
+   * 修改项目的**显示名称**（UX-02B-04A）。
+   *
+   * 只改名称：`projectId`、磁盘目录名、文件树、标签与草稿都不变，`workspaceKey` 也不变
+   * （名称不是路径）。以 Host 返回的项目摘要为权威；失败时界面保持原名。
+   */
+  renameProject(projectId: string, name: string): Promise<RenameOutcome>;
 }
 
 const DocumentActionsContext = createContext<DocumentActions | null>(null);
@@ -203,11 +226,64 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   );
 
   /**
+   * 「添加项目」的编排句柄（UX-02B-04A）。
+   *
+   * 组装都在这里，编排逻辑全在 `add-project.ts`（纯 TS、可确定性测试）：
+   * - 端口只映射 5 个窄方法，注入后测试不必实现整个客户端；
+   * - `identity()` 读的是**实时**状态，编排层会在每次 await 之后比对，迟到结果丢弃；
+   * - `loadRoot` 复用逐层加载器，因此新项目根层与用户手动展开走的是同一条链路。
+   */
+  const addSupport = useRef<ProjectRegistrationSupport | null>(null);
+
+  const addProject = useMemo<AddProjectHandle>(() => {
+    const port: AddProjectPort = {
+      bootstrap: () => liveClient.bootstrapPick(),
+      startPick: (input) => liveClient.startPick(input),
+      queryPick: (input) => liveClient.queryPick(input),
+      listProjects: () => liveClient.listProjects(),
+      workspaceKey: async () => (await liveClient.workspaceIdentity()).workspaceKey,
+    };
+    const adder = createProjectAdder({
+      port,
+      identity: () => ({ mode: stateRef.current.mode, workspaceKey: stateRef.current.workspaceKey }),
+      onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
+      onWorkspaceKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
+      loadRoot: async (projectId) => {
+        await treeLoader.current.load(projectId, '', false);
+      },
+    });
+    const flow = createAddProjectFlow({
+      adder,
+      // 未探测时按"未知"处理：界面会给出说明，绝不假装可用
+      support: () => addSupport.current ?? 'unknown',
+    });
+    return {
+      flow,
+      support: () => addSupport.current,
+      async probe() {
+        if (stateRef.current.mode !== 'live') {
+          // 演示模式不访问任何网络：这里没有 Host，也没有真实目录
+          addSupport.current = 'demo';
+          return 'demo';
+        }
+        try {
+          const info = await liveClient.registrationSupport();
+          addSupport.current = info.support;
+          return info.support;
+        } catch {
+          // 探测失败不等于"可以添加"：保持未知，让用户看到的是说明而不是失败
+          addSupport.current = 'unknown';
+          return 'unknown';
+        }
+      },
+    };
+  }, [dispatch, liveClient]);
+
+  /**
    * 打开流程的编排器（G2-R1）：真实实现放在 `open-document.ts`，
    * 这里只注入宿主依赖，便于在 Node 里用真实 Host + reducer 验证时序。
    */
-  const opener = useMemo<DocumentOpener>(
-    () =>
+  const opener = useMemo<DocumentOpener>(    () =>
       createDocumentOpener({
         getState: () => stateRef.current,
         getMode: () => modeRef.current,
@@ -439,8 +515,60 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
     };
 
     return {
-      async openNode(node: ResourceNodeState, projectId?: string | null) {
-        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）
+      addProject,
+
+      /**
+       * 重命名显示名称（UX-02B-04A）。
+       *
+       * 三条纪律：
+       * 1. 本地预检与 Host 同规则，但**权威仍是 Host**：这里只避免发出注定失败的请求；
+       * 2. 只有 `APPLIED` 才写界面，且写的是 Host 返回的摘要（不做乐观改名）；
+       * 3. 不动 `workspaceKey` / 层表 / 标签 / 草稿 —— 名称是显示属性，不是路径。
+       */
+      async renameProject(projectId: string, rawName: string): Promise<RenameOutcome> {
+        const checked = validateProjectName(rawName);
+        if (!checked.ok) {
+          return {
+            status: 'REJECTED' as const,
+            errorCode: 'ERR_COMMAND_INVALID',
+            message: checked.message,
+            httpStatus: 400,
+          };
+        }
+        if (modeRef.current !== 'live') {
+          return {
+            status: 'REJECTED' as const,
+            errorCode: 'ERR_COMMAND_UNSUPPORTED',
+            message: '演示模式没有真实项目，无法重命名',
+            httpStatus: 501,
+          };
+        }
+        const current = stateRef.current.projects.find((item) => item.projectId === projectId);
+        if (!current) {
+          return { status: 'REJECTED' as const, errorCode: 'ERR_PROJECT_NOT_FOUND', message: '项目已不存在', httpStatus: 404 };
+        }
+        // 名字没变化就不发请求：避免一次无意义的写盘与状态变化
+        if (current.name === checked.name) {
+          return { status: 'APPLIED' as const, project: current };
+        }
+
+        let outcome: RenameOutcome;
+        try {
+          outcome = await clientFor('live').renameProject(projectId, checked.name);
+        } catch {
+          return { status: 'REJECTED' as const, errorCode: 'ERR_STORAGE_IO', message: '无法连接本地服务', httpStatus: 0 };
+        }
+        // 等到结果时工作区已经不是原来那个：不把旧工作区的名称写进当前界面
+        if (modeRef.current !== 'live') {
+          return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_UNSUPPORTED', message: '工作区已切换，重命名结果已丢弃', httpStatus: 0 };
+        }
+        if (outcome.status === 'APPLIED') {
+          dispatch({ type: 'PROJECT_RENAMED', project: outcome.project });
+        }
+        return outcome;
+      },
+
+      async openNode(node: ResourceNodeState, projectId?: string | null) {        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）
         restorer.noteInteraction();
         // 结构化操作 = 接管恢复（AS-05）：此后当前界面才是权威，提交时合并结转标签
         gate.adopt();
@@ -810,7 +938,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         }
       },
     };
-  }, [dispatch, demoClient, gate, liveClient, opener, restorer, store]);
+  }, [addProject, dispatch, demoClient, gate, liveClient, opener, restorer, store]);
 
   return (
     <DocumentActionsContext.Provider value={actions}>{children}</DocumentActionsContext.Provider>

@@ -88,6 +88,10 @@ async function postPick(server: ShellServer, options: PickCallOptions): Promise<
     method: 'POST',
     headers,
     body: JSON.stringify({
+      // UX-02B-04A：目录选择必须由信任披露确认发起（契约 D.5）。
+      // 本套件测的是意图/单飞/取消/复核等链路，不是披露本身，所以统一带上合法标记；
+      // "缺了会怎样"由套件 54 的 PA-04 专门覆盖。
+      acknowledgeScope: 'browse-subtree',
       ...(options.intentId !== undefined ? { intentId: options.intentId } : {}),
       ...(options.name !== undefined ? { name: options.name } : {}),
       ...(options.extra ?? {}),

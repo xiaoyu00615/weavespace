@@ -157,6 +157,13 @@ export type WorkspaceAction =
    */
   | { type: 'SET_PANE_TAB'; pane: PaneId; docId: string | null; mode?: ViewMode }
   | { type: 'SET_PROJECTS'; projects: ProjectSummary[] }
+  /**
+   * 单个项目的摘要被 Host 改写（当前只有「重命名显示名称」，UX-02B-04A）。
+   *
+   * 只替换这一个元素的**值**：`treeByProject` / 标签 / 草稿 / `activeProjectId`
+   * 全部保持原引用，因此重命名既不会让树重新加载，也不会让展开状态回到默认。
+   */
+  | { type: 'PROJECT_RENAMED'; project: ProjectSummary }
   | { type: 'SET_ACTIVE_PROJECT'; projectId: string }
   | { type: 'SET_PROJECT_RESOURCES'; projectId: string; nodes: ResourceNodeState[] }
   | { type: 'SET_PROJECT_LOADING'; projectId: string; loading: boolean }

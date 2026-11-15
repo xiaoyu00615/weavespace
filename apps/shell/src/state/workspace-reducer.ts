@@ -382,6 +382,22 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
     }
 
+    /**
+     * 只改一个项目的显示名称（UX-02B-04A）。
+     *
+     * 刻意不复用 `SET_PROJECTS`：那会重算 `activeProjectId`，而重命名根本没改变
+     * 项目集合，也不该让"当前项目"跳到别的项目上去。`treeByProject` 原样保留 ——
+     * 名字是显示属性，不是层表键，重命名不该触发任何文件读取。
+     */
+    case 'PROJECT_RENAMED': {
+      const index = state.projects.findIndex((project) => project.projectId === action.project.projectId);
+      // 列表里没有这个项目（例如刚被移除）：忽略，不凭空插入一行
+      if (index < 0) return state;
+      const projects = state.projects.slice();
+      projects[index] = action.project;
+      return { ...state, projects };
+    }
+
     case 'SET_ACTIVE_PROJECT':
       // 只切"当前项目"：不清空 tabs、不动其他项目的资源树/展开状态/草稿
       return state.activeProjectId === action.projectId
