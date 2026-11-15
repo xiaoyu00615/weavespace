@@ -20,12 +20,25 @@
  * 本模块不负责编辑会话、冲突呈现或权限判定，那些属于 document / permission。
  */
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
+import { basename, dirname, join, normalize, resolve as resolvePath } from 'node:path';
 import type { ErrorCode } from '../contracts/errors.ts';
 import type { SaveResult } from '../contracts/types.ts';
 import {
   entryRelativePath,
+  isEntryUnder,
+  sameEntryPath,
   validateEntryName,
   validateParentDir,
 } from './entry-name.ts';
@@ -96,6 +109,20 @@ export interface StorageFaultHooks {
    * 既不谎报失败，也不谎报成功，客户端因此不会自动重发一次创建。
    */
   afterCreate?: () => void;
+  /**
+   * 在**结构变更已发生**、尚未向调用方确认时抛出（UX-02C-02）。
+   * 用来确定性验证「磁盘副作用已存在但确认链中断」必须收敛为 UNKNOWN。
+   */
+  afterMove?: () => void;
+  /**
+   * 结构变更**目标存在性检查已通过、排他占位尚未执行**时调用（UX-02C-02）。
+   *
+   * 用途：确定性注入"检查与占位之间外部进程创建了同名目标"的竞争窗口。
+   * 没有占位防线时，随后的 rename 会静默覆盖外部创建的对象（Windows 上
+   * libuv 用 MoveFileExW + REPLACE_EXISTING）；有了 `wx` 占位，这里必须
+   * 以 ERR_ENTRY_EXISTS 拒绝且外部对象不被覆盖。仅测试注入。
+   */
+  beforeMoveReserve?: () => void;
 }
 
 export type CreateEntryKind = 'file' | 'directory';
@@ -103,6 +130,27 @@ export type CreateEntryResult =
   | { status: 'CREATED'; kind: CreateEntryKind; relativePath: string }
   | { status: 'REJECTED'; errorCode: ErrorCode }
   /** 副作用可能已发生，但根连续性/确认链无法证明结果。 */
+  | { status: 'UNKNOWN'; errorCode: 'ERR_OUTCOME_UNKNOWN' };
+
+/**
+ * 真实改名 / 移动（UX-02C-02）。
+ *
+ * `rename` 与 `move` 在磁盘上是**同一个原语**：都只是把项目内一个相对路径
+ * 换成另一个相对路径。HTTP 层分成两个端点只是交互语义不同，不能因此写两份
+ * 路径判定。
+ *
+ * `contentSha256`：文件为内容 SHA-256；目录为有界结构指纹（路径 + 长度 + 内容哈希），
+ * 超出上限时为 `null`（明确不声称已完整核对，而不是假装核对过）。
+ */
+export type MoveEntryResult =
+  | {
+      status: 'MOVED';
+      sourcePath: string;
+      targetPath: string;
+      kind: CreateEntryKind;
+      contentSha256: string | null;
+    }
+  | { status: 'REJECTED'; errorCode: ErrorCode }
   | { status: 'UNKNOWN'; errorCode: 'ERR_OUTCOME_UNKNOWN' };
 
 export interface LocalProviderOptions {
@@ -180,6 +228,18 @@ export interface StorageProvider {
     name: string,
     kind: CreateEntryKind,
   ): Promise<CreateEntryResult>;
+  /**
+   * 真实改名 / 移动（UX-02C-02）：同一授权项目内，`sourcePath` →
+   * `targetParentDir/targetName`。排他、不覆盖、不跨项目、不递归建父目录。
+   *
+   * 同样声明为可选：Demo / Legacy / 静态 Multi 不提供该能力，由 Host 明确拒绝。
+   * 实现必须复用本 Provider 的固定 `RootBoundary` 与 C0/C1/C4 根连续性检查点。
+   */
+  moveEntry?(
+    sourcePath: string,
+    targetParentDir: string,
+    targetName: string,
+  ): Promise<MoveEntryResult>;
 }
 
 export function contentVersionOf(content: string | Buffer): string {
@@ -196,6 +256,62 @@ function codeOf(err: unknown): string | undefined {
 
 function domainError(errorCode: string, message: string): Error {
   return Object.assign(new Error(message), { errorCode });
+}
+
+/** 结构指纹上限：超过即返回 null（如实说明"未完整核对"，不做全树扫描的假保证）。 */
+const MAX_FINGERPRINT_ENTRIES = 2_000;
+const MAX_FINGERPRINT_BYTES = 16 * 1024 * 1024;
+
+/**
+ * 有界的内容/结构指纹，用于结构变更后的**结果确认**。
+ *
+ * 文件：长度 + SHA-256；目录：递归列出相对路径、长度与每个文件的 SHA-256，
+ * 不跟随符号链接（链接只记录名字）。超过条目/字节上限返回 `null`。
+ */
+async function fingerprintOf(absPath: string, isDir: boolean): Promise<string | null> {
+  if (!isDir) {
+    const buf = await readFile(absPath);
+    return `file:${buf.length}:${createHash('sha256').update(buf).digest('hex')}`;
+  }
+  const parts: string[] = [];
+  let entries = 0;
+  let bytes = 0;
+  const walk = async (dir: string, prefix: string): Promise<boolean> => {
+    const list = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    );
+    for (const entry of list) {
+      entries += 1;
+      if (entries > MAX_FINGERPRINT_ENTRIES) return false;
+      const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+      const abs = join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        parts.push(`link:${rel}`);
+      } else if (entry.isDirectory()) {
+        parts.push(`dir:${rel}`);
+        if (!(await walk(abs, rel))) return false;
+      } else {
+        const buf = await readFile(abs);
+        bytes += buf.length;
+        if (bytes > MAX_FINGERPRINT_BYTES) return false;
+        parts.push(`file:${rel}:${buf.length}:${createHash('sha256').update(buf).digest('hex')}`);
+      }
+    }
+    return true;
+  };
+  if (!(await walk(absPath, ''))) return null;
+  return `tree:${createHash('sha256').update(parts.join('\n')).digest('hex')}`;
+}
+
+function moveErrorOf(err: unknown, isDir: boolean): ErrorCode {
+  const code = codeOf(err);
+  if (code === 'EXDEV') return 'ERR_MOVE_CROSS_VOLUME';
+  if (code === 'EEXIST') return 'ERR_ENTRY_EXISTS';
+  if (code === 'ENOENT' || code === 'ENOTDIR') return 'ERR_ENTRY_PARENT_INVALID';
+  if (isDir && (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES')) {
+    return 'ERR_ENTRY_DIR_BUSY';
+  }
+  return mapStorageError(err) as ErrorCode;
 }
 
 /**
@@ -778,6 +894,227 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN' };
       }
       return { status: 'CREATED', kind, relativePath };
+    },
+
+    /**
+     * UX-02C-02：真实改名 / 移动（同一授权根内的相对路径变更）。
+     *
+     * ## Windows 防覆盖策略（实测 + 官方语义）
+     *
+     * 本机 Node 22.22.2 / win32 实测：`fs.rename` 由 libuv 映射为
+     * `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`，因此
+     * - 文件 → 已存在文件：**静默覆盖**（目标原内容丢失）；
+     * - 目录 → 已存在文件：同样覆盖；
+     * - 目录 → 已存在目录：`EPERM`。
+     * 所以**绝不能**把 `fs.rename` 当成"目标不存在才成功"的原子操作，
+     * 也不能只做一次 `lstat` 预检（TOCTOU 窗口内外部进程仍可放入同名对象）。
+     *
+     * 策略：`open(target,'wx')` 先**排他占位**目标名（0 字节，属于本次操作自己），
+     * 随后 `rename` 只覆盖我们自己的占位。占位存在期间，任何外部进程创建同名
+     * 对象都会得到 EEXIST；同一个 Host 内的并发由项目级结构屏障串行化。
+     * 大小写仅变化的改名在 Windows 上源与目标本就是同一个对象，`wx` 会 EEXIST，
+     * 因此单独走直接 `rename`（不会覆盖第三方），并用 readdir 复核名称确实变了。
+     *
+     * ## 已知残留窗口（如实披露，不宣称原子无覆盖）
+     * - 外部进程若**删除我们的占位**并在 rename 之前放入自己的对象，仍可能被覆盖；
+     * - 进程在"占位已建、rename 未执行"之间崩溃会留下一个 0 字节占位文件；
+     * - `rename` 成功但之后根连续性/确认链失败一律 UNKNOWN，不回滚、不删除。
+     */
+    async moveEntry(sourcePath, targetParentDir, targetName): Promise<MoveEntryResult> {
+      const reject = (errorCode: ErrorCode): MoveEntryResult => ({ status: 'REJECTED', errorCode });
+      const unknown = (): MoveEntryResult => ({ status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN' });
+
+      // 1) 形状校验（零 IO）：所有路径都只是项目内相对路径
+      const srcCheck = validateParentDir(sourcePath);
+      if (!srcCheck.ok || srcCheck.value === '') return reject('ERR_ENTRY_SOURCE_INVALID');
+      const dirCheck = validateParentDir(targetParentDir);
+      if (!dirCheck.ok) return reject(dirCheck.errorCode);
+      const nameCheck = validateEntryName(targetName);
+      if (!nameCheck.ok) return reject(nameCheck.errorCode);
+
+      const source = srcCheck.value;
+      const targetDir = dirCheck.value;
+      const name = nameCheck.value;
+      const target = entryRelativePath(targetDir, name);
+      if (source === target) return reject('ERR_ENTRY_EXISTS');
+      /**
+       * 大小写仅变化：Windows 上源与目标其实是同一个目录项（路径大小写等价，
+       * 但字符串不同）。此时不能用 `wx` 占位（会 EEXIST），也不能按"目标已存在"
+       * 拒绝——这正是用户要改的显示大小写。POSIX 上不会命中这一分支。
+       */
+      const isCaseOnly = sameEntryPath(source, target);
+
+      // 2) C0：根连续性
+      try {
+        faults.atCheckpoint?.('C0');
+        assertRootContinuity(boundary, establishedToken);
+      } catch (err) {
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      // 3) 源：必须在固定边界内、真实存在、普通文件/目录，且不是重解析点
+      const sourceCheck = resolveInBoundary(boundary, source);
+      if (!sourceCheck.ok) return reject(sourceCheck.errorCode);
+      const sourceAbs = resolvePath(boundary.canonicalRoot, normalize(source));
+      if (!isPathInsideRoot(boundary.canonicalRoot, sourceAbs)) return reject('ERR_PATH_OUTSIDE_ROOT');
+      let sourceIsDir: boolean;
+      try {
+        const info = await lstat(sourceAbs);
+        if (info.isSymbolicLink() || isUntrustedResolution(sourceAbs)) {
+          return reject('ERR_ENTRY_SOURCE_INVALID');
+        }
+        if (info.isDirectory()) sourceIsDir = true;
+        else if (info.isFile()) sourceIsDir = false;
+        else return reject('ERR_ENTRY_SOURCE_INVALID');
+      } catch (err) {
+        if (isMissing(err)) return reject('ERR_RESOURCE_NOT_FOUND');
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      // 3b) 目录不得移入自身或后代：纯路径判定，必须早于目标父目录的 IO，
+      // 否则会被误报成"目标文件夹不存在"，掩盖真正的结构错误。
+      if (sourceIsDir && (isEntryUnder(targetDir, source) || isEntryUnder(target, source))) {
+        return reject('ERR_MOVE_INTO_DESCENDANT');
+      }
+
+      // 4) 目标父目录：必须真实存在且为普通目录，不跟随链接
+      const parentCheck = resolveInBoundary(boundary, targetDir === '' ? '.' : targetDir);
+      if (!parentCheck.ok) return reject(parentCheck.errorCode);
+      const parentAbs = resolvePath(boundary.canonicalRoot, normalize(targetDir === '' ? '.' : targetDir));
+      try {
+        const info = await lstat(parentAbs);
+        if (!info.isDirectory() || info.isSymbolicLink() || isUntrustedResolution(parentAbs)) {
+          return reject('ERR_ENTRY_PARENT_INVALID');
+        }
+      } catch (err) {
+        if (isMissing(err)) return reject('ERR_ENTRY_PARENT_INVALID');
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      // 5) 目标全路径：逐级边界校验 + 末段不被悄悄归一化
+      const targetCheck = resolveInBoundary(boundary, target);
+      if (!targetCheck.ok && !isCaseOnly) return reject(targetCheck.errorCode);
+      const targetAbs = resolvePath(boundary.canonicalRoot, normalize(target));
+      if (!isPathInsideRoot(boundary.canonicalRoot, targetAbs)) return reject('ERR_PATH_OUTSIDE_ROOT');
+      if (basename(targetAbs) !== name) return reject('ERR_ENTRY_NAME_INVALID');
+
+      // 6) 目标必须不存在（大小写仅变化除外：此时目标就是源本身）
+      if (!isCaseOnly) {
+        try {
+          await lstat(targetAbs);
+          return reject('ERR_ENTRY_EXISTS');
+        } catch (err) {
+          if (!isMissing(err)) return reject(mapStorageError(err) as ErrorCode);
+        }
+      }
+
+      // 8) 变更前的指纹，用于事后确认（文件 SHA-256 / 目录有界结构指纹）
+      let before: string | null;
+      try {
+        before = await fingerprintOf(sourceAbs, sourceIsDir);
+      } catch (err) {
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      // 9) C1：副作用之前的最后一次根连续性复核
+      try {
+        faults.atCheckpoint?.('C1');
+        assertRootContinuity(boundary, establishedToken);
+      } catch (err) {
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      /** 结果确认：'moved' / 'unchanged' / 'ambiguous'。绝不以"目标存在"单独推断成功。 */
+      const verify = async (): Promise<'moved' | 'unchanged' | 'ambiguous'> => {
+        try {
+          if (isCaseOnly) {
+            const names = await readdir(dirname(targetAbs));
+            return names.includes(name) ? 'moved' : 'unchanged';
+          }
+          let sourceGone = false;
+          try {
+            await lstat(sourceAbs);
+          } catch (err) {
+            if (!isMissing(err)) return 'ambiguous';
+            sourceGone = true;
+          }
+          let targetInfo;
+          try {
+            targetInfo = await lstat(targetAbs);
+          } catch (err) {
+            return isMissing(err) && !sourceGone ? 'unchanged' : 'ambiguous';
+          }
+          if (!sourceGone) {
+            // 源还在，目标只是我们的 0 字节占位 → 确认零变更
+            return targetInfo.isFile() && targetInfo.size === 0 ? 'unchanged' : 'ambiguous';
+          }
+          const isDir = targetInfo.isDirectory();
+          if (isDir !== sourceIsDir) return 'ambiguous';
+          const after = await fingerprintOf(targetAbs, isDir).catch(() => null);
+          if (before !== null && after !== null && before !== after) return 'ambiguous';
+          return 'moved';
+        } catch {
+          return 'ambiguous';
+        }
+      };
+
+      const finish = async (): Promise<MoveEntryResult> => {
+        // C4：副作用之后的确认链失败 → UNKNOWN，不回滚、不删除
+        try {
+          faults.atCheckpoint?.('C4');
+          assertRootContinuity(boundary, establishedToken);
+          faults.afterMove?.();
+        } catch {
+          return unknown();
+        }
+        const fileSha = !sourceIsDir && before !== null ? before.slice(before.lastIndexOf(':') + 1) : null;
+        return {
+          status: 'MOVED',
+          sourcePath: source,
+          targetPath: target,
+          kind: sourceIsDir ? 'directory' : 'file',
+          contentSha256: fileSha,
+        };
+      };
+
+      // 10) 排他占位：占用目标名，外部进程在此期间无法创建同名对象
+      let reserved = false;
+      if (!isCaseOnly) {
+        // 仅测试注入：模拟"目标存在性检查之后、占位之前外部创建了同名对象"
+        faults.beforeMoveReserve?.();
+        try {
+          const handle = await open(targetAbs, 'wx');
+          reserved = true;
+          await handle.close();
+        } catch (err) {
+          if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
+          return reject(moveErrorOf(err, sourceIsDir));
+        }
+      }
+
+      // 11) 真正的路径变更：只覆盖我们自己的占位
+      try {
+        await rename(sourceAbs, targetAbs);
+      } catch (err) {
+        const state = await verify();
+        if (state === 'moved') return finish(); // 已确认结构变更完成
+        if (state === 'ambiguous') return unknown();
+        // 确认零变更：只清掉本次操作自己创建的 0 字节占位
+        if (reserved) {
+          try {
+            const info = await lstat(targetAbs);
+            if (info.isFile() && info.size === 0) await unlink(targetAbs);
+            else return unknown();
+          } catch (cleanupErr) {
+            if (!isMissing(cleanupErr)) return unknown();
+          }
+        }
+        return reject(moveErrorOf(err, sourceIsDir));
+      }
+
+      const state = await verify();
+      if (state !== 'moved') return unknown();
+      return finish();
     },
   };
 }

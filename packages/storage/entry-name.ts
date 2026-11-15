@@ -92,3 +92,29 @@ export function validateParentDir(raw: unknown): EntryNameCheck {
 export function entryRelativePath(parentDir: string, name: string): string {
   return parentDir === '' ? name : `${parentDir}/${name}`;
 }
+
+/** 项目内相对路径 → 父目录（根下条目返回 ''）。仅做字符串拆分，不做 IO。 */
+export function parentDirOfEntry(path: string): string {
+  const slash = path.lastIndexOf('/');
+  return slash < 0 ? '' : path.slice(0, slash);
+}
+
+/** 项目内相对路径 → 末段名称。 */
+export function entryNameOf(path: string): string {
+  const slash = path.lastIndexOf('/');
+  return slash < 0 ? path : path.slice(slash + 1);
+}
+
+/** Windows 路径比较：大小写不敏感；POSIX 保持敏感。 */
+export function sameEntryPath(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/** `path` 是否等于 `prefix` 或位于 `prefix` 之下（按路径段比较，不做前缀字符串误判）。 */
+export function isEntryUnder(path: string, prefix: string): boolean {
+  if (prefix === '') return true;
+  if (sameEntryPath(path, prefix)) return true;
+  return process.platform === 'win32'
+    ? path.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)
+    : path.startsWith(`${prefix}/`);
+}

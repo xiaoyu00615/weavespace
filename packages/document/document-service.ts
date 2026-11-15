@@ -195,6 +195,26 @@ export interface DocumentService {
    * 只统计，不改变任何会话状态（不置 stale、不动 dirty/revision）。
    */
   projectSessionStats(projectId: string): ProjectSessionStats;
+  /**
+   * 枚举某项目下路径等于 `pathPrefix` 或位于其下的全部会话（UX-02C-02）。
+   *
+   * 目录改名/移动时用它检查**全部后代**；纯读，不改变任何会话状态。
+   * Windows 下按大小写不敏感匹配路径段。
+   */
+  sessionsUnder(projectId: string, pathPrefix: string): readonly SessionGuardView[];
+}
+
+/**
+ * 结构变更前的会话快照（UX-02C-02）：**只读**，不关闭、不丢弃、不重绑定。
+ * Host 据此判断源路径（或目录的全部后代）是否还有不能动的编辑会话。
+ */
+export interface SessionGuardView {
+  readonly sessionId: string;
+  readonly path: string;
+  readonly activeViews: number;
+  readonly dirty: boolean;
+  readonly state: DocumentState;
+  readonly stale: boolean;
 }
 
 /** 项目级会话概览：每一项都来自 Host 内存，与六态状态机同源。 */
@@ -814,6 +834,35 @@ export function createDocumentService(options: DocumentServiceOptions = {}): Doc
         if (!hasView && !session.dirty && session.state === 'CLEAN') stats.cleanIdle += 1;
       }
       return Object.freeze(stats);
+    },
+
+    /**
+     * 结构变更门禁的**唯一**会话数据源：只遍历内部 sessions，不采信 Shell 自述。
+     * 目录用路径段前缀匹配（'docs' 不会误命中 'docs-other'）。
+     */
+    sessionsUnder(projectId, pathPrefix) {
+      const norm = (value: string): string => {
+        const unified = value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+        return WIN ? unified.toLowerCase() : unified;
+      };
+      const prefix = norm(pathPrefix);
+      const out: SessionGuardView[] = [];
+      for (const session of sessions.values()) {
+        if (session.projectId !== projectId) continue;
+        const path = norm(session.path);
+        if (prefix !== '' && path !== prefix && !path.startsWith(`${prefix}/`)) continue;
+        out.push(
+          Object.freeze({
+            sessionId: session.sessionId,
+            path: session.path,
+            activeViews: session.views.size,
+            dirty: session.dirty,
+            state: session.state,
+            stale: session.stale !== undefined,
+          }),
+        );
+      }
+      return Object.freeze(out);
     },
 
     drainEvents() {

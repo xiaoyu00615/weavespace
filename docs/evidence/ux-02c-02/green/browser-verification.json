@@ -1,0 +1,116 @@
+{
+  "run": "green",
+  "picker": "fake-picker（非 Windows 原生弹窗）",
+  "steps": {
+    "projects": [
+      "ux02c02-green-projA",
+      "ux02c02-green-projB"
+    ],
+    "renameMenu": {
+      "rc": "OK",
+      "labels": [
+        "重命名",
+        "移动到…",
+        "新建文件",
+        "新建文件夹",
+        "创建已支持的扩展文件›",
+        "刷新此目录"
+      ]
+    },
+    "clickRename": "OK",
+    "renameInput": {
+      "value": "a.md",
+      "focused": true,
+      "selection": [
+        0,
+        1
+      ],
+      "disabled": false
+    },
+    "renamed": {
+      "oldGone": true,
+      "newExists": true,
+      "shaUnchanged": true
+    },
+    "escape": {
+      "inputGone": true,
+      "diskUnchanged": true,
+      "absent": true
+    },
+    "invalidName": {
+      "error": "名称是系统保留名，请换一个",
+      "conAbsent": true
+    },
+    "clickMove": "OK",
+    "moveDialog": {
+      "source": "数学笔记.md",
+      "target": "archive/数学笔记.md",
+      "options": [
+        {
+          "value": "archive",
+          "label": "archive"
+        },
+        {
+          "value": "docs",
+          "label": "docs"
+        }
+      ],
+      "error": null
+    },
+    "setTarget": "OK",
+    "moveDialogAfter": {
+      "source": "数学笔记.md",
+      "target": "archive/数学笔记.md",
+      "options": [
+        {
+          "value": "archive",
+          "label": "archive"
+        },
+        {
+          "value": "docs",
+          "label": "docs"
+        }
+      ],
+      "error": null
+    },
+    "movedOnDisk": {
+      "sourceGone": true,
+      "targetExists": true,
+      "shaUnchanged": true
+    },
+    "sessionBlocked": {
+      "error": "无法改名或移动：该文件（或目录内文件）仍有打开的编辑标签。请先关闭相关标签并处理草稿，操作没有任何磁盘副作用。",
+      "untouched": true
+    },
+    "otherProjectFiles": [
+      "b.md"
+    ],
+    "structureBodies": [
+      {
+        "url": "/api/files/rename",
+        "body": "{\"projectId\":\"ux02c02-green-proja\",\"sourcePath\":\"a.md\",\"name\":\"数学笔记.md\"}"
+      },
+      {
+        "url": "/api/files/move",
+        "body": "{\"projectId\":\"ux02c02-green-proja\",\"sourcePath\":\"数学笔记.md\",\"targetParentDir\":\"archive\",\"name\":\"数学笔记.md\"}"
+      }
+    ],
+    "rootAStat": true
+  },
+  "checks": {
+    "菜单含重命名": true,
+    "菜单含移动到": true,
+    "改名输入框可见且预填原名": true,
+    "改名输入框聚焦且选中主名": true,
+    "Enter 真实改名且 SHA-256 不变": true,
+    "Esc 取消零磁盘变更": true,
+    "非法名称显示行内错误且零落盘": true,
+    "移动选择器展示源与目标相对路径": true,
+    "候选目录不含链接或后代": true,
+    "确认后真实移动且字节一致": true,
+    "活动编辑视图阻止改名": true,
+    "B 项目不受影响": true,
+    "请求体只有相对路径与单段名称": true
+  },
+  "ok": true
+}

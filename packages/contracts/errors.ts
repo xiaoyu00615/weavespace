@@ -175,6 +175,20 @@ export const ERROR_CODES = {
    * 绝不静默递归创建缺失父目录。
    */
   ERR_ENTRY_PARENT_INVALID: 'ERR_ENTRY_PARENT_INVALID',
+  /**
+   * 结构变更（UX-02C-02）：源路径 / 目标路径下仍有活动编辑 View、未保存草稿，
+   * 或处于 SAVING / OUTCOME_UNKNOWN / CONFLICT 等危险会话；也可能是结构变更屏障
+   * 正忙（在途磁盘操作未排空）。零磁盘副作用。
+   */
+  ERR_STRUCTURE_SESSION_BUSY: 'ERR_STRUCTURE_SESSION_BUSY',
+  /** 结构变更：把目录移动到自身或自己的后代目录，或目标父链经过不可信链接。 */
+  ERR_MOVE_INTO_DESCENDANT: 'ERR_MOVE_INTO_DESCENDANT',
+  /** 结构变更：跨卷 / 跨设备移动（EXDEV），首版不提供复制+删除的部分成功链路。 */
+  ERR_MOVE_CROSS_VOLUME: 'ERR_MOVE_CROSS_VOLUME',
+  /** 结构变更：Windows 上目录被占用（EPERM/EBUSY），无法改名或移动。 */
+  ERR_ENTRY_DIR_BUSY: 'ERR_ENTRY_DIR_BUSY',
+  /** 结构变更：源不存在、不是普通文件/目录、或是链接 / 重解析点。 */
+  ERR_ENTRY_SOURCE_INVALID: 'ERR_ENTRY_SOURCE_INVALID',
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

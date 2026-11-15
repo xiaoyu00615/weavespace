@@ -1686,3 +1686,67 @@ button {
   overflow: hidden;
   outline: none;
 }
+
+/* ---------- UX-02C-02：移动到… 选择器 ---------- */
+
+.move__dialog {
+  width: min(460px, 100%);
+}
+
+.move__paths {
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  gap: 4px 10px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.move__paths dt {
+  color: var(--muted);
+}
+
+.move__paths dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.move__label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.move__select {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.move__select:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.move__error {
+  margin: 0 0 12px;
+  padding: 7px 9px;
+  border: 1px solid #f0dcc0;
+  border-radius: 7px;
+  background: #fdf6ec;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.55;
+}

@@ -64,6 +64,11 @@ export interface TreeLevelLoader {
   load(projectId: string | null, dir: string, append: boolean): Promise<TreeLoadOutcome>;
   /** 刷新某个项目：作废它名下所有层的在途请求。 */
   invalidateProject(projectKey: string): void;
+  /**
+   * 作废某一层的在途请求（UX-02C-02）：改名/移动旧路径下的层被删掉后，
+   * 迟到的旧响应不能再把旧节点复活。
+   */
+  invalidateLevel(projectKey: string, dir: string): void;
   /** 换模式 / 重新连接：作废所有在途请求。 */
   invalidateAll(): void;
   /** 与工作区加载链共享的归属守卫（R2-01）。 */
@@ -117,6 +122,8 @@ export interface TreeOwnershipGuard {
   /** 请求结束：只清理自己那条在途记录。 */
   end(ticket: TreeRequestTicket): void;
   invalidateProject(projectKey: string): void;
+  /** 只推进某一层的请求代次，使其所有在途票据立即失效。 */
+  invalidateLevel(projectKey: string, dir: string): void;
   invalidateAll(): void;
 }
 
@@ -203,6 +210,11 @@ export function createTreeOwnershipGuard(
     end(ticket) {
       const key = levelKeyOf(ticket.projectKey, ticket.dir);
       if (inFlight.get(key) === ticket) inFlight.delete(key);
+    },
+    invalidateLevel(projectKey, dir) {
+      const key = levelKeyOf(projectKey, dir);
+      generation.set(key, (generation.get(key) ?? 0) + 1);
+      inFlight.delete(key);
     },
     invalidateProject(projectKey) {
       projectGeneration.set(projectKey, (projectGeneration.get(projectKey) ?? 0) + 1);
@@ -320,6 +332,9 @@ export function createTreeLevelLoader(
     load: (projectId, dir, append) => attempt(projectId, dir, append, 0),
     invalidateProject(projectKey) {
       ownership.invalidateProject(projectKey);
+    },
+    invalidateLevel(projectKey, dir) {
+      ownership.invalidateLevel(projectKey, dir);
     },
     invalidateAll() {
       ownership.invalidateAll();

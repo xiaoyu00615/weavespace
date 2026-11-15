@@ -25,6 +25,7 @@ import {
   type WeaveSpaceClient,
   type CreateEntryOutcome,
   type CreateEntryKindDto,
+  type StructureChangeOutcome,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
 import { backupDraftBeforeReload } from '../client/draft-backup';
@@ -41,6 +42,7 @@ import {
 } from './workspace-persistence';
 import { createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
 import { emptyLevels, ROOT_LEVEL } from '../components/tree-model.ts';
+import { parentDirOfEntry } from '../../../../packages/storage/entry-name.ts';
 import { createTreeLevelLoader, createTreeOwnershipGuard, type TreeLoadIdentity } from './tree-load.ts';
 import {
   createAddProjectFlow,
@@ -172,9 +174,44 @@ export interface DocumentActions {
     dir: string,
     options?: { expand?: boolean },
   ): Promise<void>;
+
+  /* ---- UX-02C-02：真实改名 / 移动 ---- */
+
+  /** 同一目录内改名；目标目录由 Host 派生。 */
+  renameEntry(projectId: string, sourcePath: string, name: string): Promise<StructureChangeOutcome>;
+  /** 同一授权项目内移动。 */
+  moveEntry(
+    projectId: string,
+    sourcePath: string,
+    targetParentDir: string,
+    name: string,
+  ): Promise<StructureChangeOutcome>;
+  /**
+   * Host 明确 APPLIED 之后才调用：清理旧路径层/展开/选择，刷新源父层与目标父层，
+   * 并尽可能展开目标位置。失败或 UNKNOWN 时**不得**调用（不许乐观改名字）。
+   */
+  applyStructureChange(
+    outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>,
+  ): Promise<void>;
+  /** UNKNOWN 时恰好一次的只读核对：只刷新源父层与目标父层，不重发、不改草稿。 */
+  checkStructureLocations(
+    projectId: string,
+    sourceParentDir: string,
+    targetParentDir: string,
+  ): Promise<void>;
 }
 
 const DocumentActionsContext = createContext<DocumentActions | null>(null);
+
+/** Demo / Legacy / 静态 Multi 明确不提供真实结构变更，不制造"点了会假成功"的入口。 */
+function unsupportedStructure(): StructureChangeOutcome {
+  return {
+    status: 'REJECTED',
+    errorCode: 'ERR_COMMAND_UNSUPPORTED',
+    message: '当前模式不提供真实改名或移动',
+    httpStatus: 501,
+  };
+}
 
 /** 冲突重载前的草稿备份前缀：只写 sessionStorage，不落任何用户目录。 */
 const DRAFT_BACKUP_PREFIX = 'ws:draft-backup:';
@@ -872,6 +909,76 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           }
         }
         await treeLoader.current.load(projectId, dir, false);
+      },
+
+      /* ---- UX-02C-02：真实改名 / 移动 ---- */
+
+      async renameEntry(projectId, sourcePath, name) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return unsupportedStructure();
+        }
+        return liveClient.renameEntry(projectId, sourcePath, name);
+      },
+
+      async moveEntry(projectId, sourcePath, targetParentDir, name) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return unsupportedStructure();
+        }
+        return liveClient.moveEntry(projectId, sourcePath, targetParentDir, name);
+      },
+
+      /**
+       * 只有 Host 明确 APPLIED 才走到这里。
+       *
+       * 迟到的旧路径加载结果由 `invalidateLevel` 推进该层请求代次作废；
+       * `TREE_STRUCTURE_CHANGED` 删掉旧层缓存 / 展开 / 选择记录；随后只重新取
+       * 源父层与目标父层，不递归扫描整棵树，也不动其它项目、标签与草稿。
+       */
+      async applyStructureChange(outcome) {
+        const projectId = outcome.projectId;
+        const sourceParent = parentDirOfEntry(outcome.sourcePath);
+        const targetParent = outcome.targetParentDir;
+        const levels = stateRef.current.treeByProject[projectId] ?? {};
+        for (const dir of Object.keys(levels)) {
+          if (dir === outcome.sourcePath || dir.startsWith(`${outcome.sourcePath}/`)) {
+            treeLoader.current.invalidateLevel(projectId, dir);
+          }
+        }
+        treeLoader.current.invalidateLevel(projectId, sourceParent);
+        treeLoader.current.invalidateLevel(projectId, targetParent);
+        dispatch({
+          type: 'TREE_STRUCTURE_CHANGED',
+          projectId,
+          sourcePath: outcome.sourcePath,
+          targetPath: outcome.targetPath,
+        });
+        await treeLoader.current.load(projectId, sourceParent, false);
+        if (targetParent !== sourceParent) {
+          await treeLoader.current.load(projectId, targetParent, false);
+        }
+        // 尽可能展开目标位置的祖先目录，让用户看到新位置；分页未加载到的节点不假装可见
+        const refreshed = stateRef.current.treeByProject[projectId] ?? {};
+        const allNodes = Object.values(refreshed).flatMap((level) => level.entries);
+        const segments = targetParent.split('/').filter(Boolean);
+        for (let i = 1; i <= segments.length; i += 1) {
+          const dir = segments.slice(0, i).join('/');
+          const folder = allNodes.find(
+            (node) => node.kind === 'folder' && (node.path ?? '') === dir,
+          );
+          if (folder) dispatch({ type: 'EXPAND_PROJECT_NODE', projectId, path: folder.id });
+        }
+        dispatch({
+          type: 'NOTICE',
+          message: `已把「${outcome.sourcePath}」变更为「${outcome.targetPath}」（只刷新了相关目录）`,
+        });
+      },
+
+      /** UNKNOWN：恰好一次只读核对源位置与目标位置，不重发、不改草稿、不推断成功。 */
+      async checkStructureLocations(projectId, sourceParentDir, targetParentDir) {
+        await treeLoader.current.load(projectId, sourceParentDir, false);
+        if (targetParentDir !== sourceParentDir) {
+          await treeLoader.current.load(projectId, targetParentDir, false);
+        }
       },
 
       async openNode(node: ResourceNodeState, projectId?: string | null) {        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）

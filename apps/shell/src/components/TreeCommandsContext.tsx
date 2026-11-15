@@ -1,16 +1,21 @@
 /**
- * 文件树命令编排（UX-02C-01）：**菜单与顶部工具栏的唯一入口**。
+ * 文件树命令编排（UX-02C-01 创建 / UX-02C-02 改名与移动）：
+ * **菜单、顶部工具栏、行内输入框、移动对话框的唯一入口**。
  *
- * 职责：把"右键了什么 / 工具栏在哪"折算成显式 `(projectId, parentDir)`，
- * 管住行内命名状态与单飞提交，然后把结果交给 `DocumentActions` 去刷新层表。
- * 不 fetch、不碰磁盘、不复制任何授权判定；同名/路径的权威判定在 Host。
+ * 职责：把"右键了什么 / 工具栏在哪"折算成显式 `(projectId, 相对路径)`，
+ * 管住行内命名与单飞提交，然后把结果交给 `DocumentActions` 去刷新层表。
+ * 不 fetch、不碰磁盘、不复制任何授权判定；同名/路径/会话的权威判定在 Host。
  *
- * 未来命令（`rename / move / delete-local / …`）只在 `ContextMenu.tsx` 的
+ * 未来命令（`delete-local / hide-from-workspace / …`）只在 `ContextMenu.tsx` 的
  * `RESERVED_TREE_COMMANDS` 里占位，本轮**不渲染**成点了没反应的假菜单。
  */
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
-import type { CreateEntryKindDto, CreateEntryOutcome } from '../client/client-api.ts';
+import type {
+  CreateEntryKindDto,
+  CreateEntryOutcome,
+  StructureChangeOutcome,
+} from '../client/client-api.ts';
 import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
 import { supportedFileExtensions, type SupportedExtension } from '../capabilities/supported-extensions.ts';
 import {
@@ -19,13 +24,26 @@ import {
   EMPTY_PRESET_STEM_MESSAGE,
   initialNamingDraft,
   missingPresetStem,
+  normalizeDir,
   parentDirOf,
   resolveCreateTarget,
+  selectionForPreset,
   type CreateOrigin,
 } from '../state/create-entry.ts';
+import {
+  createStructureRunner,
+  inputSurvivesStructureResult,
+  localStructureBlockers,
+  moveTargetOptions,
+  renameDraftOf,
+  STRUCTURE_BUSY_MESSAGE,
+  type StructureEntryKind,
+} from '../state/structure-change.ts';
+import { entryNameOf } from '../../../../packages/storage/entry-name.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { ContextMenu, type MenuItem } from './ContextMenu.tsx';
+import { MoveEntryDialog } from './MoveEntryDialog.tsx';
 
 export interface TreeTarget {
   readonly origin: CreateOrigin;
@@ -33,16 +51,36 @@ export interface TreeTarget {
   readonly projectId: string | null;
   /** folder：自身相对路径；file：文件相对路径。 */
   readonly nodePath?: string | null;
-  /** 右键文件夹行时该行的节点 id：折叠目录中创建可以精确、幂等地展开它。 */
+  /** 右键文件夹行时该行的节点 id：折叠目录中创建可精确、幂等地展开。 */
   readonly nodeId?: string | null;
+  /** 被右键节点的类型：改名/移动据此判断是否要检查后代。 */
+  readonly entryKind?: StructureEntryKind | 'link';
 }
 
 export interface NamingState {
+  /** create = 新建；rename = 真实改名。两者共用同一个行内输入行。 */
+  readonly mode: 'create' | 'rename';
   readonly projectId: string;
+  /** 输入行所在的层：create 是目标目录；rename 是源节点的父目录。 */
   readonly parentDir: string;
   readonly kind: CreateEntryKindDto;
   readonly presetExtension?: string;
   readonly draft: string;
+  readonly selection: [number, number];
+  readonly error: string | null;
+  readonly submitting: boolean;
+  /** rename 专用：源相对路径与源类型。 */
+  readonly sourcePath?: string;
+  readonly entryKind?: StructureEntryKind;
+}
+
+export interface MoveDialogState {
+  readonly projectId: string;
+  readonly sourcePath: string;
+  readonly targetName: string;
+  readonly entryKind: StructureEntryKind;
+  readonly targetParentDir: string;
+  readonly options: readonly string[];
   readonly error: string | null;
   readonly submitting: boolean;
 }
@@ -60,6 +98,14 @@ interface TreeCommandsValue {
   closeContextMenu(): void;
   /** 右键菜单与工具栏都走这里；`presetExtension` 只影响行内输入的初值与选区。 */
   beginCreate(kind: CreateEntryKindDto, target: TreeTarget, presetExtension?: string): void;
+  /** 右键文件/文件夹 → 行内改名（预填原名，选主文件名）。 */
+  beginRename(target: TreeTarget): void;
+  /** 右键文件/文件夹 → 打开"移动到…"选择器。 */
+  openMove(target: TreeTarget): void;
+  setMoveTarget(dir: string): void;
+  confirmMove(): Promise<void>;
+  cancelMove(): void;
+  readonly moveDialog: MoveDialogState | null;
   toolbarCreate(kind: CreateEntryKindDto): void;
   toolbarRefresh(): void;
   noteSelection(projectId: string, kind: 'folder' | 'file', path: string): void;
@@ -82,21 +128,19 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuSeq = useRef(0);
   const [naming, setNaming] = useState<NamingState | null>(null);
+  const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null);
   /** "当前明确选中的目录"按项目记录：空白区 / 工具栏据此决定创建位置。 */
   const [selectedDirByProject, setSelectedDirByProject] = useState<Record<string, string>>({});
   /**
-   * 项目根容器展开态（UX-02C-01-R1）。
-   *
-   * 从 `ProjectList` 上提到命令编排里：右键折叠的项目根开始创建时，
-   * `beginCreate` 能在**同一次渲染**里既打开根、又挂上输入行，输入框因此
-   * 立刻可见且自动聚焦。缺席即默认展开，与之前 `?? true` 的语义一致。
+   * 项目根容器展开态（UX-02C-01-R1）。从 `ProjectList` 上提，使"打开根"与
+   * "挂上输入行"在同一次渲染里完成。缺席即默认展开。
    */
   const [openRoots, setOpenRoots] = useState<Record<string, boolean>>({});
   const isRootOpen = useCallback((projectId: string): boolean => openRoots[projectId] ?? true, [openRoots]);
   const toggleRoot = useCallback((projectId: string): void => {
     setOpenRoots((current) => ({ ...current, [projectId]: !(current[projectId] ?? true) }));
   }, []);
-  /** 幂等打开：已经展开（或缺席即默认展开）时返回原 state，绝不误折叠。 */
+  /** 幂等打开：已经展开时返回原 state，绝不误折叠。 */
   const ensureRootOpen = useCallback((projectId: string): void => {
     setOpenRoots((current) =>
       current[projectId] === false ? { ...current, [projectId]: true } : current,
@@ -105,7 +149,6 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
 
   const supportedExtensions = useMemo(
     () => supportedFileExtensions({ list: () => registry.list(), resolveViewer }, ready),
-    // revision 参与依赖：插件启用/停用后二级菜单立刻跟着变
     [registry, resolveViewer, ready, revision],
   );
 
@@ -117,28 +160,52 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     [state.mode, state.workspaceMode, state.projects],
   );
 
+  /** 两个编排器共用的提示落地：状态栏 + 当前输入行/对话框的行内错误。 */
+  const onNotice = useCallback(
+    (message: string) => {
+      dispatch({ type: 'NOTICE', message });
+      setNaming((current) => (current ? { ...current, error: message } : current));
+      setMoveDialog((current) => (current ? { ...current, error: message } : current));
+    },
+    [dispatch],
+  );
+
   const runner = useMemo(
     () =>
       createEntryRunner({
         create: (input) => actions.createEntry(input.projectId, input.parentDir, input.name, input.kind),
         checkDirectory: async (projectId, parentDir) => {
-          // 只读核对：不创建、不改标签草稿；同一层的在途旧请求由 layer loader 作废
           await actions.refreshTreeLevel(projectId, parentDir);
         },
         onApplied: (outcome: Extract<CreateEntryOutcome, { status: 'APPLIED' }>) => {
-          // 只失效目标项目的目标目录层；必要时把目标文件夹展开
           void actions.refreshTreeLevel(outcome.projectId, outcome.parentDir, { expand: true });
           dispatch({
             type: 'NOTICE',
             message: `已创建「${outcome.name}」（刷新该目录后可见；未加载到的分页不声明已显示）`,
           });
         },
-        onNotice: (message) => {
-          dispatch({ type: 'NOTICE', message });
-          setNaming((current) => (current ? { ...current, error: message } : current));
-        },
+        onNotice,
       }),
-    [actions, dispatch],
+    [actions, dispatch, onNotice],
+  );
+
+  const structureRunner = useMemo(
+    () =>
+      createStructureRunner({
+        rename: (projectId, sourcePath, name) => actions.renameEntry(projectId, sourcePath, name),
+        move: (projectId, sourcePath, targetParentDir, name) =>
+          actions.moveEntry(projectId, sourcePath, targetParentDir, name),
+        // Host 重启后内存会话表归零，Shell 本地标签/草稿这道门必须独立存在
+        localBlockers: (projectId, sourcePath, entryKind) =>
+          localStructureBlockers(state.tabs, projectId, sourcePath, entryKind),
+        checkLocations: (projectId, sourceParentDir, targetParentDir) =>
+          actions.checkStructureLocations(projectId, sourceParentDir, targetParentDir),
+        onApplied: (outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>) => {
+          void actions.applyStructureChange(outcome);
+        },
+        onNotice,
+      }),
+    [actions, state.tabs, onNotice],
   );
 
   const resolve = useCallback(
@@ -163,12 +230,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'NOTICE', message: resolved.reason });
         return;
       }
-      /**
-       * R1-01：输入行只在展开的目录里渲染，所以开始创建时先把"项目根 +
-       * 目标文件夹"打开。两处都用**幂等**动作（`ensureRootOpen` /
-       * `EXPAND_PROJECT_NODE`），已展开的目录不会被 toggle 折叠回去；
-       * `nodeId` 直接来自被右键的那一行，分页没加载到的层不会展开幻影节点。
-       */
+      // R1-01：输入行只在展开的目录里渲染；两处都用幂等动作，不会误折叠
       const plan = createExpansionPlan({
         projectId: resolved.projectId,
         parentDir: resolved.parentDir,
@@ -183,12 +245,15 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
           path: plan.folderNodeId,
         });
       }
+      const draft = initialNamingDraft(presetExtension);
       setNaming({
+        mode: 'create',
         projectId: resolved.projectId,
         parentDir: resolved.parentDir,
         kind,
         ...(presetExtension ? { presetExtension } : {}),
-        draft: initialNamingDraft(presetExtension),
+        draft,
+        selection: selectionForPreset(draft, presetExtension),
         error: null,
         submitting: false,
       });
@@ -196,32 +261,167 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     [dispatch, resolve, ensureRootOpen, state.treeByProject],
   );
 
+  /** 能被改名/移动的上下文：必须是真实 Multi 项目里的普通文件或文件夹。 */
+  const structureSource = useCallback(
+    (target: TreeTarget):
+      | {
+          projectId: string;
+          sourcePath: string;
+          entryKind: StructureEntryKind;
+          parentDir: string;
+        }
+      | null => {
+      const projectId = target.projectId;
+      const sourcePath = target.nodePath == null ? '' : normalizeDir(target.nodePath);
+      if (
+        !projectId ||
+        sourcePath === '' ||
+        (target.origin !== 'file' && target.origin !== 'folder') ||
+        target.entryKind !== 'file' && target.entryKind !== 'directory'
+      ) {
+        return null;
+      }
+      if (!isSupported(projectId)) return null;
+      return {
+        projectId,
+        sourcePath,
+        entryKind: target.entryKind,
+        parentDir: parentDirOf(sourcePath),
+      };
+    },
+    [isSupported],
+  );
+
+  const beginRename = useCallback(
+    (target: TreeTarget) => {
+      setMenu(null);
+      const source = structureSource(target);
+      if (!source) {
+        dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以改名' });
+        return;
+      }
+      ensureRootOpen(source.projectId);
+      const draft = renameDraftOf(source.sourcePath);
+      setNaming({
+        mode: 'rename',
+        projectId: source.projectId,
+        parentDir: draft.parentDir,
+        kind: source.entryKind === 'directory' ? 'directory' : 'file',
+        draft: draft.draft,
+        selection: draft.selection,
+        error: null,
+        submitting: false,
+        sourcePath: draft.sourcePath,
+        entryKind: source.entryKind,
+      });
+    },
+    [dispatch, ensureRootOpen, structureSource],
+  );
+
+  const openMove = useCallback(
+    (target: TreeTarget) => {
+      setMenu(null);
+      const source = structureSource(target);
+      if (!source) {
+        dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以移动' });
+        return;
+      }
+      const levels = state.treeByProject[source.projectId] ?? {};
+      const options = moveTargetOptions(levels, source.sourcePath, source.entryKind).filter(
+        (dir) => dir !== source.parentDir,
+      );
+      setMoveDialog({
+        projectId: source.projectId,
+        sourcePath: source.sourcePath,
+        targetName: entryNameOf(source.sourcePath),
+        entryKind: source.entryKind,
+        targetParentDir: options[0] ?? '',
+        options,
+        error: null,
+        submitting: false,
+      });
+    },
+    [dispatch, state.treeByProject, structureSource],
+  );
+
+  const setMoveTarget = useCallback((dir: string) => {
+    setMoveDialog((current) =>
+      current && current.options.includes(dir) ? { ...current, targetParentDir: dir, error: null } : current,
+    );
+  }, []);
+
+  const cancelMove = useCallback(() => setMoveDialog(null), []);
+
+  const confirmMove = useCallback(async (): Promise<void> => {
+    if (!moveDialog || moveDialog.submitting) return;
+    setMoveDialog((current) => (current ? { ...current, submitting: true, error: null } : current));
+    const result = await structureRunner.submit({
+      kind: 'move',
+      projectId: moveDialog.projectId,
+      sourcePath: moveDialog.sourcePath,
+      targetParentDir: moveDialog.targetParentDir,
+      targetName: moveDialog.targetName,
+      entryKind: moveDialog.entryKind,
+    });
+    if (!inputSurvivesStructureResult(result)) {
+      setMoveDialog(null);
+      return;
+    }
+    if (result === 'busy') {
+      setMoveDialog((current) =>
+        (current ? { ...current, submitting: false, error: STRUCTURE_BUSY_MESSAGE } : current),
+      );
+      return;
+    }
+    // blocked / rejected：保留对话框供修正目标，原因已由 onNotice 写入行内错误
+    setMoveDialog((current) => (current ? { ...current, submitting: false } : current));
+  }, [moveDialog, structureRunner]);
+
   const cancelNaming = useCallback(() => setNaming(null), []);
 
   const submitNaming = useCallback(async (): Promise<void> => {
     if (!naming || naming.submitting) return;
-    // R1-02：预设扩展名还没填主名时连"提交中"都不进入——否则输入框会被
-    // disabled 一下而失焦；直接留着输入并给行内提示，用户改完按 Enter 即可。
-    if (missingPresetStem(naming.draft, naming.presetExtension)) {
+    if (naming.mode === 'create' && missingPresetStem(naming.draft, naming.presetExtension)) {
+      // R1-02：连"提交中"都不进入，避免输入框被禁用而失焦
       setNaming((current) => (current ? { ...current, error: EMPTY_PRESET_STEM_MESSAGE } : current));
       return;
     }
+    if (naming.mode === 'rename' && naming.draft === entryNameOf(naming.sourcePath ?? '')) {
+      setNaming((current) => (current ? { ...current, error: '请输入不同的名称' } : current));
+      return;
+    }
     setNaming((current) => (current ? { ...current, submitting: true, error: null } : current));
-    const result = await runner.submit({
-      projectId: naming.projectId,
-      parentDir: naming.parentDir,
-      name: naming.draft,
-      kind: naming.kind,
-      ...(naming.presetExtension ? { presetExtension: naming.presetExtension } : {}),
-    });
-    if (result === 'applied' || result === 'unknown' || result === 'busy') {
-      // 成功或结果未知都收起输入行：绝不留一个"看起来还能再点一次"的入口
+
+    const result =
+      naming.mode === 'rename'
+        ? await structureRunner.submit({
+            kind: 'rename',
+            projectId: naming.projectId,
+            sourcePath: naming.sourcePath ?? '',
+            targetParentDir: naming.parentDir,
+            targetName: naming.draft,
+            entryKind: naming.entryKind ?? 'file',
+          })
+        : await runner.submit({
+            projectId: naming.projectId,
+            parentDir: naming.parentDir,
+            name: naming.draft,
+            kind: naming.kind,
+            ...(naming.presetExtension ? { presetExtension: naming.presetExtension } : {}),
+          });
+    if (!inputSurvivesStructureResult(result)) {
+      // applied / unknown：收起输入行（unknown 的提示由状态栏保持可辨认）
       setNaming(null);
       return;
     }
-    // rejected：保留输入供修正，行内显示 Host 给出的原因
+    if (result === 'busy') {
+      setNaming((current) => (current ? { ...current, submitting: false, error: STRUCTURE_BUSY_MESSAGE } : current));
+      return;
+    }
+    // blocked / rejected：保留输入供修正，行内显示原因
+    // （原因已由 onNotice 在提交期间写入，这里只解除提交中状态）
     setNaming((current) => (current ? { ...current, submitting: false } : current));
-  }, [naming, runner]);
+  }, [naming, runner, structureRunner]);
 
   const noteSelection = useCallback((projectId: string, kind: 'folder' | 'file', path: string) => {
     const dir = kind === 'folder' ? path.replace(/\\/g, '/') : parentDirOf(path);
@@ -249,7 +449,6 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     // 输入框里的原生文本右键（剪切/复制/粘贴）不能抢
     if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return;
     event.preventDefault();
-    // 行上打开菜单后不再冒泡到"空白区"处理器，否则上下文会被覆盖成 blank
     event.stopPropagation();
     menuSeq.current += 1;
     setMenu({ x: event.clientX, y: event.clientY, nonce: menuSeq.current, target });
@@ -267,7 +466,22 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       if (resolved.ok) void actions.refreshTreeLevel(resolved.projectId, resolved.parentDir);
       setMenu(null);
     };
+    const structural = structureSource(target) !== null;
     return [
+      {
+        id: 'rename',
+        label: '重命名',
+        hidden: !structural,
+        disabled: !usable || isLink,
+        command: () => beginRename(target),
+      },
+      {
+        id: 'move',
+        label: '移动到…',
+        hidden: !structural,
+        disabled: !usable || isLink,
+        command: () => openMove(target),
+      },
       {
         id: 'new-file',
         label: '新建文件',
@@ -300,13 +514,30 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         command: refresh,
       },
     ];
-  }, [menu, isSupported, state.activeProjectId, beginCreate, supportedExtensions, resolve, actions]);
+  }, [
+    menu,
+    isSupported,
+    state.activeProjectId,
+    beginCreate,
+    beginRename,
+    openMove,
+    structureSource,
+    supportedExtensions,
+    resolve,
+    actions,
+  ]);
 
   const value = useMemo<TreeCommandsValue>(
     () => ({
       openContextMenu,
       closeContextMenu: () => setMenu(null),
       beginCreate,
+      beginRename,
+      openMove,
+      setMoveTarget,
+      confirmMove,
+      cancelMove,
+      moveDialog,
       toolbarCreate,
       toolbarRefresh,
       noteSelection,
@@ -322,6 +553,12 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     [
       openContextMenu,
       beginCreate,
+      beginRename,
+      openMove,
+      setMoveTarget,
+      confirmMove,
+      cancelMove,
+      moveDialog,
       toolbarCreate,
       toolbarRefresh,
       noteSelection,
@@ -346,6 +583,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
           onClose={() => setMenu(null)}
         />
       )}
+      <MoveEntryDialog />
     </TreeCommandsContext.Provider>
   );
 }

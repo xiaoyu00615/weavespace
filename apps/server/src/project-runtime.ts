@@ -225,6 +225,15 @@ export interface ProjectRuntime {
    * 进入前先判屏障：一旦 QUIESCING 就**不再准入**新操作。
    */
   withDiskOp<T>(projectId: string, fn: () => Promise<T> | T): Promise<T>;
+  /**
+   * 结构变更屏障（UX-02C-02）：改名/移动期间短暂独占该项目的**准入**。
+   *
+   * 与项目撤销状态机完全分离：不进入 QUIESCING/REMOVING，不放宽任何撤销门禁，
+   * 只是在 `assertUsable` 与 `isAcceptingViews` 上加一条新的拒绝条件，并先排空
+   * 在途 G-DISK 操作。这样"检查无活动会话"与"执行磁盘变更"之间，新的 open /
+   * save / create 无法插进来；已在途的磁盘操作由 `waitForZeroOps` 排空。
+   */
+  withStructureChange<T>(projectId: string, fn: () => Promise<T> | T): Promise<T>;
   /** 项目是否仍可继续创建 View（供 open 的晚到校验）。 */
   isAcceptingViews(projectId: string): boolean;
   providerOf(providerId: string): StorageProvider | undefined;
@@ -412,6 +421,12 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
 
   let revision = 0;
   let mutating = false;
+  /**
+   * 结构变更屏障（UX-02C-02）：按项目粒度的**准入独占**标记。
+   * 不是锁队列，也不复用撤销状态机：只在 `assertUsable` / `isAcceptingViews`
+   * 增加一条拒绝条件，配合 `waitForZeroOps` 排空已在途的磁盘操作。
+   */
+  const structureBusy = new Set<string>();
 
   // ---- 在途磁盘操作计数（屏障的 drain 对象）----
   const activeOps = new Map<string, number>();
@@ -791,6 +806,10 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       if (entry.state === 'QUIESCING' || entry.state === 'REMOVING') {
         throw domainError(ERROR_CODES.ERR_PROJECT_QUIESCING, '项目正在移除中，磁盘操作被拒绝');
       }
+      // 结构变更屏障：改名/移动的"检查→执行"窗口内拒绝一切新准入
+      if (structureBusy.has(projectId)) {
+        throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '项目正在执行结构变更，暂不接受其它操作');
+      }
       if (entry.state !== 'ACTIVE' || !entry.handle) {
         throw unavailableError(projectId, entry.reason);
       }
@@ -818,9 +837,39 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       }
     },
 
+    /**
+     * 结构变更屏障期间，open 的晚到校验也必须关门：否则一次已经通过
+     * `assertUsable` 的 open 会在窗口里留下绑定到旧路径的活动 View。
+     */
+    async withStructureChange(projectId, fn) {
+      // 先按常规门禁验一次（此刻还没有置忙），拿到可信状态
+      assertGlobalDiskTrust();
+      const entry = entries.get(projectId);
+      if (!entry) {
+        throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
+      }
+      if (entry.state === 'REVOKE_UNKNOWN' || diskDenied.has(projectId)) throw revokeUnknownError(projectId);
+      if (entry.state === 'QUIESCING' || entry.state === 'REMOVING') {
+        throw domainError(ERROR_CODES.ERR_PROJECT_QUIESCING, '项目正在移除中，磁盘操作被拒绝');
+      }
+      if (structureBusy.has(projectId)) {
+        throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '已有结构变更正在进行');
+      }
+      if (entry.state !== 'ACTIVE' || !entry.handle) throw unavailableError(projectId, entry.reason);
+      structureBusy.add(projectId);
+      try {
+        // 排空在途 G-DISK 操作；超时由 waitForZeroOps 抛 ERR_PROJECT_BUSY，
+        // 此时还没有任何磁盘副作用，可安全重试。
+        await waitForZeroOps(projectId);
+        return await fn();
+      } finally {
+        structureBusy.delete(projectId);
+      }
+    },
+
     isAcceptingViews(projectId) {
       const entry = entries.get(projectId);
-      return entry !== undefined && entry.state === 'ACTIVE';
+      return entry !== undefined && entry.state === 'ACTIVE' && !structureBusy.has(projectId);
     },
 
     providerOf(providerId) {

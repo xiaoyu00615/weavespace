@@ -196,6 +196,16 @@ export type WorkspaceAction =
   | { type: 'TREE_LEVEL_ERROR'; projectId: string; dir: string; errorCode: string | null }
   /** 刷新：只作废这一个项目的层表，其他项目引用不变。 */
   | { type: 'TREE_RESET'; projectId: string }
+  /**
+   * 结构变更已由 Host 明确确认（UX-02C-02）：删掉旧路径下的层与展开/选择记录。
+   * 只动这一个项目；层表重新加载由 DocumentActions 负责。
+   */
+  | {
+      type: 'TREE_STRUCTURE_CHANGED';
+      projectId: string;
+      sourcePath: string;
+      targetPath: string;
+    }
   | { type: 'TOGGLE_PROJECT_NODE'; projectId: string; path: string }
   /** 幂等展开（UX-02C-01）：创建成功后把目标文件夹打开，重复调用不会把它折叠回去。 */
   | { type: 'EXPAND_PROJECT_NODE'; projectId: string; path: string }

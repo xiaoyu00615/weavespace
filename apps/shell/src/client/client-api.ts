@@ -286,6 +286,41 @@ export type CreateEntryOutcome =
     }
   | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
 
+/**
+ * 真实改名 / 移动（UX-02C-02）的客户端结论。与创建一样，`UNKNOWN` 是独立一种：
+ * 磁盘可能已经变了但响应链断了，只许一次只读核对 + 人工确认，绝不自动重发。
+ */
+export interface StructureChangeApplied {
+  status: 'APPLIED';
+  projectId: string;
+  sourcePath: string;
+  targetPath: string;
+  targetParentDir: string;
+  targetName: string;
+  entryKind: CreateEntryKindDto;
+  contentSha256: string | null;
+}
+export type StructureChangeOutcome =
+  | StructureChangeApplied
+  | {
+      status: 'UNKNOWN';
+      errorCode: 'ERR_OUTCOME_UNKNOWN';
+      message: string;
+      httpStatus: number;
+      projectId: string;
+      sourcePath: string;
+      targetParentDir: string;
+      targetName: string;
+    }
+  | {
+      status: 'REJECTED';
+      errorCode: string | null;
+      message: string;
+      httpStatus: number;
+      /** Host 会话保护给出的阻断原因（活动 View / DIRTY / SAVING / …）。 */
+      blockedBy?: string[];
+    };
+
 export interface WeaveSpaceClient {
   readonly mode: ClientMode;
   /** 服务端运行模式（`/api/health`）；demo 恒为 `legacy`。 */
@@ -401,6 +436,18 @@ export interface WeaveSpaceClient {
     name: string,
     kind: CreateEntryKindDto,
   ): Promise<CreateEntryOutcome>;
+
+  /* ---- UX-02C-02：真实改名 / 移动 ---- */
+
+  /** 同一目录内改名：目标目录由 Host 从 sourcePath 派生，浏览器无法偷偷换目录。 */
+  renameEntry(projectId: string, sourcePath: string, name: string): Promise<StructureChangeOutcome>;
+  /** 同一授权项目内移动：只提交项目内相对目录 + 单段名称。 */
+  moveEntry(
+    projectId: string,
+    sourcePath: string,
+    targetParentDir: string,
+    name: string,
+  ): Promise<StructureChangeOutcome>;
 }
 
 interface ApiEnvelope {
@@ -963,7 +1010,117 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         httpStatus,
       };
     },
+
+    async renameEntry(projectId, sourcePath, name) {
+      return postStructureChange(
+        '/api/files/rename',
+        { projectId, sourcePath, name },
+        { projectId, sourcePath, targetParentDir: '', targetName: name },
+      );
+    },
+
+    async moveEntry(projectId, sourcePath, targetParentDir, name) {
+      return postStructureChange(
+        '/api/files/move',
+        { projectId, sourcePath, targetParentDir, name },
+        { projectId, sourcePath, targetParentDir, targetName: name },
+      );
+    },
   };
+
+  /**
+   * 两个结构变更端点共用的请求/收敛逻辑。
+   *
+   * - 令牌获取失败：连请求都没发出，明确 REJECTED（不是 UNKNOWN）；
+   * - 网络异常 / 超时 / 202 UNKNOWN：磁盘**可能已变**，只返回 UNKNOWN，
+   *   绝不重发；由编排层做一次只读核对并提示人工确认；
+   * - 200 APPLIED 但回执形状不完整：不冒充成功，客户端不猜路径。
+   */
+  async function postStructureChange(
+    endpoint: string,
+    requestBody: Record<string, string>,
+    identity: {
+      projectId: string;
+      sourcePath: string;
+      targetParentDir: string;
+      targetName: string;
+    },
+  ): Promise<StructureChangeOutcome> {
+    let token: string;
+    try {
+      token = await sessionToken();
+    } catch {
+      return {
+        status: 'REJECTED',
+        errorCode: 'ERR_PERMISSION_DENIED',
+        message: '无法获取会话令牌',
+        httpStatus: 403,
+      };
+    }
+    let response: { httpStatus: number; body: ApiEnvelope };
+    try {
+      response = await request(baseUrl, endpoint, {
+        method: 'POST',
+        headers: { 'x-ws-token': token },
+        // 只有 projectId + 项目内相对路径 + 单段名称
+        body: JSON.stringify(requestBody),
+      });
+    } catch {
+      return {
+        status: 'UNKNOWN',
+        errorCode: 'ERR_OUTCOME_UNKNOWN',
+        message: '网络中断或请求超时，结构变更结果未知',
+        httpStatus: 0,
+        ...identity,
+      };
+    }
+    const { httpStatus, body } = response;
+    if (httpStatus === 202 && body.status === 'UNKNOWN') {
+      return {
+        status: 'UNKNOWN',
+        errorCode: 'ERR_OUTCOME_UNKNOWN',
+        message: body.message ?? '结构变更结果未确认，请人工核对',
+        httpStatus,
+        ...identity,
+      };
+    }
+    if (httpStatus === 200 && body.status === 'APPLIED') {
+      const applied = body as unknown as {
+        sourcePath?: unknown;
+        targetPath?: unknown;
+        targetParentDir?: unknown;
+        targetName?: unknown;
+        entryKind?: unknown;
+        contentSha256?: unknown;
+      };
+      if (
+        typeof applied.sourcePath === 'string' &&
+        typeof applied.targetPath === 'string' &&
+        typeof applied.targetParentDir === 'string' &&
+        typeof applied.targetName === 'string' &&
+        (applied.entryKind === 'file' || applied.entryKind === 'directory')
+      ) {
+        return {
+          status: 'APPLIED',
+          projectId: identity.projectId,
+          sourcePath: applied.sourcePath,
+          targetPath: applied.targetPath,
+          targetParentDir: applied.targetParentDir,
+          targetName: applied.targetName,
+          entryKind: applied.entryKind,
+          contentSha256: typeof applied.contentSha256 === 'string' ? applied.contentSha256 : null,
+        };
+      }
+    }
+    const blockedBy = (body as unknown as { blockedBy?: unknown }).blockedBy;
+    return {
+      status: 'REJECTED',
+      errorCode: body.errorCode ?? (httpStatus === 200 ? 'ERR_COMMAND_INTERNAL' : null),
+      message: body.message ?? '改名或移动失败',
+      httpStatus,
+      ...(Array.isArray(blockedBy) ? { blockedBy: blockedBy.filter((x): x is string => typeof x === 'string') } : {}),
+    };
+  }
 }
 
 /**
@@ -1184,6 +1341,23 @@ export function createDemoClient(
         status: 'REJECTED' as const,
         errorCode: 'ERR_COMMAND_UNSUPPORTED',
         message: '演示模式不创建真实文件',
+        httpStatus: 501,
+      };
+    },
+
+    async renameEntry() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式不改名真实文件',
+        httpStatus: 501,
+      };
+    },
+    async moveEntry() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式不移动真实文件',
         httpStatus: 501,
       };
     },

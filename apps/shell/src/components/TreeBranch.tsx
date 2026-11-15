@@ -10,7 +10,7 @@
  * - 层状态（加载中 / 空 / 不可读 / 失败 / 还有下一页）在行内明确呈现；
  * - 链接显示为叶子，点击只给提示，绝不发起打开或展开。
  */
-import { useEffect } from 'react';
+import { Fragment, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { ResourceNodeState } from '../state/types.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
@@ -18,7 +18,7 @@ import { useQuickFile } from '../state/QuickFileContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { makeDocId } from '../state/doc-identity.ts';
 import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
-import { InlineCreateSlot } from './InlineCreateRow.tsx';
+import { InlineCreateSlot, InlineRenameSlot } from './InlineCreateRow.tsx';
 import { useTreeCommands } from './TreeCommandsContext.tsx';
 import { LinkGlyph, TreeRow } from './FileTreeRow.tsx';
 import { descend, type TreeTrails } from './tree-trails';
@@ -167,6 +167,7 @@ function TreeItem({
             nodePath: dir,
             // R1-01：折叠目录中创建时按这一行的真实节点 id 幂等展开
             nodeId: node.id,
+            entryKind: 'directory',
           })
         }
         onActivate={() => {
@@ -215,7 +216,12 @@ function TreeItem({
         last={last}
         trails={trails}
         onContextMenu={(event) =>
-          commands.openContextMenu(event, { origin: 'link', projectId, nodePath: linkPath })
+          commands.openContextMenu(event, {
+            origin: 'link',
+            projectId,
+            nodePath: linkPath,
+            entryKind: 'link',
+          })
         }
         onActivate={() =>
           dispatch({ type: 'NOTICE', message: `「${node.name}」是链接，不展开也不打开（避免越过项目根）` })
@@ -241,7 +247,12 @@ function TreeItem({
       opened={Boolean(tab)}
       dirty={tab?.dirty ?? false}
       onContextMenu={(event) =>
-        commands.openContextMenu(event, { origin: 'file', projectId, nodePath: node.path ?? node.name })
+        commands.openContextMenu(event, {
+          origin: 'file',
+          projectId,
+          nodePath: node.path ?? node.name,
+          entryKind: 'file',
+        })
       }
       onActivate={() => {
         // 契约 B.1：不支持预览的文件仍是普通文件节点，但点击**不得**进入文本编辑器。
@@ -275,15 +286,22 @@ export function TreeBranch(props: TreeBranchProps) {
   return (
     <>
       {nodes.map((node, index) => (
-        <TreeItem
-          key={`${projectKey}:${node.id}`}
-          {...props}
-          node={node}
-          last={index === nodes.length - 1}
-          trails={trails}
-          expandedMap={expandedMap}
-          depth={depth}
-        />
+        <Fragment key={`${projectKey}:${node.id}`}>
+          <TreeItem
+            {...props}
+            node={node}
+            last={index === nodes.length - 1}
+            trails={trails}
+            expandedMap={expandedMap}
+            depth={depth}
+          />
+          {/* 改名输入行紧跟在被右键那一行下方：不把节点名字乐观改掉 */}
+          <InlineRenameSlot
+            projectId={projectKey}
+            sourcePath={node.path ?? node.name}
+            depth={depth}
+          />
+        </Fragment>
       ))}
     </>
   );

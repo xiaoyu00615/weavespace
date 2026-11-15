@@ -10,6 +10,7 @@ export {
   type DocumentServiceOptions,
   type OpenSessionInput,
   type ProjectSessionStats,
+  type SessionGuardView,
   type ReconcileResult,
   type Serializer,
   type ViewHandle,

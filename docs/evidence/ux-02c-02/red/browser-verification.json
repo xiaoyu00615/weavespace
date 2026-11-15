@@ -1,0 +1,51 @@
+{
+  "run": "red",
+  "picker": "fake-picker（非 Windows 原生弹窗）",
+  "steps": {
+    "projects": [
+      "ux02c02-red-projA",
+      "ux02c02-red-projB"
+    ],
+    "renameMenu": {
+      "rc": "OK",
+      "labels": [
+        "新建文件",
+        "新建文件夹",
+        "创建已支持的扩展文件›",
+        "刷新此目录"
+      ]
+    },
+    "clickRename": "NOT_FOUND",
+    "renameInput": null,
+    "renamed": {
+      "oldGone": false,
+      "newExists": false,
+      "shaUnchanged": false
+    },
+    "sessionBlocked": {
+      "error": null,
+      "untouched": true
+    },
+    "otherProjectFiles": [
+      "b.md"
+    ],
+    "structureBodies": [],
+    "rootAStat": true
+  },
+  "checks": {
+    "菜单含重命名": false,
+    "菜单含移动到": false,
+    "改名输入框可见且预填原名": false,
+    "改名输入框聚焦且选中主名": false,
+    "Enter 真实改名且 SHA-256 不变": false,
+    "Esc 取消零磁盘变更": false,
+    "非法名称显示行内错误且零落盘": false,
+    "移动选择器展示源与目标相对路径": false,
+    "候选目录不含链接或后代": false,
+    "确认后真实移动且字节一致": false,
+    "活动编辑视图阻止改名": false,
+    "B 项目不受影响": true,
+    "请求体只有相对路径与单段名称": false
+  },
+  "ok": false
+}

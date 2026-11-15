@@ -13,6 +13,7 @@ export {
   type StorageProvider,
   type CreateEntryKind,
   type CreateEntryResult,
+  type MoveEntryResult,
   type LstatImpl,
   type LstatResultLike,
 } from './local-provider.ts';
@@ -37,6 +38,10 @@ export {
   validateEntryName,
   validateParentDir,
   entryRelativePath,
+  parentDirOfEntry,
+  entryNameOf,
+  sameEntryPath,
+  isEntryUnder,
   MAX_ENTRY_NAME_LENGTH,
   MAX_PARENT_DIR_LENGTH,
   type EntryNameCheck,

@@ -15,16 +15,20 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-/** 本轮实现的命令。 */
-export type ActiveTreeCommand = 'new-file' | 'new-folder' | 'new-supported' | 'refresh';
+/** 本轮实现的命令（UX-02C-02 起 rename / move 不再是占位）。 */
+export type ActiveTreeCommand =
+  | 'new-file'
+  | 'new-folder'
+  | 'new-supported'
+  | 'refresh'
+  | 'rename'
+  | 'move';
 
 /**
  * 未来命令注册表（占位，不实现、不渲染）。
  * 保留 id 是为了让后续阶段接到同一套 `TreeCommandsContext`，不必重做菜单框架。
  */
 export const RESERVED_TREE_COMMANDS = [
-  'rename',
-  'move',
   'delete-local',
   'hide-from-workspace',
   'set-alias',

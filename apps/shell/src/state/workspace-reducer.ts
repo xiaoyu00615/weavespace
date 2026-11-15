@@ -531,6 +531,45 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       // 只作废这一个项目；其他项目的层表引用原样保留（T-16）
       return withTreeLevels(state, action.projectId, resetLevels());
 
+    /**
+     * UX-02C-02：Host 明确 APPLIED 之后才清理旧路径。
+     *
+     * - 旧路径本身与它下面所有层缓存全部删除（目录改名/移动后旧 dir 键已失效）；
+     * - 新路径下的层也清掉，避免残留一份改名前的同名层；
+     * - expandedByProject 里指向旧路径的节点 id（`dir:<projectId>/<rel>`）作废，
+     *   否则一个已不存在的目录会一直显示为展开；
+     * - 指向旧路径的选择记录清空；标签、草稿与其它项目一概不动。
+     */
+    case 'TREE_STRUCTURE_CHANGED': {
+      const { projectId, sourcePath, targetPath } = action;
+      const levels = state.treeByProject[projectId] ?? {};
+      const nextLevels: Record<string, TreeLevels[string]> = {};
+      const stale = (dir: string, prefix: string): boolean =>
+        dir === prefix || dir.startsWith(`${prefix}/`);
+      for (const [dir, level] of Object.entries(levels)) {
+        if (stale(dir, sourcePath) || stale(dir, targetPath)) continue;
+        nextLevels[dir] = level;
+      }
+      const expanded = state.expandedByProject[projectId] ?? {};
+      const nextExpanded: Record<string, boolean> = {};
+      for (const [key, value] of Object.entries(expanded)) {
+        const slash = key.indexOf('/');
+        const rel = slash < 0 ? key : key.slice(slash + 1);
+        if (stale(rel, sourcePath)) continue;
+        nextExpanded[key] = value;
+      }
+      const selected = state.selectedByProject[projectId];
+      const nextSelected =
+        selected && (selected === sourcePath || selected.includes(`/${sourcePath}`))
+          ? null
+          : selected;
+      return {
+        ...withTreeLevels(state, projectId, nextLevels),
+        expandedByProject: { ...state.expandedByProject, [projectId]: nextExpanded },
+        selectedByProject: { ...state.selectedByProject, [projectId]: nextSelected ?? null },
+      };
+    }
+
     case 'TOGGLE_PROJECT_NODE': {
       const current = state.expandedByProject[action.projectId] ?? {};
       return {

@@ -59,6 +59,11 @@ import {
   parseCreateEntryBody,
   type CreateEntryKind,
 } from './create-entry.ts';
+import {
+  parseStructureBody,
+  runManagedStructureChange,
+  type StructureKind,
+} from './structure-change.ts';
 
 export type SaveOutcomeStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN';
 
@@ -181,6 +186,10 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_ENTRY_EXISTS':
     // 目录在本轮分页期间发生变化：客户端必须刷新整层，不能拿旧游标续页
     case 'ERR_DIR_CHANGED':
+    // 结构变更：源路径下仍有活动 View / 危险会话，或屏障正忙（零磁盘副作用）
+    case 'ERR_STRUCTURE_SESSION_BUSY':
+    // Windows 上目录被占用，无法完成改名/移动
+    case 'ERR_ENTRY_DIR_BUSY':
       return 409;
     // 意图/请求凭据类：一律 410，避免用不同状态码区分"过期/已用/不存在"（可探测性）
     case 'ERR_INTENT_EXPIRED':
@@ -230,7 +239,12 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_COMMAND_INVALID':
     case 'ERR_ENTRY_NAME_INVALID':
     case 'ERR_ENTRY_PARENT_INVALID':
+    case 'ERR_ENTRY_SOURCE_INVALID':
+    case 'ERR_MOVE_INTO_DESCENDANT':
       return 400;
+    // 跨卷移动首版不支持（不做"复制 + 删除"的部分成功链路）
+    case 'ERR_MOVE_CROSS_VOLUME':
+      return 422;
     case 'ERR_PROJECT_NOT_FOUND':
       return 404;
     case 'ERR_SESSION_STALE':
@@ -283,6 +297,12 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_ENTRY_NAME_INVALID: '名称不合法：请检查非法字符、系统保留名或结尾的空格与句点',
   ERR_ENTRY_EXISTS: '该位置已有同名文件或文件夹，未覆盖任何内容',
   ERR_ENTRY_PARENT_INVALID: '目标文件夹不存在或不是普通目录（不会自动创建缺失目录）',
+  ERR_ENTRY_SOURCE_INVALID: '源条目不存在或不是普通文件/文件夹',
+  ERR_STRUCTURE_SESSION_BUSY:
+    '该文件（或目录内文件）仍有打开的编辑标签、未保存草稿或结果未明的保存；请先处理后再操作',
+  ERR_MOVE_INTO_DESCENDANT: '不能把文件夹移动到自身或它的子文件夹内',
+  ERR_MOVE_CROSS_VOLUME: '跨磁盘分区的移动暂不支持（未复制也未删除任何文件）',
+  ERR_ENTRY_DIR_BUSY: '文件夹正被占用（可能被其他程序打开），请关闭后重试',
   ERR_PROJECT_REQUIRED: '必须声明 projectId',
   ERR_PROJECT_NOT_FOUND: '项目不存在',
   ERR_PROJECT_UNAVAILABLE: '项目当前不可用（根目录缺失、被替换或不可读）',
@@ -1465,6 +1485,102 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           name: request.name,
           kind: request.kind,
           relativePath: outcome.relativePath,
+        });
+        return;
+      }
+
+      /**
+       * 真实改名 / 移动（UX-02C-02）：两个端点共用同一条编排与同一个
+       * `StorageProvider.moveEntry` 原语，只是 `rename` 的目标目录由 Host 派生。
+       *
+       * 校验顺序：模式(501) → T1 → 显式同源 Origin → 禁字段/形状(400，零 IO)
+       * → 项目可用性(G-DISK 前置) → 项目级写授权 → 结构变更准入屏障 + 排空在途
+       * 磁盘操作 → Host 会话保护 → `withDiskOp` → 排他路径变更。
+       * 浏览器只提交 `projectId + 项目内相对路径 + 单段名称`。
+       */
+      const structureKind: StructureKind | null =
+        pathname === '/api/files/rename'
+          ? 'rename'
+          : pathname === '/api/files/move'
+            ? 'move'
+            : null;
+      if (structureKind !== null) {
+        if (!runtime) {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持真实结构变更',
+          );
+        }
+        requireSessionToken(req);
+        if (req.headers.origin === undefined) {
+          throw new HttpError(403, 'ERR_PERMISSION_DENIED', '变更类请求必须声明 Origin');
+        }
+        const parsed = parseStructureBody(body, structureKind);
+        if (!parsed.ok) {
+          throw new HttpError(
+            httpStatusOfDomainError(parsed.errorCode),
+            parsed.errorCode,
+            publicMessageOf(parsed.errorCode),
+          );
+        }
+        const { request } = parsed;
+        const handle = requireProjectHandle(request.projectId);
+        const outcome = await runManagedStructureChange({
+          request,
+          provider: handle.provider,
+          providerId: handle.providerId,
+          permission,
+          actorId,
+          sessionsUnder: (projectId, prefix) => document.sessionsUnder(projectId, prefix),
+          withDiskOp: <T,>(fn: () => Promise<T>) => withDiskOp(request.projectId, fn),
+          withStructureChange: <T,>(fn: () => Promise<T>) =>
+            runtime.withStructureChange(request.projectId, fn),
+        });
+        const targetPath = request.targetParentDir === ''
+          ? request.targetName
+          : `${request.targetParentDir}/${request.targetName}`;
+        if (outcome.status === 'UNKNOWN') {
+          sendJson(res, 202, {
+            status: 'UNKNOWN',
+            errorCode: 'ERR_OUTCOME_UNKNOWN',
+            message: '结构变更结果未确认：已保留源位置与目标位置供人工核对（不会自动重试、不会回滚）',
+            projectId: request.projectId,
+            sourcePath: request.sourcePath,
+            targetParentDir: request.targetParentDir,
+            targetName: request.targetName,
+            targetPath,
+          });
+          return;
+        }
+        if (outcome.status === 'REJECTED') {
+          if (outcome.blockedBy) {
+            sendJson(res, 409, {
+              status: 'REJECTED',
+              errorCode: outcome.errorCode,
+              message: publicMessageOf(outcome.errorCode),
+              blockedBy: outcome.blockedBy,
+              projectId: request.projectId,
+              sourcePath: request.sourcePath,
+            });
+            return;
+          }
+          throw new HttpError(
+            httpStatusOfDomainError(outcome.errorCode),
+            outcome.errorCode,
+            publicMessageOf(outcome.errorCode),
+          );
+        }
+        sendJson(res, 200, {
+          status: 'APPLIED',
+          projectId: request.projectId,
+          kind: structureKind,
+          sourcePath: outcome.sourcePath,
+          targetPath: outcome.targetPath,
+          targetParentDir: outcome.targetParentDir,
+          targetName: outcome.targetName,
+          entryKind: outcome.kind,
+          contentSha256: outcome.contentSha256,
         });
         return;
       }
