@@ -98,8 +98,15 @@ export type AddProjectResult =
 
 export interface AddProjectHost {
   port: AddProjectPort;
-  /** 发起时的身份快照；每次 await 之后都要再问一次。 */
-  identity(): { mode: ClientMode; workspaceKey: string | null };
+  /**
+   * 发起时的身份快照；每次 await 之后都要再问一次。
+   *
+   * `epoch` 是**加载代次**（见 `workspace-load.ts` 的 `LoadEpoch`）：模式切换、
+   * Host 重连、切换工作区都会让它 +1，旧代次永远过期。归属判定以它为权威，而不是
+   * 比较 `workspaceKey` —— 因为**本次提交本身**就会让 `workspaceKey` 变化（Host APPLIED
+   * 后摘要必然改变），把它当成"外部切换"会误杀正常的添加（R2-02）。
+   */
+  identity(): { mode: ClientMode; workspaceKey: string | null; epoch: number };
   onProjects(projects: ProjectSummary[]): void;
   onWorkspaceKey(key: string | null): void;
   /** 新项目的根层（UI 立刻可展开）。 */
@@ -168,10 +175,21 @@ export function createProjectAdder(host: AddProjectHost): ProjectAdder {
       // 必须**按值拷贝**：`identity()` 通常返回状态对象本身，直接持有引用会让
       // "快照"跟着后续改动一起变，归属判定就永远为真（R1-02 同类陷阱）。
       const began = host.identity();
-      const origin = { mode: began.mode, workspaceKey: began.workspaceKey };
+      const origin = { mode: began.mode, workspaceKey: began.workspaceKey, epoch: began.epoch };
+      /**
+       * 归属判定以**加载代次**为权威（R2-02）。
+       *
+       * 不能用 `workspaceKey` 比对：本次 Host APPLIED 之后 `onWorkspaceKey` 会**合法地**
+       * 把界面摘要更新成新值，此时 `current.workspaceKey !== origin.workspaceKey` 纯属
+       * "我们自己提交造成的转移"，不是外部切换。若用 key 比对，正常的添加会被误判成
+       * `stale` 而丢失。
+       *
+       * 外部切模式 / 重连 / 切换其它工作区都会让 `LoadEpoch` +1，旧代次立即过期——
+       * 这一条同时覆盖了"代次变了但 mode 仍是 live"的替换场景（R2-01 同款机制）。
+       */
       const stale = (): boolean => {
         const current = host.identity();
-        return origin.mode !== 'live' || current.mode !== 'live' || current.workspaceKey !== origin.workspaceKey;
+        return origin.mode !== 'live' || current.mode !== 'live' || current.epoch !== origin.epoch;
       };
 
       /**
@@ -319,6 +337,94 @@ export function createProjectAdder(host: AddProjectHost): ProjectAdder {
         inFlight = false;
       }
     },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 只读重新同步（R2-01）                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 重新同步的宿主依赖（由 `DocumentActionsContext` 注入）。
+ *
+ * 与添加流程共用同一套"加载代次"归属机制（`identity().epoch` + `isCurrent`）：
+ * Demo/Live 切换、Host 重连、工作区被替换都会让代次失效，旧 resync **不得**回填
+ * 项目列表、目录树或工作区摘要。这里不复制任何状态机——归属判定完全交给调用方
+ * 提供的 `isCurrent`，与逐层加载、工作区加载链同一条代次。
+ */
+export interface ResyncHost {
+  port: AddProjectPort;
+  /** 与 `AddProjectHost.identity()` 同形状；resync 在发起时固定捕获。 */
+  identity(): { mode: ClientMode; workspaceKey: string | null; epoch: number };
+  /** 给定的代次令牌是否仍是当前代（切模式 / 重连 / 换工作区都会失效）。 */
+  isCurrent(epoch: number): boolean;
+  onProjects(projects: ProjectSummary[]): void;
+  onWorkspaceKey(key: string | null): void;
+  loadRoot(projectId: string): Promise<void>;
+  /** 返回"根层从未加载"的项目 id：未指定 projectId 时这些项目需要补齐（避免显示成空目录）。 */
+  missingRoots(projects: ProjectSummary[]): string[];
+}
+
+/**
+ * 只读核对（R1-03 / R2-01）。
+ *
+ * 用于「已注册但未同步」与「结果未知」之后的恢复：**不重发 pick、不弹窗口、
+ * 不改任何授权**——用户不需要重新选择同一个文件夹。
+ *
+ * 纪律（与 `settleApplied` 一致，且复用其代次归属机制）：
+ * - 只在 `live` 模式有意义；Demo 直接拒绝；
+ * - 请求开始捕获代次，每个 await 返回之后重新核对；过期结果一律不回填；
+ * - 指定 `projectId` 时只补那一个根层；未指定时补齐**缺失**根层（从未加载的），
+ *   不让"还没读根层"被误显示成空目录；
+ * - 末尾 `onWorkspaceKey` 带来的摘要更新属于合法状态转移，不依赖 React dispatch
+ *   的异步时机来判定正确性（代次在读取期间没有变化就一定是本工作区的数据）。
+ */
+export function createResyncRunner(host: ResyncHost) {
+  return async function resync(projectId?: string): Promise<ResyncOutcome> {
+    const origin = host.identity();
+    if (origin.mode !== 'live') {
+      return { ok: false, message: '演示模式没有真实项目列表' };
+    }
+    // 捕获本次读取所属代次；期间任何一代变化都让结果作废
+    const epoch = origin.epoch;
+    const current = (): boolean => {
+      const id = host.identity();
+      return id.mode === 'live' && host.isCurrent(epoch);
+    };
+
+    let projects: ProjectSummary[];
+    try {
+      projects = await host.port.listProjects();
+    } catch {
+      return { ok: false, message: '仍然无法连接本地服务：请确认 Host 正在运行' };
+    }
+    // 读取期间工作区已变：结果不属于当前界面，绝不回填
+    if (!current()) return { ok: false, message: '工作区已切换，已取消重新读取' };
+    host.onProjects(projects);
+
+    // 需要补根层的项目集合：指定时只补那一个；未指定时补齐"从未加载"的根层
+    const targets = projectId
+      ? (projects.some((project) => project.projectId === projectId) ? [projectId] : [])
+      : host.missingRoots(projects);
+
+    for (const pid of targets) {
+      try {
+        await host.loadRoot(pid);
+      } catch {
+        // 根层读不到不致命：项目行已经在列表里
+      }
+      // 补根层期间工作区也可能被换走：这一层的迟到响应不得回填到新工作区
+      if (!current()) return { ok: false, message: '工作区已切换，已取消重新读取' };
+    }
+
+    try {
+      const key = await host.port.workspaceKey();
+      if (!current()) return { ok: false, message: '工作区已切换，已取消重新读取' };
+      host.onWorkspaceKey(key);
+    } catch {
+      // 摘要取不到不影响项目列表
+    }
+    return { ok: true, projects };
   };
 }
 

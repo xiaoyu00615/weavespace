@@ -36,18 +36,19 @@ import {
   type Autosave,
 } from './workspace-persistence';
 import { createLoadEpoch, loadProjectResources, loadWorkspace } from './workspace-load';
-import { emptyLevels } from '../components/tree-model.ts';
+import { emptyLevels, ROOT_LEVEL } from '../components/tree-model.ts';
 import { createTreeLevelLoader, createTreeOwnershipGuard, type TreeLoadIdentity } from './tree-load.ts';
 import {
   createAddProjectFlow,
   createProjectAdder,
+  createResyncRunner,
   createSupportProbe,
   validateProjectName,
   type AddProjectHandle,
   type AddProjectPort,
   type ResyncOutcome,
 } from './add-project.ts';
-import type { ProjectSummary, RenameOutcome } from '../client/client-api.ts';
+import type { RenameOutcome } from '../client/client-api.ts';
 import { refreshProject } from './refresh-project';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
@@ -246,7 +247,11 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
     };
     const adder = createProjectAdder({
       port,
-      identity: () => ({ mode: stateRef.current.mode, workspaceKey: stateRef.current.workspaceKey }),
+      identity: () => ({
+        mode: stateRef.current.mode,
+        workspaceKey: stateRef.current.workspaceKey,
+        epoch: loadEpoch.current.current(),
+      }),
       onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
       onWorkspaceKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
       loadRoot: async (projectId) => {
@@ -263,6 +268,37 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       // 未探测（或身份已变）时按"未知"处理：界面会给出说明，绝不假装可用
       support: () => probe.support() ?? 'unknown',
     });
+
+    /**
+     * 只读重新同步的纯编排（R2-01）。见 `add-project.ts`。
+     *
+     * 复用 `loadEpoch` 作为归属机制：Demo/Live 切换、Host 重连、工作区替换都会让它 +1，
+     * 旧 resync 立即作废。调度权与状态写入都在 `dispatch` 与 `treeLoader`（其自身也带
+     * 代次守卫）手里，这里只把"读到的数据"交给它们。
+     */
+    const resyncRunner = createResyncRunner({
+      port,
+      identity: () => ({
+        mode: stateRef.current.mode,
+        workspaceKey: stateRef.current.workspaceKey,
+        epoch: loadEpoch.current.current(),
+      }),
+      isCurrent: (epoch) => loadEpoch.current.isCurrent(epoch),
+      onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
+      onWorkspaceKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
+      loadRoot: (pid) => treeLoader.current.load(pid, '', false).then(() => undefined),
+      missingRoots: (projects) =>
+        projects
+          .filter((project) => project.status === 'READY')
+          .filter((project) => {
+            const levels = stateRef.current.treeByProject[project.projectId];
+            // 根层从未加载（层表里根本没有根层分片）：这类项目需要补齐，否则界面
+            // 会把它显示成"空的"而非"还没展开"。已加载 / 失败 / 出错的分片都不重读。
+            return !levels || levels[ROOT_LEVEL] === undefined;
+          })
+          .map((project) => project.projectId),
+    });
+
     return {
       flow,
       probe: () => probe.probe(),
@@ -270,36 +306,14 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       subscribeSupport: (listener) => probe.subscribe(listener),
       invalidateSupport: () => probe.invalidate(),
       /**
-       * 只读核对（R1-03）：重新读取项目列表与工作区摘要。
+       * 只读核对（R1-03 / R2-01）：重新读取项目列表、补齐缺失根层、刷新工作区摘要。
        * 不重发 pick、不弹窗口、不改授权 —— 用户不必重新选择同一个文件夹。
+       *
+       * 编排逻辑在 `add-project.ts` 的 `createResyncRunner`（纯 TS、可确定性测试）：
+       * 捕获加载代次、每次 await 后核对、过期结果不回填；缺失根层自动补齐（避免被
+       * 误显示成空目录）。这里只注入宿主依赖，不复制任何归属判定。
        */
-      async resync(projectId?: string): Promise<ResyncOutcome> {
-        if (stateRef.current.mode !== 'live') {
-          return { ok: false, message: '演示模式没有真实项目列表' };
-        }
-        let projects: ProjectSummary[];
-        try {
-          projects = await liveClient.listProjects();
-        } catch {
-          return { ok: false, message: '仍然无法连接本地服务：请确认 Host 正在运行' };
-        }
-        dispatch({ type: 'SET_PROJECTS', projects });
-        // 与添加流程同一顺序：先读根层，再更新摘要，否则根层票据会被判为过期
-        if (projectId && projects.some((project) => project.projectId === projectId)) {
-          try {
-            await treeLoader.current.load(projectId, '', false);
-          } catch {
-            // 根层读不到也没关系：项目表已经同步，用户至少能看到项目行
-          }
-        }
-        try {
-          const { workspaceKey } = await liveClient.workspaceIdentity();
-          dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey });
-        } catch {
-          // 摘要取不到不影响项目列表
-        }
-        return { ok: true, projects };
-      },
+      resync: (projectId?: string): Promise<ResyncOutcome> => resyncRunner(projectId),
     };
   }, [dispatch, liveClient]);
 

@@ -29,6 +29,7 @@ import {
   DISCLOSURE_POINTS,
   createAddProjectFlow,
   createProjectAdder,
+  createResyncRunner,
   createSupportProbe,
   validateProjectName,
   type AddProjectPort,
@@ -36,6 +37,8 @@ import {
   type PickQueryOutcome,
   type PickStartOutcome,
   type ProjectRegistrationSupport,
+  type ResyncHost,
+  type ResyncOutcome,
 } from '../../apps/shell/src/state/add-project.ts';
 import { workspaceReducer, INITIAL_STATE } from '../../apps/shell/src/state/workspace-reducer.ts';
 import { applyPage, emptyLevels } from '../../apps/shell/src/components/tree-model.ts';
@@ -570,7 +573,7 @@ function makeFlow(
   const order: string[] = [];
   let key: string | null = null;
   let clock = 0;
-  const identity = { mode: 'live' as const, workspaceKey: 'a'.repeat(64) };
+  const identity = { mode: 'live' as const, workspaceKey: 'a'.repeat(64), epoch: 1 };
   const adder = createProjectAdder({
     port,
     identity: () => identity,
@@ -709,7 +712,7 @@ test('PA-07-02 APPLIED → 重取项目表 + 加载新项目根层 + 刷新工�
   assert.equal(flow.state().phase, 'done');
 });
 
-test('PA-07-03 工作区在等待期间变化 → 迟到结果一律丢弃', async () => {
+test('PA-07-03 工作区在等待期间变化（代次失效）→ 迟到结果一律丢弃', async () => {
   const project: ProjectSummary = { projectId: 'p-new', name: '新项目', status: 'READY' };
   const port = makePort({
     queries: [
@@ -721,8 +724,9 @@ test('PA-07-03 工作区在等待期间变化 → 迟到结果一律丢弃', asy
   const { flow, applied, loaded, identity, key } = makeFlow(port);
   flow.open();
   const pending = flow.confirm();
-  // 模拟"用户切走再切回 / 重新连接"：身份摘要变了
+  // 模拟"用户切走再切回 / 重新连接"：加载代次变了（归属判定以代次为准，见 R2-02）
   identity.workspaceKey = 'b'.repeat(64);
+  identity.epoch = 2;
   const result = await pending;
   assert.equal(result.kind, 'stale');
   assert.deepEqual(applied, [], '旧工作区的项目表不得回填');
@@ -736,7 +740,7 @@ test('PA-06-03 Host 不发意图（降级）→ 直接 unsupported，且不发 p
   const applied: ProjectSummary[][] = [];
   const adder = createProjectAdder({
     port,
-    identity: () => ({ mode: 'live' as const, workspaceKey: 'a'.repeat(64) }),
+    identity: () => ({ mode: 'live' as const, workspaceKey: 'a'.repeat(64), epoch: 1 }),
     onProjects: (projects) => applied.push(projects),
     onWorkspaceKey: () => undefined,
     loadRoot: async () => undefined,
@@ -1232,6 +1236,63 @@ test('PA-07-06 结果未知时只读核对能补齐界面：resync 不重发 pic
 });
 
 /* ------------------------------------------------------------------ */
+/* R2-02 区分"本次提交"与"外部身份变化"                                  */
+/* ------------------------------------------------------------------ */
+
+test('PA-07-07 本次提交使工作区摘要更新属于合法转移：onWorkspaceKey 同步更新身份后仍判 applied', async () => {
+  /**
+   * R2-02 的核心回归：Host APPLIED 之后 `onWorkspaceKey` 会把**新**摘要写回界面身份
+   * （真实上下文里是 `dispatch(SET_WORKSPACE_KEY)`）。若归属判定仍用 `workspaceKey`
+   * 比对，这一步会让"自己提交产生的变化"被误判成外部切换 → 返回 `stale`，吞掉一次
+   * 正常的添加。
+   *
+   * 修复后判定以「加载代次」为准：本次提交不改代次，所以仍判 `applied`。
+   */
+  const project: ProjectSummary = { projectId: 'p-self', name: '自助项目', status: 'READY' };
+  const port = makePort({ queries: [{ status: 'APPLIED', httpStatus: 200, project }], projects: [project] });
+  const newKey = 'c'.repeat(64);
+  port.workspaceKey = async () => newKey;
+  // 模拟真实上下文：onWorkspaceKey 把新摘要写回 identity（与 dispatch 一致）
+  const { flow, identity, key } = makeFlow(port, {
+    onWorkspaceKey: (next) => {
+      identity.workspaceKey = next ?? identity.workspaceKey;
+    },
+  });
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'applied', '自己提交产生的摘要变化不得误判为 stale');
+  assert.equal(identity.workspaceKey, newKey, '摘要已同步到身份');
+  assert.equal(key(), newKey);
+});
+
+test('PA-07-08 外部代次变化（切模式/重连/换工作区）仍阻止旧响应回填，本次提交不会', async () => {
+  const project: ProjectSummary = { projectId: 'p-new', name: '新项目', status: 'READY' };
+  const port = makePort({
+    queries: [{ status: 'PENDING', httpStatus: 200 }, { status: 'APPLIED', httpStatus: 200, project }],
+    projects: [project],
+  });
+  const { flow, applied, loaded, identity, key } = makeFlow(port);
+  flow.open();
+  const pending = flow.confirm();
+  // 外部切换：代次失效（真实场景由 loadEpoch.cancel/start 推进）。身份摘要同步变了。
+  identity.epoch = 2;
+  identity.workspaceKey = 'b'.repeat(64);
+  const result = await pending;
+  assert.equal(result.kind, 'stale', '外部代次变化必须阻止旧响应回填');
+  assert.deepEqual(applied, [], '旧工作区的项目表不得回填');
+  assert.deepEqual(loaded, []);
+  assert.equal(key(), null, '不得把旧响应的工作区摘要写进新界面');
+
+  // 对比：本次提交（同代）走完整链路，结论是 applied 而非 stale
+  const port2 = makePort({ queries: [{ status: 'APPLIED', httpStatus: 200, project }], projects: [project] });
+  const { flow: flow2, identity: identity2 } = makeFlow(port2);
+  flow2.open();
+  const result2 = await flow2.confirm();
+  assert.equal(result2.kind, 'applied', '同代内的正常提交必须判 applied');
+  assert.equal(identity2.epoch, 1, '本次提交不得悄悄推进代次');
+});
+
+/* ------------------------------------------------------------------ */
 /* R1-04 异常收敛：模态不能停在 picking，busy 必须释放                  */
 /* ------------------------------------------------------------------ */
 
@@ -1329,4 +1390,204 @@ test('PA-12-05 编排层自身抛出 → confirm 收敛为 unknown，且不会�
   assert.equal(flow.state().phase, 'done');
   // done 之后再次确认是 busy（用户必须先看到结果面板），不是"又弹一个窗口"
   assert.equal((await flow.confirm()).kind, 'busy');
+});
+
+/* ------------------------------------------------------------------ */
+/* R2-01 resync 的工作区隔离（纯 TS runner + deferred 替身）             */
+/* ------------------------------------------------------------------ */
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolveFn!: (value: T) => void;
+  let rejectFn!: (error: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  return { promise, resolve: resolveFn, reject: rejectFn };
+}
+
+interface ResyncHarness {
+  runner(projectId?: string): Promise<ResyncOutcome>;
+  identity: { mode: 'live' | 'demo'; workspaceKey: string | null; epoch: number };
+  effectiveEpoch: { value: number };
+  listDeferred: Deferred<ProjectSummary[]>;
+  keyDeferred: Deferred<string | null>;
+  appliedProjects: ProjectSummary[][];
+  appliedKey: Array<string | null>;
+  loadedRoots: string[];
+  switchToDemo(): void;
+  switchToLive(): void;
+  switchWorkspace(): void;
+}
+
+/**
+ * 用 deferred 替身把 `createResyncRunner` 跑成可确定性控制的流程：
+ * `listDeferred` 与 `keyDeferred` 分别在两次 await 处悬停，期间可以模拟
+ * Demo/Live 切换或工作区替换，验证"过期结果一律不回填"。
+ */
+function makeResyncHarness(options: { initialTree?: Record<string, boolean> } = {}): ResyncHarness {
+  const identity: { mode: 'live' | 'demo'; workspaceKey: string; epoch: number } = {
+    mode: 'live',
+    workspaceKey: 'k'.repeat(64),
+    epoch: 1,
+  };
+  const effectiveEpoch = { value: 1 };
+  const listDeferred = deferred<ProjectSummary[]>();
+  const keyDeferred = deferred<string | null>();
+  const appliedProjects: ProjectSummary[][] = [];
+  const appliedKey: Array<string | null> = [];
+  const loadedRoots: string[] = [];
+  const initialTree = options.initialTree ?? {};
+
+  const port: AddProjectPort = {
+    async bootstrap() {
+      throw new Error('unused');
+    },
+    async startPick() {
+      throw new Error('unused');
+    },
+    async queryPick() {
+      throw new Error('unused');
+    },
+    async listProjects() {
+      return listDeferred.promise;
+    },
+    async workspaceKey() {
+      return keyDeferred.promise;
+    },
+  };
+
+  const host: ResyncHost = {
+    port,
+    identity: () => identity,
+    isCurrent: (epoch) => epoch === effectiveEpoch.value,
+    onProjects: (projects) => appliedProjects.push(projects),
+    onWorkspaceKey: (next) => appliedKey.push(next),
+    loadRoot: async (projectId) => {
+      loadedRoots.push(projectId);
+    },
+    missingRoots: (projects) =>
+      projects
+        .filter((project) => project.status === 'READY')
+        .filter((project) => initialTree[project.projectId] !== true)
+        .map((project) => project.projectId),
+  };
+
+  return {
+    runner: createResyncRunner(host),
+    identity,
+    effectiveEpoch,
+    listDeferred,
+    keyDeferred,
+    appliedProjects,
+    appliedKey,
+    loadedRoots,
+    switchToDemo() {
+      identity.mode = 'demo';
+    },
+    switchToLive() {
+      identity.mode = 'live';
+    },
+    switchWorkspace() {
+      // 推进加载代次（真实场景由 loadEpoch.cancel/start 完成）：旧 resync 立即过期
+      effectiveEpoch.value += 1;
+    },
+  };
+}
+
+test('R2-01-01 正常恢复：项目表 + 缺失根层 + 摘要全部同步，已加载的不重读', async () => {
+  const h = makeResyncHarness({ initialTree: { 'p-a': true } });
+  const settled = h.runner();
+  h.listDeferred.resolve([
+    { projectId: 'p-a', name: 'A', status: 'READY' },
+    { projectId: 'p-b', name: 'B', status: 'READY' },
+  ]);
+  h.keyDeferred.resolve('new-key');
+  const out = await settled;
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(
+    h.appliedProjects,
+    [[{ projectId: 'p-a', name: 'A', status: 'READY' }, { projectId: 'p-b', name: 'B', status: 'READY' }]],
+    '项目表必须回填',
+  );
+  assert.deepEqual(h.loadedRoots, ['p-b'], '只补缺失根层：已加载的 p-a 不重读');
+  assert.deepEqual(h.appliedKey, ['new-key'], '摘要必须同步');
+});
+
+test('R2-01-02 等待期间切到 Demo：不得回填任何结果', async () => {
+  const h = makeResyncHarness({ initialTree: {} });
+  const settled = h.runner();
+  // 在 listProjects 返回之前就切到 Demo
+  h.switchToDemo();
+  h.listDeferred.resolve([{ projectId: 'p-a', name: 'A', status: 'READY' }]);
+  const out = await settled;
+  assert.equal(out.ok, false, JSON.stringify(out));
+  assert.match(out.ok === false ? (out.message ?? '') : '', /切换|取消/);
+  assert.deepEqual(h.appliedProjects, [], 'Demo 模式下不得回填项目表');
+  assert.deepEqual(h.loadedRoots, []);
+  assert.deepEqual(h.appliedKey, []);
+});
+
+test('R2-01-03 等待期间切到 Demo 再切回 Live（同一代）：仍成功恢复', async () => {
+  // 验证 resync 不会"只因当前是 live 就放行"或"只因曾经是 demo 就过度拦截"：
+  // 同一代内 transient 翻转回 live，数据仍属于本工作区，应当恢复成功。
+  const h = makeResyncHarness({ initialTree: {} });
+  const settled = h.runner();
+  h.switchToDemo();
+  h.switchToLive();
+  h.listDeferred.resolve([{ projectId: 'p-a', name: 'A', status: 'READY' }]);
+  h.keyDeferred.resolve('k2');
+  const out = await settled;
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(h.appliedProjects, [[{ projectId: 'p-a', name: 'A', status: 'READY' }]]);
+  assert.deepEqual(h.loadedRoots, ['p-a']);
+  assert.deepEqual(h.appliedKey, ['k2']);
+});
+
+test('R2-01-04 等待期间切换工作区（代次失效，mode 仍是 live）：不得回填', async () => {
+  const h = makeResyncHarness({ initialTree: {} });
+  const settled = h.runner();
+  // 同样是 live，但代次变了：这是"换了一个工作区"，旧 resync 必须作废
+  h.switchWorkspace();
+  h.listDeferred.resolve([{ projectId: 'p-a', name: 'A', status: 'READY' }]);
+  const out = await settled;
+  assert.equal(out.ok, false, JSON.stringify(out));
+  assert.deepEqual(h.appliedProjects, [], '旧工作区的项目表不得回填到新工作区');
+  assert.deepEqual(h.loadedRoots, []);
+  assert.deepEqual(h.appliedKey, []);
+});
+
+test('R2-01-05 指定 projectId：只补那一个根层，其它缺失项目不动', async () => {
+  const h = makeResyncHarness({ initialTree: {} });
+  const settled = h.runner('p-b');
+  h.listDeferred.resolve([
+    { projectId: 'p-a', name: 'A', status: 'READY' },
+    { projectId: 'p-b', name: 'B', status: 'READY' },
+  ]);
+  h.keyDeferred.resolve('k2');
+  const out = await settled;
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.deepEqual(h.loadedRoots, ['p-b'], '指定 projectId 时只补它自己');
+  assert.deepEqual(
+    h.appliedProjects,
+    [[{ projectId: 'p-a', name: 'A', status: 'READY' }, { projectId: 'p-b', name: 'B', status: 'READY' }]],
+  );
+});
+
+test('R2-01-06 未指定 projectId 且读取失败：保持 ok:false，不把失败当"已添加"', async () => {
+  const h = makeResyncHarness({ initialTree: {} });
+  const settled = h.runner();
+  h.listDeferred.reject(new Error('store offline'));
+  const out = await settled;
+  assert.equal(out.ok, false, JSON.stringify(out));
+  assert.match(out.ok === false ? (out.message ?? '') : '', /Host|本地服务|运行/);
+  assert.deepEqual(h.appliedProjects, []);
+  assert.deepEqual(h.loadedRoots, []);
+  assert.deepEqual(h.appliedKey, []);
 });
