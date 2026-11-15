@@ -41,12 +41,13 @@ import { createTreeLevelLoader, createTreeOwnershipGuard, type TreeLoadIdentity 
 import {
   createAddProjectFlow,
   createProjectAdder,
+  createSupportProbe,
   validateProjectName,
   type AddProjectHandle,
   type AddProjectPort,
-  type ProjectRegistrationSupport,
+  type ResyncOutcome,
 } from './add-project.ts';
-import type { RenameOutcome } from '../client/client-api.ts';
+import type { ProjectSummary, RenameOutcome } from '../client/client-api.ts';
 import { refreshProject } from './refresh-project';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
@@ -226,15 +227,15 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * 「添加项目」的编排句柄（UX-02B-04A）。
+   * 「添加项目」的编排句柄（UX-02B-04A / R1）。
    *
    * 组装都在这里，编排逻辑全在 `add-project.ts`（纯 TS、可确定性测试）：
    * - 端口只映射 5 个窄方法，注入后测试不必实现整个客户端；
    * - `identity()` 读的是**实时**状态，编排层会在每次 await 之后比对，迟到结果丢弃；
-   * - `loadRoot` 复用逐层加载器，因此新项目根层与用户手动展开走的是同一条链路。
+   * - `loadRoot` 复用逐层加载器，因此新项目根层与用户手动展开走的是同一条链路；
+   * - 能力探测用 `createSupportProbe`：挂载 / 模式变化 / 工作区变化时问一次，
+   *   同一身份下并发调用只发一个请求。**点击入口本身不探测**（R1-02）。
    */
-  const addSupport = useRef<ProjectRegistrationSupport | null>(null);
-
   const addProject = useMemo<AddProjectHandle>(() => {
     const port: AddProjectPort = {
       bootstrap: () => liveClient.bootstrapPick(),
@@ -252,29 +253,52 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         await treeLoader.current.load(projectId, '', false);
       },
     });
+    const probe = createSupportProbe({
+      mode: () => stateRef.current.mode,
+      workspaceKey: () => stateRef.current.workspaceKey,
+      fetchSupport: async () => (await liveClient.registrationSupport()).support,
+    });
     const flow = createAddProjectFlow({
       adder,
-      // 未探测时按"未知"处理：界面会给出说明，绝不假装可用
-      support: () => addSupport.current ?? 'unknown',
+      // 未探测（或身份已变）时按"未知"处理：界面会给出说明，绝不假装可用
+      support: () => probe.support() ?? 'unknown',
     });
     return {
       flow,
-      support: () => addSupport.current,
-      async probe() {
+      probe: () => probe.probe(),
+      support: () => probe.support(),
+      subscribeSupport: (listener) => probe.subscribe(listener),
+      invalidateSupport: () => probe.invalidate(),
+      /**
+       * 只读核对（R1-03）：重新读取项目列表与工作区摘要。
+       * 不重发 pick、不弹窗口、不改授权 —— 用户不必重新选择同一个文件夹。
+       */
+      async resync(projectId?: string): Promise<ResyncOutcome> {
         if (stateRef.current.mode !== 'live') {
-          // 演示模式不访问任何网络：这里没有 Host，也没有真实目录
-          addSupport.current = 'demo';
-          return 'demo';
+          return { ok: false, message: '演示模式没有真实项目列表' };
+        }
+        let projects: ProjectSummary[];
+        try {
+          projects = await liveClient.listProjects();
+        } catch {
+          return { ok: false, message: '仍然无法连接本地服务：请确认 Host 正在运行' };
+        }
+        dispatch({ type: 'SET_PROJECTS', projects });
+        // 与添加流程同一顺序：先读根层，再更新摘要，否则根层票据会被判为过期
+        if (projectId && projects.some((project) => project.projectId === projectId)) {
+          try {
+            await treeLoader.current.load(projectId, '', false);
+          } catch {
+            // 根层读不到也没关系：项目表已经同步，用户至少能看到项目行
+          }
         }
         try {
-          const info = await liveClient.registrationSupport();
-          addSupport.current = info.support;
-          return info.support;
+          const { workspaceKey } = await liveClient.workspaceIdentity();
+          dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey });
         } catch {
-          // 探测失败不等于"可以添加"：保持未知，让用户看到的是说明而不是失败
-          addSupport.current = 'unknown';
-          return 'unknown';
+          // 摘要取不到不影响项目列表
         }
+        return { ok: true, projects };
       },
     };
   }, [dispatch, liveClient]);

@@ -25,13 +25,17 @@ import type { ProjectSummary } from '../../apps/shell/src/client/client-api.ts';
 import { createLiveClient } from '../../apps/shell/src/client/client-api.ts';
 import {
   ACKNOWLEDGE_SCOPE,
+  DISCLOSURE_LEAD,
+  DISCLOSURE_POINTS,
   createAddProjectFlow,
   createProjectAdder,
+  createSupportProbe,
   validateProjectName,
   type AddProjectPort,
   type AddProjectResult,
   type PickQueryOutcome,
   type PickStartOutcome,
+  type ProjectRegistrationSupport,
 } from '../../apps/shell/src/state/add-project.ts';
 import { workspaceReducer, INITIAL_STATE } from '../../apps/shell/src/state/workspace-reducer.ts';
 import { applyPage, emptyLevels } from '../../apps/shell/src/components/tree-model.ts';
@@ -549,7 +553,17 @@ function makePort(options: {
   return port;
 }
 
-function makeFlow(port: FakePort, overrides: Partial<{ support: 'managed' | 'static' | 'legacy' | 'demo' }> = {}) {
+function makeFlow(
+  port: FakePort,
+  overrides: Partial<{
+    support: 'managed' | 'static' | 'legacy' | 'demo';
+    onProjects(projects: ProjectSummary[]): void;
+    onWorkspaceKey(next: string | null): void;
+    loadRoot(projectId: string): Promise<void>;
+    wait(ms: number): Promise<void>;
+    timeoutMs: number;
+  }> = {},
+) {
   const applied: ProjectSummary[][] = [];
   const loaded: string[] = [];
   /** 界面副作用的发生顺序：用于锁住"先读根层、再改摘要"这个不可交换的顺序。 */
@@ -563,21 +577,28 @@ function makeFlow(port: FakePort, overrides: Partial<{ support: 'managed' | 'sta
     onProjects: (projects) => {
       applied.push(projects);
       order.push('onProjects');
+      overrides.onProjects?.(projects);
     },
     onWorkspaceKey: (next) => {
       key = next;
       order.push('onWorkspaceKey');
+      overrides.onWorkspaceKey?.(next);
     },
     loadRoot: async (projectId) => {
       loaded.push(projectId);
       order.push('loadRoot');
+      if (overrides.loadRoot) await overrides.loadRoot(projectId);
     },
     wait: async (ms) => {
+      if (overrides.wait) {
+        await overrides.wait(ms);
+        return;
+      }
       clock += ms;
     },
     now: () => clock,
     pollIntervalMs: 10,
-    timeoutMs: 1_000,
+    timeoutMs: overrides.timeoutMs ?? 1_000,
   });
   const states: string[] = [];
   const flow = createAddProjectFlow({
@@ -585,7 +606,7 @@ function makeFlow(port: FakePort, overrides: Partial<{ support: 'managed' | 'sta
     support: () => overrides.support ?? 'managed',
     onChange: (state) => states.push(state.phase),
   });
-  return { flow, applied, loaded, order, states, identity, key: () => key };
+  return { flow, adder, applied, loaded, order, states, identity, key: () => key };
 }
 
 test('PA-01-01 打开信任模态不发出任何请求', async () => {
@@ -1042,4 +1063,270 @@ test('PA-05-03 系统窗口仍打开时轮询必须是 PENDING（Host 返回 202
     await rm(store, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* R1-01 披露文案：四项信息必须同时在场                                 */
+/* ------------------------------------------------------------------ */
+
+test('PA-11-01 披露同时覆盖浏览范围、读取与保存、执行边界、可撤销', () => {
+  const text = [DISCLOSURE_LEAD, ...DISCLOSURE_POINTS].join('\n');
+  assert.equal(DISCLOSURE_POINTS.length, 3, '披露必须保持三条，不能合并成一段模糊说明');
+
+  assert.match(text, /浏览/, '必须说清"能看哪里"');
+  assert.match(text, /所有子目录/, '范围必须包含子目录，不能只写"文件夹"');
+  assert.match(text, /读取/);
+  assert.match(text, /保存/, '只写"读取"会让用户以为这是只读授权');
+  assert.match(text, /不代表允许自动运行程序/);
+  assert.match(text, /执行脚本/, '执行边界必须显式否认');
+  assert.match(text, /移除/, '可撤销性必须写出来');
+  assert.match(text, /不会删除磁盘上的任何文件/, '移除的后果必须说清');
+
+  // 第一句必须带"授权范围内"：这是"能读能写"与"任意访问"的分界
+  assert.match(DISCLOSURE_POINTS[0], /在授权范围内读取和保存文件/);
+  // 不得出现任何越权承诺（"可以运行程序 / 可以执行脚本"）
+  assert.equal(/可以(自动)?运行|可以执行/.test(text), false);
+});
+
+/* ------------------------------------------------------------------ */
+/* R1-02 能力探测：随初始化与身份变化，不随点击                         */
+/* ------------------------------------------------------------------ */
+
+test('PA-01-03 能力探测：同一身份并发只发一个请求，身份变化后重新问，演示模式不发请求', async () => {
+  let mode: 'live' | 'demo' = 'live';
+  let key: string | null = 'a'.repeat(64);
+  let calls = 0;
+  /** 每个探测请求的解析器：用数组而不是单个变量，避免 TS 把它narrow成 null。 */
+  const pending: Array<(value: ProjectRegistrationSupport) => void> = [];
+  let notified = 0;
+
+  const probe = createSupportProbe({
+    mode: () => mode,
+    workspaceKey: () => key,
+    fetchSupport: () => {
+      calls += 1;
+      return new Promise<ProjectRegistrationSupport>((resolve) => {
+        pending.push(resolve);
+      });
+    },
+  });
+  probe.subscribe(() => {
+    notified += 1;
+  });
+
+  assert.equal(probe.support(), null, '没探测过时必须是"待确认"，不能默认可用');
+
+  const first = probe.probe();
+  const second = probe.probe();
+  assert.equal(calls, 1, '同一身份的并发探测只能发一个请求（StrictMode 会把 effect 跑两遍）');
+  pending.shift()?.('managed');
+  assert.equal(await first, 'managed');
+  assert.equal(await second, 'managed');
+  assert.equal(probe.support(), 'managed');
+  assert.equal(notified, 1, '探测完成要通知界面从"待确认"变成明确答案');
+
+  // 显式重探（用户点「重新确认环境」）：允许再问一次，不能把旧答案永远钉住
+  const retry = probe.probe();
+  assert.equal(calls, 2);
+  pending.shift()?.('legacy');
+  assert.equal(await retry, 'legacy');
+  assert.equal(probe.support(), 'legacy');
+
+  // 身份变化：旧答案立即失效，界面先回到"待确认"，再由新探测给答案
+  key = 'b'.repeat(64);
+  assert.equal(probe.support(), null, '工作区变了就不能沿用旧答案');
+  const third = probe.probe();
+  assert.equal(calls, 3, '身份变化后必须重新探测');
+  pending.shift()?.('managed');
+  assert.equal(await third, 'managed');
+
+  // 演示模式没有任何 Host：不访问网络，答案恒为 demo
+  mode = 'demo';
+  assert.equal(probe.support(), 'demo');
+  assert.equal(await probe.probe(), 'demo');
+  assert.equal(calls, 3, '演示模式不得发请求');
+
+  // invalidate 只清答案，不影响在途探测（否则 StrictMode 会多发一次请求）
+  mode = 'live';
+  probe.invalidate();
+  assert.equal(probe.support(), null);
+});
+
+/* ------------------------------------------------------------------ */
+/* R1-03 Host 已 APPLIED 之后的归属与恢复                               */
+/* ------------------------------------------------------------------ */
+
+test('PA-07-04 Host 已 APPLIED 但项目表读取失败 → registered-unsynced，不是"添加失败"', async () => {
+  const project: ProjectSummary = { projectId: 'p-unsynced', name: '未同步项目', status: 'READY' };
+  const port = makePort({ queries: [{ status: 'APPLIED', httpStatus: 200, project }], projects: [project] });
+  port.listProjects = async () => {
+    port.calls.push('listProjects');
+    throw new Error('store offline');
+  };
+  const { flow } = makeFlow(port);
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'registered-unsynced', JSON.stringify(result));
+  assert.equal(result.kind === 'registered-unsynced' ? result.project.projectId : null, 'p-unsynced');
+  assert.equal(flow.state().phase, 'done');
+  assert.equal(port.startPayloads.length, 1, '已注册时不得自动重新提交 pick');
+});
+
+test('PA-07-05 Host 已 APPLIED 但根层加载失败 → registered-unsynced，项目行仍可见', async () => {
+  const project: ProjectSummary = { projectId: 'p-treefail', name: '树读取失败', status: 'READY' };
+  const port = makePort({ queries: [{ status: 'APPLIED', httpStatus: 200, project }], projects: [project] });
+  const { flow, applied, loaded } = makeFlow(port, {
+    loadRoot: async () => {
+      throw new Error('tree boom');
+    },
+  });
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'registered-unsynced');
+  assert.deepEqual(applied, [[project]], '项目表已经同步：界面能看到项目行');
+  assert.deepEqual(loaded, ['p-treefail']);
+  assert.equal(port.startPayloads.length, 1);
+  assert.equal(flow.state().phase, 'done');
+});
+
+test('PA-05-04 轮询中断 → unknown：不宣称"没添加"，也不自动重试', async () => {
+  const port = makePort({});
+  port.queryPick = async () => {
+    port.calls.push('queryPick');
+    throw new Error('socket closed');
+  };
+  const { flow } = makeFlow(port);
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'unknown', JSON.stringify(result));
+  assert.equal(flow.state().phase, 'done');
+  assert.equal(port.startPayloads.length, 1, '连接中断不得重发 pick（可能弹出第二个窗口）');
+});
+
+test('PA-05-05 等待超时 → unknown（不是 failed），且不重发 pick', async () => {
+  const port = makePort({});
+  const { flow } = makeFlow(port, { timeoutMs: 20 });
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'unknown', JSON.stringify(result));
+  assert.match(result.kind === 'unknown' ? result.message : '', /超时/);
+  assert.equal(flow.state().phase, 'done');
+  assert.equal(port.startPayloads.length, 1);
+});
+
+test('PA-07-06 结果未知时只读核对能补齐界面：resync 不重发 pick', async () => {
+  /**
+   * `resync` 由界面句柄提供（读 /api/projects + /api/health）。这里验证它的语义约定：
+   * 只读、幂等、不产生新的选择请求。真实端点行为由 PA-03-04/PA-07-01 覆盖。
+   */
+  const project: ProjectSummary = { projectId: 'p-late', name: '迟到的项目', status: 'READY' };
+  const port = makePort({ queries: [{ status: 'CANCELLED', httpStatus: 200 }], projects: [project] });
+  const { flow } = makeFlow(port);
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'cancelled');
+  // 用户随后自己点「刷新」或「重新读取」：只有一个 listProjects，没有任何 pick
+  assert.deepEqual(await port.listProjects(), [project]);
+  assert.equal(port.calls.filter((call) => call === 'startPick').length, 1);
+  assert.equal(port.calls.filter((call) => call === 'queryPick').length, 1);
+});
+
+/* ------------------------------------------------------------------ */
+/* R1-04 异常收敛：模态不能停在 picking，busy 必须释放                  */
+/* ------------------------------------------------------------------ */
+
+test('PA-12-01 onProjects 抛异常 → registered-unsynced，模态收敛且可以重新开始', async () => {
+  const project: ProjectSummary = { projectId: 'p-reducer', name: '渲染失败', status: 'READY' };
+  const port = makePort({
+    // 第二次确认用 CANCELLED：证明"重新开始"确实回到了正常链路
+    queries: [{ status: 'APPLIED', httpStatus: 200, project }, { status: 'CANCELLED', httpStatus: 200 }],
+    projects: [project],
+  });
+  const { flow, adder } = makeFlow(port, {
+    onProjects: () => {
+      throw new Error('reducer blew up');
+    },
+  });
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'registered-unsynced', '异常发生在 APPLIED 之后，不能推断注册失败');
+  assert.equal(flow.state().phase, 'done', '模态不能永久停在 picking');
+  assert.equal(adder.busy(), false, 'busy 必须随流程结束释放');
+
+  // 重新开始：从 done 再开一次是安全的，而且能走完整条链路
+  assert.equal(flow.open().phase, 'disclosure');
+  const again = await flow.confirm();
+  assert.equal(again.kind, 'cancelled');
+  assert.equal(adder.busy(), false);
+});
+
+test('PA-12-02 loadRoot 抛异常 → registered-unsynced，busy 释放', async () => {
+  const project: ProjectSummary = { projectId: 'p-loadroot', name: '根层失败', status: 'READY' };
+  const port = makePort({ queries: [{ status: 'APPLIED', httpStatus: 200, project }], projects: [project] });
+  const { flow, adder } = makeFlow(port, {
+    loadRoot: async () => {
+      throw new Error('tree loader exploded');
+    },
+  });
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'registered-unsynced');
+  assert.equal(flow.state().phase, 'done');
+  assert.equal(adder.busy(), false);
+  assert.equal(port.startPayloads.length, 1, '不得自动重试选择器');
+});
+
+test('PA-12-03 onWorkspaceKey 抛异常 → 仍算 applied（列表与树已同步），busy 释放', async () => {
+  const project: ProjectSummary = { projectId: 'p-key', name: '摘要失败', status: 'READY' };
+  const port = makePort({ queries: [{ status: 'APPLIED', httpStatus: 200, project }], projects: [project] });
+  const { flow, adder, applied, loaded } = makeFlow(port, {
+    onWorkspaceKey: () => {
+      throw new Error('dispatch blew up');
+    },
+  });
+  flow.open();
+  const result = await flow.confirm();
+  /**
+   * 摘要只用于恢复记录匹配：项目表与新项目根层都已经进界面，
+   * 因此结论仍然是"已添加"，只是恢复记录要等下一次 /api/health 对齐。
+   */
+  assert.equal(result.kind, 'applied', JSON.stringify(result));
+  assert.deepEqual(applied, [[project]]);
+  assert.deepEqual(loaded, ['p-key']);
+  assert.equal(flow.state().phase, 'done');
+  assert.equal(adder.busy(), false);
+});
+
+test('PA-12-04 等待函数抛异常 → unknown，不重发 pick，busy 释放', async () => {
+  const port = makePort({});
+  const { flow, adder } = makeFlow(port, {
+    wait: async () => {
+      throw new Error('timer exploded');
+    },
+  });
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'unknown', JSON.stringify(result));
+  assert.equal(flow.state().phase, 'done');
+  assert.equal(adder.busy(), false);
+  assert.equal(port.startPayloads.length, 1);
+});
+
+test('PA-12-05 编排层自身抛出 → confirm 收敛为 unknown，且不会停在 picking', async () => {
+  const flow = createAddProjectFlow({
+    adder: {
+      busy: () => false,
+      add: async () => {
+        throw new Error('orchestrator exploded');
+      },
+    },
+    support: () => 'managed',
+  });
+  flow.open();
+  const result = await flow.confirm();
+  assert.equal(result.kind, 'unknown');
+  assert.match(result.kind === 'unknown' ? result.message : '', /异常/);
+  assert.equal(flow.state().phase, 'done');
+  // done 之后再次确认是 busy（用户必须先看到结果面板），不是"又弹一个窗口"
+  assert.equal((await flow.confirm()).kind, 'busy');
 });

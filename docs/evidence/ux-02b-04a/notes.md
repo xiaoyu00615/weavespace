@@ -34,6 +34,29 @@
 | `17-demo-unsupported.png` | 演示模式：明确说明 + 「继续选择文件夹」禁用 |
 | `18-add-picking.png` | 等待系统窗口期间：无按钮、无假取消 |
 | `19-add-pending-settled.png` | 202 PENDING 多轮后收敛为「已取消选择」 |
+| `20-probing.png` | **R1-02**：能力探测被 CDP 卡在在途时，模态显示「待确认」且主按钮禁用 |
+| `21-disclosure.png` | **R1-01/R1-02**：探测放行后同一模态变成可用，披露正文为新措辞 |
+| `22-applied.png` | R1 添加成功 |
+| `23-tree.png` | R1 新项目立即可见（`projR1 / docs / README.md`） |
+| `24-renamed.png` | R1 回归：重命名仍只改显示名 |
+
+## R1 补充：点击入口零请求 + 待确认状态（真实网络记录）
+
+`browser-verification-r1.json` 是本轮新增的关键证据，做法是：
+
+1. CDP `Fetch.enable` 只拦截 `*api/projects/registration*`，**故意不立刻放行**；
+2. 此时点「添加项目」→ 模态 `data-add-project="probing"`、主按钮 `disabled=true`
+   （文案「确认环境后再继续」）；
+3. 点击前后对比 `/api/` 请求列表：`requestsOnClick = []`（**一条都没有**，
+   探测请求在点击之前就已发出，属于页面初始化）；
+4. `Fetch.continueRequest` 放行 → 同一模态变 `data-add-project="managed"`、按钮可用；
+5. DOM 里披露四条覆盖全部为 `true`：`browse / subtree / read / save / denyExec / removable`；
+6. 取消 → `requestsOnCancel = []`、`projectRows = 0`。
+
+`apiTrail` 也能看出探测时机：`/api/health → /api/projects/registration → /api/projects`
+（进入真实模式时），添加成功后因 `workspaceKey` 变化又出现一次
+`/api/projects/registration`（工作区变化 = 重新探测），全程没有"点击触发探测"的痕迹。
+
 
 ## 关键读数
 

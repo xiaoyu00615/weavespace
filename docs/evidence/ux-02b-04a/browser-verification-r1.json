@@ -1,0 +1,92 @@
+{
+  "switchToLive": "OK",
+  "probeRequest": [
+    {
+      "url": "/api/projects/registration",
+      "at": 1794709697652
+    }
+  ],
+  "modalBeforeClick": false,
+  "clickEntry": "OK",
+  "requestsOnClick": [],
+  "probing": {
+    "dataAddProject": "probing",
+    "note": "正在确认当前环境能否添加项目…确认完成前不能继续。",
+    "primaryText": "确认环境后再继续",
+    "primaryDisabled": true,
+    "buttons": [
+      {
+        "text": "取消",
+        "disabled": false
+      },
+      {
+        "text": "确认环境后再继续",
+        "disabled": true
+      }
+    ]
+  },
+  "afterProbe": {
+    "dataAddProject": "managed",
+    "note": null,
+    "primaryText": "继续选择文件夹",
+    "primaryDisabled": false
+  },
+  "disclosure": {
+    "lead": "接下来会让你选择一个本机文件夹作为项目根。继续之前，请先确认你已经了解下面三条：",
+    "items": [
+      "WeaveSpace 可以浏览你接下来选择的文件夹及其所有子目录，并在授权范围内读取和保存文件。",
+      "这不代表允许自动运行程序、执行脚本，也不代表授予 AI 或任何插件权限。",
+      "你可以随时移除这个项目；移除不会删除磁盘上的任何文件。"
+    ],
+    "coverage": {
+      "browse": true,
+      "subtree": true,
+      "read": true,
+      "save": true,
+      "denyExec": true,
+      "removable": true
+    },
+    "firstItem": "WeaveSpace 可以浏览你接下来选择的文件夹及其所有子目录，并在授权范围内读取和保存文件。"
+  },
+  "domLeaksPath": false,
+  "cancel": "OK",
+  "requestsOnCancel": [],
+  "afterCancel": {
+    "projectRows": 0,
+    "emptyHint": true
+  },
+  "confirmPick": "OK",
+  "applied": {
+    "title": "已添加「projR1」",
+    "body": "项目已登记，左侧目录树正在读取它的根目录；不需要重启。",
+    "buttons": [
+      "好的"
+    ]
+  },
+  "tree": [
+    "projR1",
+    "docs",
+    "README.md"
+  ],
+  "leaksAfterAdd": false,
+  "renameOpen": "OK",
+  "renamed": {
+    "rowText": "研发资料",
+    "title": "修改「研发资料」的显示名称"
+  },
+  "apiTrail": [
+    "/api/health",
+    "/api/projects/registration",
+    "/api/projects",
+    "/api/session-token",
+    "/api/projects/pick",
+    "/api/projects/pick?requestId=pick-52b88c5f-7715-4d93-9c64-0d7ff76883b8",
+    "/api/projects",
+    "/api/tree?projectId=projr1",
+    "/api/health",
+    "/api/tree?projectId=projr1&dir=docs",
+    "/api/projects/registration",
+    "/api/session-token",
+    "/api/projects/rename"
+  ]
+}

@@ -30,6 +30,25 @@ export { ACKNOWLEDGE_SCOPE };
 export type { PickQueryOutcome, PickStartOutcome, ProjectRegistrationSupport };
 
 /**
+ * 信任披露正文（R1-01）。
+ *
+ * 放在纯 TS 里而不是 JSX 里，是为了让"披露到底说了什么"可以被断言：
+ * 浏览范围 / 读取与保存 / 执行边界 / 可撤销 —— 少任何一条，
+ * 用户在点「继续选择文件夹」时的知情程度就不成立。
+ *
+ * 措辞边界：既不能夸大（"可以访问你的所有文件"），也不能含糊到让人以为
+ * "选了文件夹就等于允许执行程序"。保存必须写进来，否则用户不知道这是可写的授权。
+ */
+export const DISCLOSURE_LEAD =
+  '接下来会让你选择一个本机文件夹作为项目根。继续之前，请先确认你已经了解下面三条：';
+
+export const DISCLOSURE_POINTS = [
+  'WeaveSpace 可以浏览你接下来选择的文件夹及其所有子目录，并在授权范围内读取和保存文件。',
+  '这不代表允许自动运行程序、执行脚本，也不代表授予 AI 或任何插件权限。',
+  '你可以随时移除这个项目；移除不会删除磁盘上的任何文件。',
+] as const;
+
+/**
  * 外部能力（由 `client-api` 适配）。
  *
  * 刻意做成四个窄方法而不是直接传 `WeaveSpaceClient`：这样测试不必实现整个客户端，
@@ -62,6 +81,19 @@ export type AddProjectResult =
   | { kind: 'busy' }
   /** 工作区已经变了（切模式 / 重连 / 换了摘要）：结果已丢弃，界面未改动。 */
   | { kind: 'stale' }
+  /**
+   * Host 已明确 `APPLIED`（项目确实登记进工作区了），但 Shell 侧同步没走完：
+   * 项目表读取或根层加载失败。**不能**说成"添加失败" —— 那会诱导用户
+   * 重新选一次同一个文件夹，撞上重复根，反而更难恢复。
+   */
+  | { kind: 'registered-unsynced'; project: ProjectSummary; message: string }
+  /**
+   * 结果未知：轮询中断、等待超时、或流程内部异常。
+   * 此时**既不能**说"已添加"**也不能**说"没添加"，更**不能**自动重发 pick
+   * （那可能弹出第二个系统窗口）；只允许用户发起只读核对。
+   */
+  | { kind: 'unknown'; message: string }
+  /** 确定没有发起授权：例如连不上 Host（`bootstrap` 是只读 GET，没有副作用）。 */
   | { kind: 'failed'; message: string };
 
 export interface AddProjectHost {
@@ -142,11 +174,68 @@ export function createProjectAdder(host: AddProjectHost): ProjectAdder {
         return origin.mode !== 'live' || current.mode !== 'live' || current.workspaceKey !== origin.workspaceKey;
       };
 
+      /**
+       * Host 已经 APPLIED：从这里开始只剩"把结果搬进界面"。
+       *
+       * 三个副作用（项目表 / 根层 / 工作区摘要）各自都可能失败，但它们**都不改变
+       * "Host 已经登记了这个项目"这个事实**。因此这一段的异常必须收敛成
+       * `registered-unsynced`（可以只读恢复），而不是 `failed` —— 后者会让用户
+       * 重新选同一个文件夹，撞上"重复根"，把一个可恢复的状态变成更难收拾的状态。
+       */
+      const settleApplied = async (project: ProjectSummary | undefined): Promise<AddProjectResult> => {
+        if (!project) {
+          // 没有摘要就无法做界面同步；但 Host 说 APPLIED，注册事实仍然成立
+          return { kind: 'unknown', message: 'Host 报告已登记，但没有返回项目信息' };
+        }
+
+        let unsynced: string | null = null;
+        try {
+          const projects = await host.port.listProjects();
+          if (stale()) return { kind: 'stale' };
+          host.onProjects(projects);
+        } catch {
+          unsynced = '项目已注册，但读取项目列表失败';
+        }
+
+        if (unsynced === null) {
+          /**
+           * 顺序不可交换：**先读根层，再更新工作区摘要**。
+           *
+           * `workspaceKey` 覆盖"项目集合 + 规范根 + 根身份令牌"，添加项目必然改变它；
+           * 而逐层加载的归属票据会在提交时比对 `workspaceKey`。若先更新摘要，根层请求
+           * 的票据在返回时就已经过期，结果会被当作"上一个工作区的迟到响应"丢弃 ——
+           * 界面于是出现"项目加进来了，但点开是空的"。
+           */
+          try {
+            await host.loadRoot(project.projectId);
+          } catch {
+            unsynced = '项目已注册，但新项目的目录树暂时读取失败';
+          }
+        }
+
+        /**
+         * 摘要只用于恢复记录匹配：取不到或写不进都不改变"项目已添加"这个结论，
+         * 下一次 `/api/health` 会给出正确摘要。但**写入时必须仍然属于同一个工作区**，
+         * 否则会把旧工作区的摘要盖到新工作区上。
+         */
+        try {
+          const key = await host.port.workspaceKey();
+          if (!stale()) host.onWorkspaceKey(key);
+        } catch {
+          // 保持原值即可
+        }
+
+        if (stale()) return { kind: 'stale' };
+        if (unsynced) return { kind: 'registered-unsynced', project, message: unsynced };
+        return { kind: 'applied', project };
+      };
+
       try {
         let boot: { token: string; intentId: string | null };
         try {
           boot = await host.port.bootstrap();
         } catch {
+          // `bootstrap` 是只读 GET（令牌 + 意图），失败时确定没有启动任何选择器
           return { kind: 'failed', message: '无法连接本地服务：请先启动 Host' };
         }
         if (stale()) return { kind: 'stale' };
@@ -165,7 +254,14 @@ export function createProjectAdder(host: AddProjectHost): ProjectAdder {
             ...(name && name.trim() !== '' ? { name: name.trim() } : {}),
           });
         } catch {
-          return { kind: 'failed', message: '无法启动文件夹选择' };
+          /**
+           * 传输层失败 ≠ 没有发起：请求可能已经到了 Host，窗口可能已经弹出来。
+           * 因此这里只能说"未知"，不能说"失败"，更不能重发（会撞上第二个窗口）。
+           */
+          return {
+            kind: 'unknown',
+            message: '无法确认选择窗口是否已经打开：请先在任务栏确认有没有多出文件夹窗口，再回来核对项目列表',
+          };
         }
         if (stale()) return { kind: 'stale' };
         if (started.status !== 'PENDING' || !started.requestId) {
@@ -184,38 +280,16 @@ export function createProjectAdder(host: AddProjectHost): ProjectAdder {
           try {
             state = await host.port.queryPick({ token: boot.token, requestId });
           } catch {
-            return { kind: 'failed', message: '无法读取文件夹选择结果' };
+            // 轮询中断：用户可能已经把窗口关掉、也可能刚点完确定。结果不可知。
+            return {
+              kind: 'unknown',
+              message: '与本地服务的连接中断，暂时无法确认这次选择的结果',
+            };
           }
           if (stale()) return { kind: 'stale' };
 
           if (state.status === 'APPLIED') {
-            const project = state.project;
-            if (!project) return { kind: 'failed', message: '选择已完成，但 Host 没有返回项目信息' };
-            // Host 才是权威：先重取项目表，再挂上新项目的根层
-            let projects: ProjectSummary[];
-            try {
-              projects = await host.port.listProjects();
-            } catch {
-              return { kind: 'failed', message: '项目已添加，但读取项目列表失败：请刷新页面' };
-            }
-            if (stale()) return { kind: 'stale' };
-            host.onProjects(projects);
-            /**
-             * 顺序不可交换：**先读根层，再更新工作区摘要**。
-             *
-             * `workspaceKey` 覆盖"项目集合 + 规范根 + 根身份令牌"，添加项目必然改变它；
-             * 而逐层加载的归属票据会在提交时比对 `workspaceKey`。若先更新摘要，根层请求
-             * 的票据在返回时就已经过期，结果会被当作"上一个工作区的迟到响应"丢弃 ——
-             * 界面于是出现"项目加进来了，但点开是空的"。
-             */
-            await host.loadRoot(project.projectId);
-            try {
-              const key = await host.port.workspaceKey();
-              if (!stale()) host.onWorkspaceKey(key);
-            } catch {
-              // 摘要只用于恢复记录匹配：取不到就保持原值，不影响"项目已添加"这个事实
-            }
-            return { kind: 'applied', project };
+            return await settleApplied(state.project);
           }
           if (state.status === 'CANCELLED') return { kind: 'cancelled' };
           if (state.status === 'REJECTED') {
@@ -227,12 +301,18 @@ export function createProjectAdder(host: AddProjectHost): ProjectAdder {
             };
           }
           if (now() >= deadline) {
+            // 超时不等于"没添加"：用户可能还开着窗口，稍后才点确定。
             return {
-              kind: 'failed',
-              message: '等待文件夹选择结果超时：请检查系统选择窗口是否仍在后台打开',
+              kind: 'unknown',
+              message: '等待选择结果超时：系统窗口可能仍在后台，这次选择的最终结果暂时未知',
             };
           }
-          await wait(pollIntervalMs);
+          try {
+            await wait(pollIntervalMs);
+          } catch {
+            // 等待函数异常（被注入的宿主依赖炸了）：流程只能收敛为"未知"
+            return { kind: 'unknown', message: '等待选择结果时流程中断：这次选择的结果暂时未知' };
+          }
           if (stale()) return { kind: 'stale' };
         }
       } finally {
@@ -270,12 +350,115 @@ export interface AddProjectFlow {
  *
  * `support()` 必须能**同步**回答（`flow.open()` 要立刻决定模态里显示什么），
  * 因此能力探测的结果缓存在句柄内部；`probe()` 幂等，可以随模式 / 工作区变化重复调用。
- * 尚未探测时返回 `null`，界面按"未知"给说明，绝不假定可用。
+ * 尚未探测时返回 `null`，界面按"待确认"处理，绝不假定可用。
  */
 export interface AddProjectHandle {
   readonly flow: AddProjectFlow;
   probe(): Promise<ProjectRegistrationSupport>;
   support(): ProjectRegistrationSupport | null;
+  /** 订阅能力探测结果：界面据此从"待确认"变成明确答案。 */
+  subscribeSupport(listener: () => void): () => void;
+  /** 身份变化时把缓存置空，界面回到"待确认"（**不**取消在途探测）。 */
+  invalidateSupport(): void;
+  /**
+   * 只读核对：重新读取项目列表与工作区摘要，可选补齐某个项目的根层。
+   *
+   * 用于「已注册但未同步」与「结果未知」之后的恢复：**不重发 pick、不弹窗口、
+   * 不改任何授权**。用户不需要重新选择同一个文件夹。
+   */
+  resync(projectId?: string): Promise<ResyncOutcome>;
+}
+
+export type ResyncOutcome =
+  | { ok: true; projects: ProjectSummary[] }
+  | { ok: false; message: string };
+
+/**
+ * 能力探测（R1-02）。
+ *
+ * 抽成纯 TS 的理由：这条约束是"**点击入口不得额外发请求**"，而探测本身必须
+ * 发生在组件初始化 / 模式变化 / 工作区变化时。把"何时探测"和"探测几次"放进
+ * 一个可确定性测试的对象里，才能证明连挂载两次（StrictMode）也只发一个请求。
+ */
+export interface SupportProbe {
+  probe(): Promise<ProjectRegistrationSupport>;
+  support(): ProjectRegistrationSupport | null;
+  subscribe(listener: () => void): () => void;
+  invalidate(): void;
+}
+
+export function createSupportProbe(options: {
+  mode(): ClientMode;
+  workspaceKey(): string | null;
+  fetchSupport(): Promise<ProjectRegistrationSupport>;
+}): SupportProbe {
+  const listeners = new Set<() => void>();
+  const notify = (): void => {
+    for (const listener of listeners) listener();
+  };
+
+  /** 缓存只在"身份一致"时有效：模式或工作区摘要变了就必须重新问。 */
+  let cached: ProjectRegistrationSupport | null = null;
+  let cachedKey: string | null = null;
+  let inFlight: { key: string; promise: Promise<ProjectRegistrationSupport> } | null = null;
+
+  const keyOf = (): string | null => {
+    const mode = options.mode();
+    return mode === 'live' ? `live|${options.workspaceKey() ?? ''}` : null;
+  };
+
+  return {
+    support() {
+      if (options.mode() !== 'live') return 'demo';
+      const key = keyOf();
+      return key !== null && cachedKey === key ? cached : null;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    invalidate() {
+      // 只清答案，不动在途探测：StrictMode 会把 effect 跑两遍，
+      // 若这里连 inFlight 一起清，就会凭空多出一个请求。
+      cached = null;
+      cachedKey = null;
+      notify();
+    },
+    async probe() {
+      if (options.mode() !== 'live') {
+        // 演示模式没有 Host，也没有真实目录：不访问任何网络
+        return 'demo';
+      }
+      const key = keyOf();
+      if (key === null) return 'unknown';
+      if (inFlight && inFlight.key === key) return inFlight.promise;
+
+      const entry: { key: string; promise: Promise<ProjectRegistrationSupport> } = {
+        key,
+        promise: Promise.resolve('unknown'),
+      };
+      entry.promise = (async () => {
+        let answer: ProjectRegistrationSupport;
+        try {
+          answer = await options.fetchSupport();
+        } catch {
+          // 探测失败不等于"可以添加"：保持未知，让用户看到的是说明而不是失败
+          answer = 'unknown';
+        } finally {
+          if (inFlight === entry) inFlight = null;
+        }
+        // 探测期间身份又变了：这次答案不属于当前工作区，不写缓存
+        if (keyOf() === key) {
+          cached = answer;
+          cachedKey = key;
+          notify();
+        }
+        return answer;
+      })();
+      inFlight = entry;
+      return entry.promise;
+    },
+  };
 }
 
 export function createAddProjectFlow(options: {
@@ -313,8 +496,15 @@ export function createAddProjectFlow(options: {
       if (state.phase === 'picking' || options.adder.busy()) return { kind: 'busy' };
       if (state.phase !== 'disclosure') return { kind: 'busy' };
 
+      let support: ProjectRegistrationSupport;
+      try {
+        support = options.support();
+      } catch {
+        // 能力未知时**不能**默认允许继续
+        support = 'unknown';
+      }
+
       // 非托管模式：给明确说明，一个请求都不发（不假装失败、也不引导输入路径）
-      const support = options.support();
       if (support !== 'managed') {
         const result: AddProjectResult = { kind: 'unsupported', support };
         set({ phase: 'done', result });
@@ -323,9 +513,26 @@ export function createAddProjectFlow(options: {
 
       // 先切到 picking 再 await：第二次点击此时必然被上面的分支挡住
       set({ phase: 'picking' });
-      const result = await options.adder.add(name);
-      set({ phase: 'done', result });
-      return result;
+      try {
+        const result = await options.adder.add(name);
+        set({ phase: 'done', result });
+        return result;
+      } catch {
+        /**
+         * 统一异常终态（R1-04）。
+         *
+         * 注入的宿主依赖（`loadRoot` / `onProjects` / `onWorkspaceKey` / `wait`）
+         * 或编排层自身抛出时，模态不能永久停在 picking；同时**不得**凭异常推断
+         * "Host 没登记" —— 异常很可能发生在 APPLIED 之后。因此这里只说"未知"，
+         * 由用户通过只读核对（重新读取项目列表）收敛，绝不自动重发 pick。
+         */
+        const result: AddProjectResult = {
+          kind: 'unknown',
+          message: '添加流程异常中断：Host 是否已经登记这次选择暂时未知',
+        };
+        set({ phase: 'done', result });
+        return result;
+      }
     },
     dismiss() {
       if (state.phase === 'done') set({ phase: 'closed' });
