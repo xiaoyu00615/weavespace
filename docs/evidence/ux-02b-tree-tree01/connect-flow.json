@@ -1,0 +1,212 @@
+{
+  "steps": [],
+  "modeBefore": "演示模式",
+  "switchToLive": "OK",
+  "modeBadge": "真实文件",
+  "afterConnectImmediate": {
+    "rowCount": 14,
+    "statusCount": 2,
+    "loadingCount": 0,
+    "loadingTexts": []
+  },
+  "afterConnectSettled": {
+    "rowCount": 14,
+    "statusCount": 2,
+    "loadingCount": 0,
+    "loadingTexts": []
+  },
+  "detail": [
+    {
+      "name": "tree01-proj1",
+      "childRows": [
+        "▾docs",
+        "guide.md",
+        "▾src",
+        "index.js",
+        "readme.md"
+      ],
+      "childStatus": [
+        "已加载 5 个条目 · 当前项目"
+      ]
+    },
+    {
+      "name": "tree01-proj2",
+      "childRows": [
+        "▾docs",
+        "guide.md",
+        "▾src",
+        "index.js",
+        "readme.md"
+      ],
+      "childStatus": [
+        "已加载 5 个条目 · 当前项目"
+      ]
+    }
+  ],
+  "treeStale": [],
+  "wsKeyLog": [],
+  "cycle": [
+    {
+      "target": "演示",
+      "click": "OK",
+      "rowCount": 8,
+      "statusCount": 0,
+      "loadingCount": 0,
+      "loadingTexts": [],
+      "mode": "演示模式"
+    },
+    {
+      "target": "真实文件",
+      "click": "OK",
+      "rowCount": 14,
+      "statusCount": 2,
+      "loadingCount": 0,
+      "loadingTexts": [],
+      "mode": "真实文件"
+    }
+  ],
+  "afterCycle": {
+    "rowCount": 14,
+    "statusCount": 2,
+    "loadingCount": 0,
+    "loadingTexts": []
+  },
+  "treeStaleAfterCycle": [],
+  "wsKeyLogAfterCycle": [],
+  "treeRequests": [
+    {
+      "reqId": "16304.75",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1",
+      "ts": 1794716649999
+    },
+    {
+      "reqId": "16304.77",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1&dir=docs",
+      "ts": 1794716650102
+    },
+    {
+      "reqId": "16304.78",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1&dir=src",
+      "ts": 1794716650104
+    },
+    {
+      "reqId": "16304.79",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2",
+      "ts": 1794716650108
+    },
+    {
+      "reqId": "16304.81",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2&dir=docs",
+      "ts": 1794716650160
+    },
+    {
+      "reqId": "16304.82",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2&dir=src",
+      "ts": 1794716650163
+    },
+    {
+      "reqId": "16304.87",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1",
+      "ts": 1794716657679
+    },
+    {
+      "reqId": "16304.89",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1&dir=docs",
+      "ts": 1794716657699
+    },
+    {
+      "reqId": "16304.90",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1&dir=src",
+      "ts": 1794716657699
+    },
+    {
+      "reqId": "16304.91",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2",
+      "ts": 1794716657707
+    },
+    {
+      "reqId": "16304.93",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2&dir=docs",
+      "ts": 1794716657740
+    },
+    {
+      "reqId": "16304.94",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2&dir=src",
+      "ts": 1794716657741
+    }
+  ],
+  "treeResponses": [
+    {
+      "reqId": "16304.75",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1",
+      "status": 200,
+      "ts": 1794716650033
+    },
+    {
+      "reqId": "16304.77",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1&dir=docs",
+      "status": 200,
+      "ts": 1794716650108
+    },
+    {
+      "reqId": "16304.78",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1&dir=src",
+      "status": 200,
+      "ts": 1794716650109
+    },
+    {
+      "reqId": "16304.79",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2",
+      "status": 200,
+      "ts": 1794716650110
+    },
+    {
+      "reqId": "16304.81",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2&dir=docs",
+      "status": 200,
+      "ts": 1794716650189
+    },
+    {
+      "reqId": "16304.82",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2&dir=src",
+      "status": 200,
+      "ts": 1794716650190
+    },
+    {
+      "reqId": "16304.87",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1",
+      "status": 200,
+      "ts": 1794716657685
+    },
+    {
+      "reqId": "16304.89",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1&dir=docs",
+      "status": 200,
+      "ts": 1794716657715
+    },
+    {
+      "reqId": "16304.90",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj1&dir=src",
+      "status": 200,
+      "ts": 1794716657715
+    },
+    {
+      "reqId": "16304.91",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2",
+      "status": 200,
+      "ts": 1794716657717
+    },
+    {
+      "reqId": "16304.93",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2&dir=docs",
+      "status": 200,
+      "ts": 1794716657751
+    },
+    {
+      "reqId": "16304.94",
+      "url": "http://127.0.0.1:5196/api/tree?projectId=tree01-proj2&dir=src",
+      "status": 200,
+      "ts": 1794716657751
+    }
+  ]
+}

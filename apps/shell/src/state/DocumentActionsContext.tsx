@@ -286,7 +286,9 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       isCurrent: (epoch) => loadEpoch.current.isCurrent(epoch),
       onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
       onWorkspaceKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
-      loadRoot: (pid) => treeLoader.current.load(pid, '', false).then(() => undefined),
+      // 返回真实结果：resync 据此判断根层是否真的落到了界面（要求 8），
+      // 不把 rejected / failed / changed / stale 当成"已成功加载"
+      loadRoot: (pid) => treeLoader.current.load(pid, '', false),
       missingRoots: (projects) =>
         projects
           .filter((project) => project.status === 'READY')

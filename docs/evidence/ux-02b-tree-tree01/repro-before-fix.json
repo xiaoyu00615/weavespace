@@ -1,0 +1,208 @@
+{
+  "switchToLive": "OK",
+  "add1": "已添加「tree01-proj1」",
+  "afterAdd1": {
+    "rowCount": 4,
+    "loadingCount": 2,
+    "loadingTexts": [
+      "正在加载…",
+      "正在加载…"
+    ],
+    "projects": [
+      {
+        "name": "tree01-proj1",
+        "childRows": [
+          "▾docs",
+          "▾src",
+          "readme.md"
+        ],
+        "childStatus": [
+          "正在加载…",
+          "正在加载…",
+          "已加载 3 个条目 · 当前项目"
+        ]
+      }
+    ]
+  },
+  "add2": "已添加「tree01-proj2」",
+  "afterAdd2": {
+    "rowCount": 8,
+    "loadingCount": 4,
+    "loadingTexts": [
+      "正在加载…",
+      "正在加载…",
+      "正在加载…",
+      "正在加载…"
+    ],
+    "projects": [
+      {
+        "name": "tree01-proj1",
+        "childRows": [
+          "▾docs",
+          "▾src",
+          "readme.md"
+        ],
+        "childStatus": [
+          "正在加载…",
+          "正在加载…",
+          "已加载 3 个条目 · 当前项目"
+        ]
+      },
+      {
+        "name": "tree01-proj2",
+        "childRows": [
+          "▾docs",
+          "▾src",
+          "readme.md"
+        ],
+        "childStatus": [
+          "正在加载…",
+          "正在加载…",
+          "已加载 3 个条目 · 当前项目"
+        ]
+      }
+    ]
+  },
+  "afterAdd2Settled": {
+    "rowCount": 8,
+    "loadingCount": 4,
+    "loadingTexts": [
+      "正在加载…",
+      "正在加载…",
+      "正在加载…",
+      "正在加载…"
+    ],
+    "projects": [
+      {
+        "name": "tree01-proj1",
+        "childRows": [
+          "▾docs",
+          "▾src",
+          "readme.md"
+        ],
+        "childStatus": [
+          "正在加载…",
+          "正在加载…",
+          "已加载 3 个条目 · 当前项目"
+        ]
+      },
+      {
+        "name": "tree01-proj2",
+        "childRows": [
+          "▾docs",
+          "▾src",
+          "readme.md"
+        ],
+        "childStatus": [
+          "正在加载…",
+          "正在加载…",
+          "已加载 3 个条目 · 当前项目"
+        ]
+      }
+    ]
+  },
+  "treeStale": [
+    {
+      "projectKey": "tree01-proj1",
+      "dir": "docs",
+      "tMode": "live",
+      "tSync": "live",
+      "tKey": null,
+      "tEpoch": 2,
+      "tWsGen": 1,
+      "tProjGen": 0,
+      "tGen": 1,
+      "nMode": "live",
+      "nSync": "live",
+      "nKey": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "nEpoch": 2,
+      "nWsGen": 1,
+      "nProjGen": 0,
+      "nGen": 1
+    },
+    {
+      "projectKey": "tree01-proj1",
+      "dir": "src",
+      "tMode": "live",
+      "tSync": "live",
+      "tKey": null,
+      "tEpoch": 2,
+      "tWsGen": 1,
+      "tProjGen": 0,
+      "tGen": 1,
+      "nMode": "live",
+      "nSync": "live",
+      "nKey": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "nEpoch": 2,
+      "nWsGen": 1,
+      "nProjGen": 0,
+      "nGen": 1
+    },
+    {
+      "projectKey": "tree01-proj2",
+      "dir": "docs",
+      "tMode": "live",
+      "tSync": "live",
+      "tKey": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "tEpoch": 2,
+      "tWsGen": 1,
+      "tProjGen": 0,
+      "tGen": 1,
+      "nMode": "live",
+      "nSync": "live",
+      "nKey": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+      "nEpoch": 2,
+      "nWsGen": 1,
+      "nProjGen": 0,
+      "nGen": 1
+    },
+    {
+      "projectKey": "tree01-proj2",
+      "dir": "src",
+      "tMode": "live",
+      "tSync": "live",
+      "tKey": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "tEpoch": 2,
+      "tWsGen": 1,
+      "tProjGen": 0,
+      "tGen": 1,
+      "nMode": "live",
+      "nSync": "live",
+      "nKey": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+      "nEpoch": 2,
+      "nWsGen": 1,
+      "nProjGen": 0,
+      "nGen": 1
+    }
+  ],
+  "wsKeyLog": [
+    {
+      "from": null,
+      "to": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "at": 1794716235629
+    },
+    {
+      "from": null,
+      "to": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "at": 1794716235629
+    },
+    {
+      "from": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "to": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+      "at": 1794716238328
+    },
+    {
+      "from": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "to": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+      "at": 1794716238328
+    }
+  ],
+  "treeRequests": [
+    "/api/tree?projectId=tree01-proj1",
+    "/api/tree?projectId=tree01-proj1&dir=docs",
+    "/api/tree?projectId=tree01-proj1&dir=src",
+    "/api/tree?projectId=tree01-proj2",
+    "/api/tree?projectId=tree01-proj2&dir=docs",
+    "/api/tree?projectId=tree01-proj2&dir=src"
+  ]
+}

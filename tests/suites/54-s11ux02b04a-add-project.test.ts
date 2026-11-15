@@ -40,6 +40,7 @@ import {
   type ResyncHost,
   type ResyncOutcome,
 } from '../../apps/shell/src/state/add-project.ts';
+import type { TreeLoadOutcome } from '../../apps/shell/src/state/tree-load.ts';
 import { workspaceReducer, INITIAL_STATE } from '../../apps/shell/src/state/workspace-reducer.ts';
 import { applyPage, emptyLevels } from '../../apps/shell/src/components/tree-model.ts';
 
@@ -1431,7 +1432,13 @@ interface ResyncHarness {
  * `listDeferred` 与 `keyDeferred` 分别在两次 await 处悬停，期间可以模拟
  * Demo/Live 切换或工作区替换，验证"过期结果一律不回填"。
  */
-function makeResyncHarness(options: { initialTree?: Record<string, boolean> } = {}): ResyncHarness {
+function makeResyncHarness(
+  options: {
+    initialTree?: Record<string, boolean>;
+    /** 控制指定项目 loadRoot 的真实结果（TREE-01 要求 8）；缺省视为旧式成功。 */
+    rootOutcomes?: Record<string, TreeLoadOutcome>;
+  } = {},
+): ResyncHarness {
   const identity: { mode: 'live' | 'demo'; workspaceKey: string; epoch: number } = {
     mode: 'live',
     workspaceKey: 'k'.repeat(64),
@@ -1471,6 +1478,7 @@ function makeResyncHarness(options: { initialTree?: Record<string, boolean> } = 
     onWorkspaceKey: (next) => appliedKey.push(next),
     loadRoot: async (projectId) => {
       loadedRoots.push(projectId);
+      return options.rootOutcomes?.[projectId];
     },
     missingRoots: (projects) =>
       projects
@@ -1490,9 +1498,15 @@ function makeResyncHarness(options: { initialTree?: Record<string, boolean> } = 
     loadedRoots,
     switchToDemo() {
       identity.mode = 'demo';
+      // 真实 switchMode：先 `loadEpoch.cancel()` 推进代次，再切模式。
+      // 旧模型只翻转 mode、不推进代次，与真实行为不符（TREE-01 要求 7）。
+      effectiveEpoch.value += 1;
     },
     switchToLive() {
       identity.mode = 'live';
+      // 真实 switchMode 切到 live：`loadEpoch.cancel()` + `start()` 两次推进代次。
+      // 这里推进一次即足以表达"代次已前进"，旧请求一律作废（TREE-01 要求 7）。
+      effectiveEpoch.value += 1;
     },
     switchWorkspace() {
       // 推进加载代次（真实场景由 loadEpoch.cancel/start 完成）：旧 resync 立即过期
@@ -1534,20 +1548,22 @@ test('R2-01-02 等待期间切到 Demo：不得回填任何结果', async () => 
   assert.deepEqual(h.appliedKey, []);
 });
 
-test('R2-01-03 等待期间切到 Demo 再切回 Live（同一代）：仍成功恢复', async () => {
-  // 验证 resync 不会"只因当前是 live 就放行"或"只因曾经是 demo 就过度拦截"：
-  // 同一代内 transient 翻转回 live，数据仍属于本工作区，应当恢复成功。
+test('R2-01-03 等待期间切到 Demo 再切回 Live（真实切换会推进代次）：旧结果不得回填', async () => {
+  // 修正（TREE-01 要求 7）：真实 `switchMode` 会走 `loadEpoch.cancel()` / `start()`，
+  // Demo/Live 切换**必然推进代次**。旧模型只翻转 mode、不推进代次，于是把"真实切换"
+  // 误当成"同一工作区仍有效"，得出了"仍成功恢复"的错误结论。
+  // 真实语义：切换后旧 resync 属于上一代，必须作废，绝不能被当成仍属当前工作区而回填。
   const h = makeResyncHarness({ initialTree: {} });
   const settled = h.runner();
   h.switchToDemo();
   h.switchToLive();
   h.listDeferred.resolve([{ projectId: 'p-a', name: 'A', status: 'READY' }]);
-  h.keyDeferred.resolve('k2');
   const out = await settled;
-  assert.equal(out.ok, true, JSON.stringify(out));
-  assert.deepEqual(h.appliedProjects, [[{ projectId: 'p-a', name: 'A', status: 'READY' }]]);
-  assert.deepEqual(h.loadedRoots, ['p-a']);
-  assert.deepEqual(h.appliedKey, ['k2']);
+  assert.equal(out.ok, false, JSON.stringify(out));
+  assert.match(out.ok === false ? (out.message ?? '') : '', /切换|取消/);
+  assert.deepEqual(h.appliedProjects, [], '真实 Demo/Live 切换推进了代次，旧 resync 不得回填项目表');
+  assert.deepEqual(h.loadedRoots, [], '过期代次不得再补根层');
+  assert.deepEqual(h.appliedKey, [], '过期代次不得回填工作区摘要');
 });
 
 test('R2-01-04 等待期间切换工作区（代次失效，mode 仍是 live）：不得回填', async () => {
@@ -1590,4 +1606,30 @@ test('R2-01-06 未指定 projectId 且读取失败：保持 ok:false，不把失
   assert.deepEqual(h.appliedProjects, []);
   assert.deepEqual(h.loadedRoots, []);
   assert.deepEqual(h.appliedKey, []);
+});
+
+test('R2-01-07 根层被拒绝/失败时不得谎报"已重新读取项目列表"（TREE-01 要求 8）', async () => {
+  // 项目列表同步成功，但 p-b 的根层返回 rejected：resync 不得把"根层没读成"
+  // 当成"已成功加载"而返回 ok:true（否则界面会显示项目却点开是空的）。
+  const h = makeResyncHarness({ initialTree: {}, rootOutcomes: { 'p-b': 'rejected' } });
+  const settled = h.runner();
+  h.listDeferred.resolve([
+    { projectId: 'p-a', name: 'A', status: 'READY' },
+    { projectId: 'p-b', name: 'B', status: 'READY' },
+  ]);
+  h.keyDeferred.resolve('k2');
+  const out = await settled;
+  assert.equal(out.ok, false, JSON.stringify(out));
+  assert.match(out.ok === false ? (out.message ?? '') : '', /根层/);
+  assert.deepEqual(h.loadedRoots, ['p-a', 'p-b'], '两个缺失根层都尝试补齐');
+  assert.deepEqual(h.appliedProjects.length, 1, '项目列表本身仍可同步');
+});
+
+test('R2-01-08 根层 failed 同样不被当成成功（防止把异常当加载完成）', async () => {
+  const h = makeResyncHarness({ initialTree: {}, rootOutcomes: { 'p-a': 'failed' } });
+  const settled = h.runner('p-a');
+  h.listDeferred.resolve([{ projectId: 'p-a', name: 'A', status: 'READY' }]);
+  const out = await settled;
+  assert.equal(out.ok, false, JSON.stringify(out));
+  assert.deepEqual(h.loadedRoots, ['p-a']);
 });

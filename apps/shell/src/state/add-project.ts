@@ -21,6 +21,7 @@ import type {
   ProjectSummary,
 } from '../client/client-api.ts';
 import type { ClientMode } from './types.ts';
+import type { TreeLoadOutcome } from './tree-load.ts';
 
 /**
  * 协议形状定义在 `client/client-api.ts`（它是唯一的线上契约所在地），
@@ -360,7 +361,12 @@ export interface ResyncHost {
   isCurrent(epoch: number): boolean;
   onProjects(projects: ProjectSummary[]): void;
   onWorkspaceKey(key: string | null): void;
-  loadRoot(projectId: string): Promise<void>;
+  /**
+   * 补齐某个项目的根层。返回逐层加载器的**真实结果**（不要吞掉）：
+   * `rejected` / `failed` / `changed` 表示根层没有成功落到界面，resync 不得把
+   * 这种失败当成"根层已成功加载"（TREE-01 要求 8）。返回 `void` 视为旧式调用、按成功处理。
+   */
+  loadRoot(projectId: string): Promise<TreeLoadOutcome | void>;
   /** 返回"根层从未加载"的项目 id：未指定 projectId 时这些项目需要补齐（避免显示成空目录）。 */
   missingRoots(projects: ProjectSummary[]): string[];
 }
@@ -407,14 +413,36 @@ export function createResyncRunner(host: ResyncHost) {
       ? (projects.some((project) => project.projectId === projectId) ? [projectId] : [])
       : host.missingRoots(projects);
 
+    /** 根层没有真正加载成功的项目：不允许被当成"已重新读取项目列表"（要求 8）。 */
+    const failedRoots: string[] = [];
+
     for (const pid of targets) {
+      let loadResult: TreeLoadOutcome | void;
       try {
-        await host.loadRoot(pid);
+        loadResult = await host.loadRoot(pid);
       } catch {
-        // 根层读不到不致命：项目行已经在列表里
+        // 抛异常等同于根层没读成：绝不能当成"根层已成功加载"（要求 8）
+        loadResult = 'failed';
+      }
+      // 根层没有真正落到界面：失败 / 被拒 / 目录已变化 / 迟到作废，都记账
+      if (
+        loadResult === 'rejected' ||
+        loadResult === 'failed' ||
+        loadResult === 'changed' ||
+        loadResult === 'stale'
+      ) {
+        failedRoots.push(pid);
       }
       // 补根层期间工作区也可能被换走：这一层的迟到响应不得回填到新工作区
       if (!current()) return { ok: false, message: '工作区已切换，已取消重新读取' };
+    }
+
+    if (failedRoots.length > 0) {
+      // 项目列表已同步，但至少一个根层没读成：不得谎报"已重新读取项目列表"
+      return {
+        ok: false,
+        message: `项目列表已同步，但以下项目根层未能读取：${failedRoots.join('、')}`,
+      };
     }
 
     try {

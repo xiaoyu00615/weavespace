@@ -1,0 +1,105 @@
+{
+  "switchToLive": "OK",
+  "add1": "已添加「tree01-proj1」",
+  "afterAdd1": {
+    "rowCount": 6,
+    "loadingCount": 0,
+    "loadingTexts": [],
+    "projects": [
+      {
+        "name": "tree01-proj1",
+        "childRows": [
+          "▾docs",
+          "guide.md",
+          "▾src",
+          "index.js",
+          "readme.md"
+        ],
+        "childStatus": [
+          "已加载 5 个条目 · 当前项目"
+        ]
+      }
+    ]
+  },
+  "add2": "已添加「tree01-proj2」",
+  "afterAdd2": {
+    "rowCount": 12,
+    "loadingCount": 0,
+    "loadingTexts": [],
+    "projects": [
+      {
+        "name": "tree01-proj1",
+        "childRows": [
+          "▾docs",
+          "guide.md",
+          "▾src",
+          "index.js",
+          "readme.md"
+        ],
+        "childStatus": [
+          "已加载 5 个条目 · 当前项目"
+        ]
+      },
+      {
+        "name": "tree01-proj2",
+        "childRows": [
+          "▾docs",
+          "guide.md",
+          "▾src",
+          "index.js",
+          "readme.md"
+        ],
+        "childStatus": [
+          "已加载 5 个条目 · 当前项目"
+        ]
+      }
+    ]
+  },
+  "afterAdd2Settled": {
+    "rowCount": 12,
+    "loadingCount": 0,
+    "loadingTexts": [],
+    "projects": [
+      {
+        "name": "tree01-proj1",
+        "childRows": [
+          "▾docs",
+          "guide.md",
+          "▾src",
+          "index.js",
+          "readme.md"
+        ],
+        "childStatus": [
+          "已加载 5 个条目 · 当前项目"
+        ]
+      },
+      {
+        "name": "tree01-proj2",
+        "childRows": [
+          "▾docs",
+          "guide.md",
+          "▾src",
+          "index.js",
+          "readme.md"
+        ],
+        "childStatus": [
+          "已加载 5 个条目 · 当前项目"
+        ]
+      }
+    ]
+  },
+  "treeStale": [],
+  "wsKeyLog": [],
+  "treeRequests": [
+    "/api/tree?projectId=tree01-proj1",
+    "/api/tree?projectId=tree01-proj1&dir=docs",
+    "/api/tree?projectId=tree01-proj1&dir=src",
+    "/api/tree?projectId=tree01-proj1&dir=docs",
+    "/api/tree?projectId=tree01-proj1&dir=src",
+    "/api/tree?projectId=tree01-proj2",
+    "/api/tree?projectId=tree01-proj2&dir=docs",
+    "/api/tree?projectId=tree01-proj2&dir=src",
+    "/api/tree?projectId=tree01-proj2&dir=docs",
+    "/api/tree?projectId=tree01-proj2&dir=src"
+  ]
+}
