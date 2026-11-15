@@ -1153,14 +1153,30 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       return;
     }
 
-    // 本阶段不实现的操作结果查询端点：501，且不留下无鉴权入口，也不按 projectId 猜结果。
+    /**
+     * 变更结果查询（ADR-022 §7.1，UX-02B-04B）。
+     *
+     * 只认与本次 `opId` **精确匹配**的持久事务证据（配置 `createdByOp` / 墓碑 `opId`），
+     * 证据缺失即 `unknown`——**绝不**用"项目现在在不在"反推某次操作的结果。
+     * 只读磁盘，因此重启前后结论一致；静态 / Legacy / 内存注入模式下无持久库 → 501。
+     */
     if (method === 'GET' && pathname === '/api/projects/op') {
-      if (runtime) requireSessionToken(req);
-      throw new HttpError(
-        501,
-        'ERR_COMMAND_UNSUPPORTED',
-        PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持该接口',
-      );
+      if (!runtime || !managedFileStore) {
+        if (runtime) requireSessionToken(req);
+        throw new HttpError(
+          501,
+          'ERR_COMMAND_UNSUPPORTED',
+          PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持该接口',
+        );
+      }
+      requireSessionToken(req);
+      const opId = (url.searchParams.get('opId') ?? '').trim();
+      if (opId === '' || opId.length > 128) {
+        throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少或非法的 opId');
+      }
+      const outcome = managedFileStore.queryOp(opId);
+      sendJson(res, 200, { status: 'APPLIED', opId, outcome });
+      return;
     }
 
     /**
@@ -1455,8 +1471,115 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         return;
       }
 
-      // 本阶段未实现的变更端点（remove / removal-precheck / …）：
-      // 统一 501，绝不留下"看起来能用但没有鉴权/没有事务"的部分实现。
+      /**
+       * 移除前置检查（UX-02B-04B，只读）。
+       *
+       * 只回答"现在能不能移除、被什么挡住"，**不改任何状态**；`remove` 执行时会
+       * 在屏障内用 Host 状态重新检查，因此这里的结果不是放行凭据。
+       */
+      if (pathname === '/api/projects/removal-precheck') {
+        if (!runtime) {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持移除项目',
+          );
+        }
+        requireSessionToken(req);
+        const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+        if (projectId === '') throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 projectId');
+        try {
+          const pre = runtime.removalPrecheck(projectId);
+          sendJson(res, 200, {
+            status: 'APPLIED',
+            projectId,
+            allowed: pre.allowed,
+            blockedBy: pre.blockedBy,
+            state: pre.state,
+          });
+        } catch (err) {
+          const code = (err as { errorCode?: ErrorCode }).errorCode;
+          throw new HttpError(
+            httpStatusOfDomainError(code),
+            code ?? 'ERR_STORAGE_IO',
+            code ? publicMessageOf(code) : '前置检查失败',
+          );
+        }
+        return;
+      }
+
+      /**
+       * 移除项目（UX-02B-04B）。
+       *
+       * 校验顺序即安全顺序：模式(501) → T1 令牌(403) → Origin(403) → 请求体禁字段
+       * （已在上面统一执行）→ projectId/confirm/opId 形状(400) → Runtime 事务。
+       * **确认字段 `confirm === 'remove-from-workspace'` 缺失或错误一律 400 且零变更**；
+       * 真正放行由 Runtime 在屏障内按 Host 状态重新检查，前检结果不采信。
+       * 只解除注册与授权，绝不触碰磁盘文件（Runtime 不引用任何删除/移动 API）。
+       */
+      if (pathname === '/api/projects/remove') {
+        if (!runtime) {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持移除项目',
+          );
+        }
+        requireSessionToken(req);
+        // 变更类请求必须显式声明 Origin（浏览器对同源 POST 也会发送）
+        if (req.headers.origin === undefined) {
+          throw new HttpError(403, 'ERR_PERMISSION_DENIED', '变更类请求必须声明 Origin');
+        }
+        const projectId = typeof body.projectId === 'string' ? body.projectId.trim() : '';
+        if (projectId === '') throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 projectId');
+        // 明确确认：缺失/错误 → 400，且在任何 Runtime 调用之前返回（零变更）
+        if (body.confirm !== 'remove-from-workspace') {
+          throw new HttpError(
+            400,
+            'ERR_COMMAND_INVALID',
+            '缺少或错误的确认：移除项目必须显式确认 confirm="remove-from-workspace"',
+          );
+        }
+        const rawOpId = typeof body.opId === 'string' ? body.opId.trim() : '';
+        if (rawOpId !== '' && !/^op-[A-Za-z0-9-]{8,80}$/.test(rawOpId)) {
+          throw new HttpError(400, 'ERR_COMMAND_INVALID', '非法 opId');
+        }
+        try {
+          const result = await runtime.removeProject(
+            projectId,
+            rawOpId === '' ? undefined : { opId: rawOpId },
+          );
+          if (result.outcome === 'aborted') {
+            sendJson(res, 409, {
+              status: 'REJECTED',
+              outcome: 'aborted',
+              projectId,
+              blockedBy: result.blockedBy,
+            });
+            return;
+          }
+          // 墓碑已生效但配置补写失败 → 5xx，但**明确** outcome:'revoked'（项目已不可访问）
+          const degraded = result.configPersisted === false;
+          sendJson(res, degraded ? 500 : 200, {
+            status: 'APPLIED',
+            outcome: 'revoked',
+            projectId: result.projectId,
+            opId: result.opId,
+            ...(result.configPersisted !== undefined ? { configPersisted: result.configPersisted } : {}),
+          });
+        } catch (err) {
+          const code = (err as { errorCode?: ErrorCode }).errorCode;
+          throw new HttpError(
+            httpStatusOfDomainError(code),
+            code ?? 'ERR_STORAGE_IO',
+            code ? publicMessageOf(code) : '移除失败',
+          );
+        }
+        return;
+      }
+
+      // 其余未实现的 `/api/projects/*` 变更端点：统一 501，绝不留下"看起来能用但没有
+      // 鉴权/没有事务"的部分实现。
       if (pathname.startsWith('/api/projects/')) {
         if (runtime) requireSessionToken(req);
         throw new HttpError(

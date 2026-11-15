@@ -212,6 +212,45 @@ export type RenameOutcome =
   | { status: 'APPLIED'; project: ProjectSummary }
   | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
 
+/** 移除阻断原因（与 Host `RemoveBlocker` 对齐，ADR-023 §3.2）。 */
+export type RemoveBlockerCode =
+  | 'ACTIVE_VIEWS'
+  | 'DIRTY'
+  | 'SAVING'
+  | 'OUTCOME_UNKNOWN'
+  | 'CONFLICT'
+  | 'IN_FLIGHT_DISK_OPS'
+  | 'DRAIN_TIMEOUT';
+
+/** 移除前置检查结果（只读）。仅用于提前给出可读提示，**不是**放行凭据。 */
+export type RemovalPrecheckOutcome =
+  | {
+      status: 'APPLIED';
+      projectId: string;
+      allowed: boolean;
+      blockedBy: RemoveBlockerCode[];
+      state: string;
+    }
+  | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
+
+/**
+ * 移除项目的结果。
+ *
+ * - `APPLIED`：Host 明确撤销（`configPersisted=false` 表示墓碑已生效但配置待补齐，
+ *   项目**已不可访问**，重启后按墓碑收敛）；
+ * - `ABORTED`：Host 复检未通过，零变更（附具体阻断原因）；
+ * - `REJECTED`：其余失败（含超时/未知），调用方**不得**据此断言"已移除"。
+ */
+export type RemoveProjectOutcome =
+  | { status: 'APPLIED'; projectId: string; opId: string; configPersisted: boolean }
+  | { status: 'ABORTED'; projectId: string; blockedBy: RemoveBlockerCode[] }
+  | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
+
+/** `opId` 的持久证据结论（ADR-022 §7.1）；`unknown` 时不得反推具体结果。 */
+export type RemovalOpOutcome =
+  | { status: 'APPLIED'; opId: string; outcome: 'revoked' | 'created' | 'aborted' | 'unknown' }
+  | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number };
+
 export interface WeaveSpaceClient {
   readonly mode: ClientMode;
   /** 服务端运行模式（`/api/health`）；demo 恒为 `legacy`。 */
@@ -298,6 +337,20 @@ export interface WeaveSpaceClient {
    * 控制字符）由 Host 的 `ProjectRuntime` 执行，这里不复制一份规则。
    */
   renameProject(projectId: string, name: string): Promise<RenameOutcome>;
+
+  /* ---- UX-02B-04B：项目移除 ---- */
+
+  /** 只读移除前置检查：返回放行与否、阻断原因与生命周期状态。 */
+  removalPrecheck(projectId: string): Promise<RemovalPrecheckOutcome>;
+  /**
+   * 移除项目（只解除注册与授权，**不删除磁盘文件**）。
+   *
+   * `opId` 由调用方**在提交前**生成并持有：超时/5xx 时才能用 `queryRemovalOp(opId)`
+   * 查询持久事务证据，而不是凭列表差异猜测结果。
+   */
+  removeProject(projectId: string, opId: string): Promise<RemoveProjectOutcome>;
+  /** 按 `opId` 查询持久事务证据（只读磁盘）；证据缺失即 `unknown`。 */
+  queryRemovalOp(opId: string): Promise<RemovalOpOutcome>;
 }
 
 interface ApiEnvelope {
@@ -648,6 +701,117 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         httpStatus,
       };
     },
+
+    async removalPrecheck(projectId: string) {
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED', message: '无法获取会话令牌', httpStatus: 403 };
+      }
+      const { httpStatus, body } = await request(baseUrl, '/api/projects/removal-precheck', {
+        method: 'POST',
+        headers: { 'x-ws-token': token },
+        body: JSON.stringify({ projectId }),
+      });
+      const asPre = body as {
+        allowed?: unknown;
+        blockedBy?: unknown;
+        state?: unknown;
+        errorCode?: string | null;
+        message?: string;
+      };
+      if (httpStatus === 200 && body.status === 'APPLIED' && typeof asPre.allowed === 'boolean') {
+        return {
+          status: 'APPLIED' as const,
+          projectId,
+          allowed: asPre.allowed,
+          blockedBy: Array.isArray(asPre.blockedBy) ? (asPre.blockedBy as RemoveBlockerCode[]) : [],
+          state: typeof asPre.state === 'string' ? asPre.state : 'ACTIVE',
+        };
+      }
+      return {
+        status: 'REJECTED' as const,
+        errorCode: asPre.errorCode ?? null,
+        message: asPre.message ?? '前置检查失败',
+        httpStatus,
+      };
+    },
+
+    async removeProject(projectId: string, opId: string) {
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED', message: '无法获取会话令牌', httpStatus: 403 };
+      }
+      const { httpStatus, body } = await request(baseUrl, '/api/projects/remove', {
+        method: 'POST',
+        headers: { 'x-ws-token': token },
+        // 确认字段是硬性契约：缺失即 400；opId 由调用方先落定，超时后才能查证据
+        body: JSON.stringify({ projectId, confirm: 'remove-from-workspace', opId }),
+      });
+      const asRemove = body as {
+        outcome?: unknown;
+        blockedBy?: unknown;
+        opId?: unknown;
+        configPersisted?: unknown;
+        errorCode?: string | null;
+        message?: string;
+      };
+      // 判定以 body.outcome 为准（配置补写失败时是 5xx，但移除**已生效**）
+      if (asRemove.outcome === 'revoked') {
+        return {
+          status: 'APPLIED' as const,
+          projectId,
+          opId: typeof asRemove.opId === 'string' ? asRemove.opId : opId,
+          configPersisted: asRemove.configPersisted !== false,
+        };
+      }
+      if (asRemove.outcome === 'aborted') {
+        return {
+          status: 'ABORTED' as const,
+          projectId,
+          blockedBy: Array.isArray(asRemove.blockedBy) ? (asRemove.blockedBy as RemoveBlockerCode[]) : [],
+        };
+      }
+      return {
+        status: 'REJECTED' as const,
+        errorCode: asRemove.errorCode ?? null,
+        message: asRemove.message ?? '移除失败',
+        httpStatus,
+      };
+    },
+
+    async queryRemovalOp(opId: string) {
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED', message: '无法获取会话令牌', httpStatus: 403 };
+      }
+      const { httpStatus, body } = await request(
+        baseUrl,
+        `/api/projects/op?opId=${encodeURIComponent(opId)}`,
+        { headers: { 'x-ws-token': token } },
+      );
+      const asOp = body as { outcome?: unknown; errorCode?: string | null; message?: string };
+      if (
+        httpStatus === 200 &&
+        (asOp.outcome === 'revoked' ||
+          asOp.outcome === 'created' ||
+          asOp.outcome === 'aborted' ||
+          asOp.outcome === 'unknown')
+      ) {
+        return { status: 'APPLIED' as const, opId, outcome: asOp.outcome };
+      }
+      return {
+        status: 'REJECTED' as const,
+        errorCode: asOp.errorCode ?? null,
+        message: asOp.message ?? '结果查询失败',
+        httpStatus,
+      };
+    },
   };
 }
 
@@ -833,6 +997,33 @@ export function createDemoClient(
         status: 'REJECTED' as const,
         errorCode: 'ERR_COMMAND_UNSUPPORTED',
         message: '演示数据没有真实项目，无法重命名',
+        httpStatus: 501,
+      };
+    },
+
+    async removalPrecheck() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示数据没有真实项目，无法移除',
+        httpStatus: 501,
+      };
+    },
+
+    async removeProject() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示数据没有真实项目，无法移除',
+        httpStatus: 501,
+      };
+    },
+
+    async queryRemovalOp() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示数据没有真实项目，无法查询移除结果',
         httpStatus: 501,
       };
     },

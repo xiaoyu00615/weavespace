@@ -20,6 +20,7 @@ import type { ReactNode } from 'react';
 import {
   createDemoClient,
   createLiveClient,
+  type RemovalPrecheckOutcome,
   type WeaveSpaceClient,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
@@ -50,6 +51,7 @@ import {
 } from './add-project.ts';
 import type { RenameOutcome } from '../client/client-api.ts';
 import { refreshProject } from './refresh-project';
+import { createProjectRemover, defaultNewOpId, type RemoveUiResult } from './remove-project.ts';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
 import { useWorkspace } from './WorkspaceContext';
@@ -114,6 +116,19 @@ export interface DocumentActions {
    * （名称不是路径）。以 Host 返回的项目摘要为权威；失败时界面保持原名。
    */
   renameProject(projectId: string, name: string): Promise<RenameOutcome>;
+  /**
+   * 只读移除前置检查（UX-02B-04B）：用于打开确认框时展示阻断原因。
+   *
+   * **不是**放行凭据：`removeProject` 执行时 Host 会在屏障内按自身状态重新检查。
+   */
+  removalPrecheck(projectId: string): Promise<RemovalPrecheckOutcome>;
+  /**
+   * 移除项目（只解除 WeaveSpace 的注册与授权，**绝不删除磁盘文件**）。
+   *
+   * 只有 Host 明确撤销（或按 opId 命中持久证据）时才从列表移除；结果不确定时
+   * 只做"查询 + 只读刷新列表 + 提示人工核对"，**不自动重试**。
+   */
+  removeProject(projectId: string): Promise<RemoveUiResult>;
 }
 
 const DocumentActionsContext = createContext<DocumentActions | null>(null);
@@ -606,6 +621,67 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'PROJECT_RENAMED', project: outcome.project });
         }
         return outcome;
+      },
+
+      /**
+       * 只读移除前置检查（UX-02B-04B）。
+       * 只用于确认框打开时显示疑似阻断原因；真正放行由 `removeProject` 内部复检决定。
+       */
+      async removalPrecheck(projectId: string): Promise<RemovalPrecheckOutcome> {
+        if (modeRef.current !== 'live') {
+          return {
+            status: 'REJECTED',
+            errorCode: 'ERR_COMMAND_UNSUPPORTED',
+            message: '演示模式没有真实项目，无法移除',
+            httpStatus: 501,
+          };
+        }
+        try {
+          return await clientFor('live').removalPrecheck(projectId);
+        } catch {
+          return { status: 'REJECTED', errorCode: 'ERR_STORAGE_IO', message: '无法连接本地服务', httpStatus: 0 };
+        }
+      },
+
+      /**
+       * 移除项目（UX-02B-04B）。
+       *
+       * 编排全在 `remove-project.ts`（纯 TS、可确定性测试）：opId 提交前落定、
+       * 超时后按 opId 查持久证据、结果不确定时只读刷新列表且**不自动重试**。
+       * 这里只注入宿主依赖，并在"确认已移除"时先作废该项目在途层请求、再清缓存，
+       * 确保迟到的目录响应不会把已移除项目重新长出来。
+       */
+      async removeProject(projectId: string): Promise<RemoveUiResult> {
+        const remover = createProjectRemover({
+          port: {
+            removalPrecheck: (pid) => clientFor('live').removalPrecheck(pid),
+            removeProject: (pid, opId) => clientFor('live').removeProject(pid, opId),
+            queryRemovalOp: (opId) => clientFor('live').queryRemovalOp(opId),
+            listProjects: () => clientFor('live').listProjects(),
+          },
+          newOpId: defaultNewOpId,
+          identity: () => ({ mode: stateRef.current.mode, epoch: loadEpoch.current.current() }),
+          isCurrent: (epoch) => loadEpoch.current.isCurrent(epoch),
+          onRemoved: (pid) => {
+            // 先作废该项目所有在途层请求（推高 projectGeneration，迟到响应一律 stale），
+            // 再从列表移除并清空层表缓存——两道防线共同阻止旧行复活。
+            treeLoader.current.invalidateProject(pid);
+            dispatch({ type: 'PROJECT_REMOVED', projectId: pid });
+          },
+          onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
+        });
+        const result = await remover.remove(projectId);
+        if (result.kind === 'removed') {
+          dispatch({
+            type: 'NOTICE',
+            message: result.configPersisted
+              ? '已从工作台移除该项目（磁盘文件未改动）'
+              : '已移除该项目（撤销已生效，配置补写待完成；磁盘文件未改动）',
+          });
+        } else if (result.kind === 'unknown') {
+          dispatch({ type: 'NOTICE', message: result.message });
+        }
+        return result;
       },
 
       async openNode(node: ResourceNodeState, projectId?: string | null) {        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）

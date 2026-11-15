@@ -174,6 +174,20 @@ export interface RemoveBlocked {
   readonly blockedBy: readonly RemoveBlocker[];
 }
 
+/**
+ * 移除前置检查（只读，ADR-023 §3.2 / UX-02B-04B）。
+ *
+ * 只回答"现在能不能移除"和"被什么挡住"，**不改任何状态**（不建屏障、不 drain、
+ * 不碰 Provider/grant/会话）。它只是给界面的可读提示；`removeProject` 执行时
+ * 会在屏障内用 Host 状态**重新检查**，前检结果不是放行凭据。
+ */
+export interface RemovalPrecheck {
+  readonly allowed: boolean;
+  readonly blockedBy: readonly RemoveBlocker[];
+  /** 项目生命周期（供界面区分 `REVOKE_UNKNOWN` / `UNAVAILABLE` 等状态文案）。 */
+  readonly state: ProjectLifecycle | 'ABSENT';
+}
+
 export type RemoveBlocker =
   | 'ACTIVE_VIEWS'
   | 'DIRTY'
@@ -227,7 +241,20 @@ export interface ProjectRuntime {
     grantSource?: string;
   }): Promise<ProjectSummary>;
   renameProject(projectId: string, name: string): Promise<ProjectSummary>;
-  removeProject(projectId: string): Promise<RemoveOutcome | RemoveBlocked>;
+  /**
+   * 移除项目（只解除注册与授权，**绝不触碰磁盘文件**）。
+   *
+   * `opts.opId` 允许调用方**在提交前**指定操作标识（幂等/结果核对键）：
+   * 客户端先落定 opId，超时或 5xx 时才能用 `GET /api/projects/op?opId=` 查询
+   * 持久事务证据。缺省由 Runtime 自行签发（此时客户端在响应丢失时无从查询，
+   * 只能按 `unknown` 处理，绝不猜测）。
+   */
+  removeProject(
+    projectId: string,
+    opts?: { readonly opId?: string },
+  ): Promise<RemoveOutcome | RemoveBlocked>;
+  /** 只读移除前置检查：返回放行与否、阻断原因与生命周期状态，不改任何状态。 */
+  removalPrecheck(projectId: string): RemovalPrecheck;
 
   /** 手动进入/退出屏障（仅用于并发测试与未来的 UI 预检；移除流程内部自会调用）。 */
   beginQuiesce(projectId: string): void;
@@ -879,7 +906,7 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       }
     },
 
-    async removeProject(projectId) {
+    async removeProject(projectId, opts) {
       // 没有真实持久化时不允许撤销：否则"内存删掉 = 撤销完成"会绕过 02B-02 的提交点
       if (deps.store.durability !== 'durable' && deps.allowEphemeralRevocation !== true) {
         throw domainError(
@@ -917,7 +944,8 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
 
         // ---- 提交点：墓碑 fsync（真实 Store）；fake Store 只有内存提交 ----
         entry.state = 'REMOVING';
-        const opId = `op-${randomUUID()}`;
+        // 调用方已先落定 opId 时沿用它（超时后可用它查询持久证据）；否则自行签发。
+        const opId = opts?.opId ?? `op-${randomUUID()}`;
         let receipt: StoreRevokeReceipt | undefined;
         try {
           const result = await deps.store.commitRevoke({ projectId, opId });
@@ -973,6 +1001,27 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
     endQuiesce(projectId) {
       const entry = entries.get(projectId);
       if (entry?.state === 'QUIESCING') entry.state = 'ACTIVE';
+    },
+
+    /**
+     * 只读移除前置检查（ADR-023 §3.2）。
+     *
+     * 与 `removeProject` 内部复检使用**同一套** `blockersOf`（同一个 DocumentService
+     * 的 stats + 同一个 activeOps 计数），因此前检与真正放行判定不会出现第二套口径。
+     * 但前检不建屏障、不 drain、不改任何状态：它只是"现在看起来能不能移除"的快照；
+     * 真正放行以 `removeProject` 在屏障内的复检为准。
+     */
+    removalPrecheck(projectId) {
+      const entry = entries.get(projectId);
+      if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
+      const blockedBy = blockersOf(projectId);
+      const state = entry.state;
+      const allowed =
+        blockedBy.length === 0 &&
+        state !== 'REVOKE_UNKNOWN' &&
+        state !== 'QUIESCING' &&
+        state !== 'REMOVING';
+      return { allowed, blockedBy: [...blockedBy], state };
     },
 
     diagnostics() {

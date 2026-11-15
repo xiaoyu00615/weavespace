@@ -164,6 +164,14 @@ export type WorkspaceAction =
    * 全部保持原引用，因此重命名既不会让树重新加载，也不会让展开状态回到默认。
    */
   | { type: 'PROJECT_RENAMED'; project: ProjectSummary }
+  /**
+   * 项目已从工作区移除（UX-02B-04B，Host 明确撤销后）。
+   *
+   * 从项目列表移除，并**清空该项目的全部树缓存**（层表 / 展开 / 选中 / 加载标记），
+   * 防止迟到的目录请求用旧层表重新长出已移除项目的行。其它项目、标签与草稿
+   * 一律不动（移除只解除注册与授权，不删除磁盘文件）。
+   */
+  | { type: 'PROJECT_REMOVED'; projectId: string }
   | { type: 'SET_ACTIVE_PROJECT'; projectId: string }
   | { type: 'SET_PROJECT_RESOURCES'; projectId: string; nodes: ResourceNodeState[] }
   | { type: 'SET_PROJECT_LOADING'; projectId: string; loading: boolean }

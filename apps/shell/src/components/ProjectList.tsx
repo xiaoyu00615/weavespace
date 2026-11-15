@@ -19,6 +19,7 @@ import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { validateProjectName } from '../state/add-project.ts';
 import { AddProjectEntry } from './AddProjectEntry.tsx';
+import { RemoveProjectEntry } from './RemoveProjectEntry.tsx';
 import { LevelStatus, TreeBranch } from './TreeBranch.tsx';
 import { TreeRow } from './FileTreeRow.tsx';
 import { countLoadedEntries, emptyLevels, materializeTree } from './tree-model.ts';
@@ -133,6 +134,7 @@ function ProjectRoot({
           >
             {renaming ? '×' : '✎'}
           </button>
+          <RemoveProjectEntry project={project} />
         </>
       }
     >

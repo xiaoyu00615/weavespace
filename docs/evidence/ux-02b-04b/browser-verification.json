@@ -1,0 +1,35 @@
+{
+  "twoProjects": [
+    "tree01-proj1",
+    "tree01-proj2"
+  ],
+  "diskBefore": {
+    "readme1": "042cba86e8620e759a28a01cae9023aac461eeb9858a1fada9603fd23ca11c35",
+    "guide1": "86e52230f7551620deaece529b480ba3b909c30f25c98bb82772d07821c486dc",
+    "readme2": "6d860554846987d90e12a902d594a3567ab63264c9a9d02a580924bf7d988ecc"
+  },
+  "openFile": "OK",
+  "tabOpened": 1,
+  "removeClickBlocked": "OK",
+  "blockedPhase": "blocked",
+  "blockedHasConfirm": false,
+  "blockedText": "移除项目「tree01-proj1」现在不能移除：请先处理下列情况。该项目下还有文件正打开着。请先关闭这些文件，再移除项目。为保护未保存的内容，这里不提供\"强制移除\"。处理好之后可以再次尝试。好的",
+  "projectCountAfterBlocked": 2,
+  "removeClickAllowed": "OK",
+  "readyPhase": "ready",
+  "readyText": "移除项目「tree01-proj1」移除只会从 WeaveSpace 工作台移除该项目，不会删除磁盘上的任何文件。磁盘上该文件夹及其内容保持原样，不被删除、移动或修改。移除后该项目不再出现在工作台，也不会再被读取。若将来需要，可以重新添加这个文件夹（会作为一个新项目）。取消确认移除",
+  "resultText": null,
+  "unmountedOnSuccess": true,
+  "projectsAfterRemove": [
+    "tree01-proj2"
+  ],
+  "diskAfter": {
+    "readme1": "042cba86e8620e759a28a01cae9023aac461eeb9858a1fada9603fd23ca11c35",
+    "guide1": "86e52230f7551620deaece529b480ba3b909c30f25c98bb82772d07821c486dc",
+    "readme2": "6d860554846987d90e12a902d594a3567ab63264c9a9d02a580924bf7d988ecc"
+  },
+  "diskUnchanged": true,
+  "afterReload": [
+    "tree01-proj2"
+  ]
+}

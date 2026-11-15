@@ -404,6 +404,36 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ? state
         : { ...state, activeProjectId: action.projectId };
 
+    /**
+     * 项目已移除（UX-02B-04B）：从列表移除 + 清空该项目的树缓存。
+     *
+     * 只动这一个项目：其它项目的树、标签、草稿、选择状态保持原引用。
+     * 清空层表是防止"迟到的目录响应"在移除之后用旧层表重新长出该项目行
+     * （配合 `treeLoader.invalidateProject` 的在途作废形成双保险）。
+     */
+    case 'PROJECT_REMOVED': {
+      const removed = action.projectId;
+      const projects = state.projects.filter((project) => project.projectId !== removed);
+      const drop = <T,>(record: Record<string, T>): Record<string, T> => {
+        if (!(removed in record)) return record;
+        const next = { ...record };
+        delete next[removed];
+        return next;
+      };
+      const fallback = projects.find((project) => project.status === 'READY')?.projectId ?? null;
+      return {
+        ...state,
+        projects,
+        activeProjectId:
+          state.activeProjectId === removed ? fallback : state.activeProjectId,
+        resourcesByProject: drop(state.resourcesByProject),
+        treeByProject: drop(state.treeByProject),
+        expandedByProject: drop(state.expandedByProject),
+        selectedByProject: drop(state.selectedByProject),
+        loadingByProject: drop(state.loadingByProject),
+      };
+    }
+
     case 'SET_PROJECT_RESOURCES': {
       const previous = state.expandedByProject[action.projectId];
       return {
