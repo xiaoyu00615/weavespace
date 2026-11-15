@@ -300,12 +300,39 @@ export function removalNotice(
 /**
  * 装配 `actions.removeProject`（Provider 用它，测试也走这条路径）。
  *
- * **生命周期**：一个实例 = 一个 `inflight` 表。Provider 必须把它放进稳定作用域
+ * **生命周期**：一个实例 = 一张在途表。Provider 必须把它放进稳定作用域
  * （`useMemo(() => …, STABLE_DEPS)`），否则每次点击都会新建一个编排器，
  * 单飞形同虚设——并发确认会各自发一次 remove。
+ *
+ * 在途表放在**最外层**（R2E E-02）：一次移除并不止"发 remove 等响应"，
+ * 后面还有**身份同步**（新 `workspaceKey` 的健康检查）。Host 已经 APPLIED、
+ * 而健康检查还 pending 的这段窗口仍属于**同一次操作**——此时若再确认一次，
+ * 哪怕 remove 本身已经结束，也绝不能重开一次事务（会多一个 opId、多一条
+ * 墓碑、多一次状态清理）。因此表覆盖到整笔操作结束为止。
  */
 export function createRemoveProjectAction(host: RemoveProjectActionHost): RemoveProjectAction {
   const remover = createProjectRemover(host);
+  /** 项目 id → **整笔操作**（含身份同步）。完成后立即摘除，不缓存结论。 */
+  const inflight = new Map<string, Promise<RemoveUiResult>>();
+
+  const run = async (projectId: string): Promise<RemoveUiResult> => {
+    // 代次在**动作开始时**捕获：后面的身份探测据此判断"还是不是同一个工作区"
+    const epoch = host.identity().epoch;
+    const result = await remover.remove(projectId);
+
+    const synced =
+      (result.kind === 'removed' || result.kind === 'unknown') && host.syncIdentity
+        ? await host.syncIdentity(epoch)
+        : null;
+
+    if (result.kind === 'removed') {
+      host.notify?.(removalNotice(result, synced));
+    } else if (result.kind === 'unknown') {
+      host.notify?.(result.message);
+    }
+    return result;
+  };
+
   return {
     precheck(projectId) {
       return remover.precheck(projectId);
@@ -315,22 +342,18 @@ export function createRemoveProjectAction(host: RemoveProjectActionHost): Remove
       return [...(host.localBlockers?.(projectId) ?? [])];
     },
 
-    async remove(projectId) {
-      // 代次在**动作开始时**捕获：后面的身份探测据此判断"还是不是同一个工作区"
-      const epoch = host.identity().epoch;
-      const result = await remover.remove(projectId);
-
-      const synced =
-        (result.kind === 'removed' || result.kind === 'unknown') && host.syncIdentity
-          ? await host.syncIdentity(epoch)
-          : null;
-
-      if (result.kind === 'removed') {
-        host.notify?.(removalNotice(result, synced));
-      } else if (result.kind === 'unknown') {
-        host.notify?.(result.message);
-      }
-      return result;
+    remove(projectId) {
+      const existing = inflight.get(projectId);
+      if (existing) return existing;
+      const task = run(projectId);
+      inflight.set(projectId, task);
+      // 只摘除自己那一条：整笔操作（含身份同步）结束后，下一次确认才是新操作。
+      // 用 then 的两个分支而不是 finally，避免派生出未处理的 rejection。
+      const settle = (): void => {
+        if (inflight.get(projectId) === task) inflight.delete(projectId);
+      };
+      task.then(settle, settle);
+      return task;
     },
   };
 }

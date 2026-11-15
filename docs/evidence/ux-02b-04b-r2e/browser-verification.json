@@ -1,0 +1,81 @@
+{
+  "initialProjects": [
+    "tree01-proj1"
+  ],
+  "initialKey": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+  "initialLastRecord": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+  "removePhase": "ready",
+  "removeDisclosure": "移除项目「tree01-proj1」移除只会从 WeaveSpace 工作台移除该项目，不会删除磁盘上的任何文件。磁盘上该文件夹及其内容保持原样，不被删除、移动或修改。移除后该项目不再出现在工作台，也不会再被读取。若将来需要，可以重新添加这个文件夹（会作为一个新项目）。取消确认移除",
+  "projectsAfterRemove": [],
+  "healthAfterRemove": {
+    "status": "APPLIED",
+    "mode": "live",
+    "workspaceMode": "multi"
+  },
+  "workspaceKeyAfterRemove": null,
+  "lastRecordAfterRemove": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+  "writesWhileEmpty": [],
+  "writesUnderOldRecordWhileEmpty": 0,
+  "projectsAfterAdd": [
+    "tree01-proj2"
+  ],
+  "workspaceKeyAfterAdd": "df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+  "lastRecordAfterAdd": "df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+  "lastRecordMatchesHostAfterAdd": true,
+  "recordKeysAfterAdd": [
+    "ws:workspace:v1:record:82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+    "ws:workspace:v1:record:df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498"
+  ],
+  "storageWritesAfterAdd": [
+    {
+      "key": "ws:workspace:v1:record:df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+      "at": 1794723790956
+    },
+    {
+      "key": "ws:workspace:v1:last",
+      "at": 1794723790956
+    }
+  ],
+  "writesUnderNewRecordKey": 1,
+  "autosaveResumed": true,
+  "treeRowsAfterAdd": [
+    "tree01-proj2",
+    "docs",
+    "guide.md",
+    "src",
+    "app.py",
+    "readme.md"
+  ],
+  "afterReload": [
+    "tree01-proj2"
+  ],
+  "afterReloadLastRecord": "df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+  "afterReloadKey": "df149b0703fa695336a25f358c803ba283747d24eedb00db5c4f3e3430a77498",
+  "afterReloadRecordMatches": true,
+  "afterReloadTreeRows": [
+    "tree01-proj2",
+    "docs",
+    "guide.md",
+    "src",
+    "app.py",
+    "readme.md"
+  ],
+  "projectsBeforeDoubleConfirm": [
+    "tree01-proj2"
+  ],
+  "removeRequestsForDoubleConfirm": 1,
+  "doubleTargetProject": "tree01-proj2",
+  "projectsAfterDoubleConfirm": [],
+  "tombstones": [
+    {},
+    {
+      "projectId": "tree01-proj1",
+      "opId": "op-6ea3889c-992e-4c7f-af27-4e67f2bd7c4d"
+    },
+    {
+      "projectId": "tree01-proj2",
+      "opId": "op-fdf10d5f-700b-43b8-b8c5-b4c6ccd4c21a"
+    }
+  ],
+  "tombstonesForProj2": 1
+}

@@ -77,6 +77,30 @@ export function settleIdentitySync(
   return 'ignored';
 }
 
+/**
+ * 把"摘要落地"这件事同时落到写入门禁上（R2E E-01）。
+ *
+ * 场景：移除**最后一个**项目之后，Host 的项目集合为空，`/api/health` 不再给出
+ * `workspaceKey`。此时进入"待同步"是对的（不能凭空造一个空工作区摘要），
+ * 但门禁不能就此永久合上——用户随后通过添加流程注册新项目，Host 会给出**新的**
+ * 有效摘要，这一刻身份已经确定，写入资格必须自动恢复，否则新工作区永远不会
+ * 产生恢复记录。
+ *
+ * 反过来，摘要为空或形状非法时**继续拦住**：Host 身份不可确认就不写。
+ * 这条规则与 `settleIdentitySync` 共用一个原则：只有"能确认的身份"才放行。
+ */
+export function settleWorkspaceKey(
+  gate: { holdIdentity(): void; releaseIdentity(): void },
+  workspaceKey: string | null,
+): 'released' | 'held' {
+  if (workspaceKey !== null && isWorkspaceKey(workspaceKey)) {
+    gate.releaseIdentity();
+    return 'released';
+  }
+  gate.holdIdentity();
+  return 'held';
+}
+
 export function createWorkspaceIdentitySync(host: WorkspaceIdentitySyncHost): WorkspaceIdentitySync {
   return {
     async refresh(epoch) {

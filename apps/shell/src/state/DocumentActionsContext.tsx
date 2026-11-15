@@ -61,6 +61,7 @@ import {
 import {
   createWorkspaceIdentitySync,
   settleIdentitySync,
+  settleWorkspaceKey,
   type IdentitySyncOutcome,
 } from './workspace-identity-sync.ts';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
@@ -259,6 +260,47 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   );
 
   /**
+   * 写入门禁（S11-C-R1）。
+   *
+   * 恢复期间 `WorkspaceState` 是"残缺"的：阶段 C 一个一个后台登记标签，
+   * 每登记一个都会触发一次状态变化。若此时允许自动保存，就会用"刚恢复了 2 个"
+   * 的状态覆盖"上次离开时有 8 个"的记录。门禁在恢复的第一个 await 之前合上，
+   * 恢复到达终态才放开；调大节流延迟只是缩小窗口，不是修复。
+   */
+  const gate = useMemo(() => createWorkspaceWriteGate(), []);
+
+  /**
+   * `autosave` 在 `restorer` 之后构造（它要读恢复流程的结转列表），
+   * 而 `restorer` 的终态回调又要请求一次提交，因此用一个 ref 打通这两个方向。
+   */
+  const autosaveRef = useRef<Autosave | null>(null);
+
+  /**
+   * 「摘要落地」的唯一入口：添加项目、只读重新读取都走这里（R2E E-01）。
+   *
+   * 派发摘要之后立刻按"能不能确认身份"收放写入门禁：
+   * - 有效摘要 → 放开写入并重新排程（移除最后一个项目后再添加，靠这一条恢复）；
+   * - `null` / 形状非法 → 继续待同步，绝不伪造一个空工作区摘要。
+   *
+   * 归属由调用方保证：添加流程与 resync 都在**代次仍属当前工作区**时才调用，
+   * 因此迟到的旧结果不会跑到这里把新工作区的门禁放开。
+   */
+  const applyWorkspaceKey = useCallback(
+    (workspaceKey: string | null): void => {
+      const wasPending = gate.identityPending();
+      dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey });
+      if (settleWorkspaceKey(gate, workspaceKey) !== 'released') return;
+      autosaveRef.current?.schedule();
+      // 从"待同步"回到确定身份时补一句：否则状态栏会一直挂着上一条
+      // "工作区身份待同步"，与事实相反
+      if (wasPending) {
+        dispatch({ type: 'NOTICE', message: '工作区身份已同步，自动保存已恢复' });
+      }
+    },
+    [dispatch, gate],
+  );
+
+  /**
    * 「添加项目」的编排句柄（UX-02B-04A / R1）。
    *
    * 组装都在这里，编排逻辑全在 `add-project.ts`（纯 TS、可确定性测试）：
@@ -284,7 +326,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         epoch: loadEpoch.current.current(),
       }),
       onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
-      onWorkspaceKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
+      // 摘要落地同时收放写入门禁（R2E E-01）：移除最后一个项目后再添加，靠这条恢复自动保存
+      onWorkspaceKey: applyWorkspaceKey,
       loadRoot: async (projectId) => {
         await treeLoader.current.load(projectId, '', false);
       },
@@ -316,7 +359,8 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       }),
       isCurrent: (epoch) => loadEpoch.current.isCurrent(epoch),
       onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
-      onWorkspaceKey: (workspaceKey) => dispatch({ type: 'SET_WORKSPACE_KEY', workspaceKey }),
+      // 只读重新读取也会刷新摘要：同样要能结束"待同步"（E-01）
+      onWorkspaceKey: applyWorkspaceKey,
       // 返回真实结果：resync 据此判断根层是否真的落到了界面（要求 8），
       // 不把 rejected / failed / changed / stale 当成"已成功加载"
       loadRoot: (pid) => treeLoader.current.load(pid, '', false),
@@ -348,7 +392,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
        */
       resync: (projectId?: string): Promise<ResyncOutcome> => resyncRunner(projectId),
     };
-  }, [dispatch, liveClient]);
+  }, [applyWorkspaceKey, dispatch, liveClient]);
 
   /**
    * 打开流程的编排器（G2-R1）：真实实现放在 `open-document.ts`，
@@ -377,16 +421,6 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   const store = useMemo(() => createWorkspaceStore(safeLocalStorage()), []);
 
   /**
-   * 写入门禁（S11-C-R1）。
-   *
-   * 恢复期间 `WorkspaceState` 是"残缺"的：阶段 C 一个一个后台登记标签，
-   * 每登记一个都会触发一次状态变化。若此时允许自动保存，就会用"刚恢复了 2 个"
-   * 的状态覆盖"上次离开时有 8 个"的记录。门禁在恢复的第一个 await 之前合上，
-   * 恢复到达终态才放开；调大节流延迟只是缩小窗口，不是修复。
-   */
-  const gate = useMemo(() => createWorkspaceWriteGate(), []);
-
-  /**
    * 项目移除之后的工作区摘要同步（UX-02B-04B-R1-03）。
    *
    * 只写摘要（`SET_WORKSPACE_KEY`），不清标签、不动树：摘要变化不该让用户
@@ -404,12 +438,6 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       }),
     [dispatch, liveClient, store],
   );
-
-  /**
-   * `autosave` 在 `restorer` 之后构造（它要读恢复流程的结转列表），
-   * 而 `restorer` 的终态回调又要请求一次提交，因此用一个 ref 打通这两个方向。
-   */
-  const autosaveRef = useRef<Autosave | null>(null);
 
   /**
    * 摘要同步 + 写入门禁联动（R2-01）。
