@@ -18,6 +18,7 @@ import type {
   RemovalOpOutcome,
   RemovalPrecheckOutcome,
 } from '../client/client-api.ts';
+import type { IdentitySyncOutcome } from './workspace-identity-sync.ts';
 
 /** 移除编排所需的窄端口：便于用 deferred 精确驱动超时/未知分支。 */
 export interface RemoveProjectPort {
@@ -51,6 +52,16 @@ export interface RemoveProjectHost {
   identity(): { mode: 'demo' | 'live'; epoch: number };
   /** 给定代次是否仍是当前代。 */
   isCurrent(epoch: number): boolean;
+  /**
+   * Shell 侧的本地危险状态（R2-02）。
+   *
+   * Host 的 `ACTIVE_VIEWS` 只反映**服务端还活着的 View**：Host 重启之后旧 View
+   * 全部消失，`activeViews = 0`，而界面里可能还挂着一份**从未保存到磁盘**的 buffer。
+   * 这时候放行移除就等于替用户丢草稿。因此 Shell 必须自己再判一次。
+   *
+   * 缺省（不注入）视为"本地没有阻断"——Host 门禁不受影响。
+   */
+  localBlockers?(projectId: string): readonly RemoveBlockerCode[];
   /** 确认已移除：从列表移除 + 清理该项目的树缓存与展开/选中/加载状态。 */
   onRemoved(projectId: string): void;
   /** 重拉之后的项目列表回填（结果不确定时的只读刷新）。 */
@@ -62,6 +73,48 @@ export interface ProjectRemover {
   precheck(projectId: string): Promise<RemovalPrecheckOutcome | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number }>;
   /** 执行一次移除。**一次调用只提交一次 remove**，不自动重试。 */
   remove(projectId: string): Promise<RemoveUiResult>;
+}
+
+/** 本地阻断判定所需的最少标签信息（只读，不依赖 React 类型）。 */
+export interface LocalDraftTab {
+  readonly projectId: string | null;
+  readonly dirty: boolean;
+  readonly saving: boolean;
+  /** CLEAN | EDITING_DIRTY | SAVING | CONFLICT | FAILED | OUTCOME_UNKNOWN … */
+  readonly documentState: string;
+  readonly lastStatus?: string | null;
+}
+
+/**
+ * Shell 侧的移除阻断（R2-02，纯函数）。
+ *
+ * 规则（顺序即 UI 展示顺序，已去重）：
+ * - 该项目下还有标签 → `ACTIVE_VIEWS`（不默默关闭用户打开的文件）；
+ * - 有未保存修改 → `DIRTY`；
+ * - 正在保存 → `SAVING`；
+ * - 保存结果未确认 → `OUTCOME_UNKNOWN`；
+ * - 有冲突 → `CONFLICT`。
+ *
+ * **只判不救**：这里绝不触发保存、绝不丢弃草稿、绝不关闭标签。真正放行仍由 Host
+ * 在屏障内按自身状态复检；本函数只是"不替用户丢东西"的第二道门。
+ */
+export function localRemovalBlockers(
+  tabs: readonly LocalDraftTab[],
+  projectId: string,
+): RemoveBlockerCode[] {
+  const own = tabs.filter((tab) => tab.projectId === projectId);
+  if (own.length === 0) return [];
+  const out: RemoveBlockerCode[] = ['ACTIVE_VIEWS'];
+  const push = (code: RemoveBlockerCode): void => {
+    if (!out.includes(code)) out.push(code);
+  };
+  for (const tab of own) {
+    if (tab.dirty) push('DIRTY');
+    if (tab.saving) push('SAVING');
+    if (tab.documentState === 'CONFLICT') push('CONFLICT');
+    if (tab.documentState === 'OUTCOME_UNKNOWN' || tab.lastStatus === 'UNKNOWN') push('OUTCOME_UNKNOWN');
+  }
+  return out;
 }
 
 const STALE_MESSAGE = '工作区已切换，本次移除结果未回填';
@@ -132,6 +185,17 @@ export function createProjectRemover(host: RemoveProjectHost): ProjectRemover {
     if (start.mode !== 'live') {
       return { kind: 'unsupported', message: '演示模式没有真实项目，无法移除' };
     }
+    /**
+     * 本地危险状态（R2-02）：**先于**任何请求。
+     *
+     * Host 的 `activeViews` 在重启后归零，但界面里可能还挂着从未落盘的 buffer。
+     * 这里直接拒绝，既不发 remove，也不生成 opId——零副作用，草稿字节原样保留。
+     * Host 前检说 `allowed: true` 也不能覆盖这一条。
+     */
+    const local = host.localBlockers?.(projectId) ?? [];
+    if (local.length > 0) {
+      return { kind: 'blocked', projectId, blockedBy: [...local], state: 'LOCAL' };
+    }
     const epoch = start.epoch;
     // 幂等键在**提交前**落定：这样结果丢失后仍能按它查询持久证据
     const opId = host.newOpId();
@@ -184,10 +248,89 @@ export function createProjectRemover(host: RemoveProjectHost): ProjectRemover {
       const existing = inflight.get(projectId);
       if (existing) return existing;
       const task = runRemove(projectId).finally(() => {
+        // 事务结束后立即摘除：下一次确认是**新**操作，必须重新提交
+        // （不能缓存已完成的结果，否则第二次移除会被误判成"仍在执行"）
         inflight.delete(projectId);
       });
       inflight.set(projectId, task);
       return task;
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 动作装配：一次装配 = 一个编排器实例（R2-03）                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `actions.removeProject` 的宿主依赖。
+ *
+ * 比 `RemoveProjectHost` 多两件事——**移除成功之后**的收尾：
+ * 摘要同步与用户提示。这两步必须和 remove 属于同一次操作，否则界面会出现
+ * "已移除"但恢复记录还挂在旧摘要上的中间态。
+ */
+export interface RemoveProjectActionHost extends RemoveProjectHost {
+  /** 按当前工作区身份刷新摘要（R1-03 / R2-01）；`undefined` 表示不做。 */
+  syncIdentity?(epoch: number): Promise<IdentitySyncOutcome>;
+  /** 给界面的提示（成功 / 待核对）。 */
+  notify?(message: string): void;
+}
+
+export interface RemoveProjectAction {
+  precheck(projectId: string): Promise<RemovalPrecheckOutcome | { status: 'REJECTED'; errorCode: string | null; message: string; httpStatus: number }>;
+  /** 本地危险状态（供确认框提前展示；不是放行凭据）。 */
+  localBlockers(projectId: string): RemoveBlockerCode[];
+  remove(projectId: string): Promise<RemoveUiResult>;
+}
+
+/** 成功提示的措辞：不夸大"配置已保存"，也不隐瞒"已撤销"。 */
+export function removalNotice(
+  result: Extract<RemoveUiResult, { kind: 'removed' }>,
+  synced: IdentitySyncOutcome | null,
+): string {
+  const base =
+    result.configPersisted === true
+      ? '已从工作台移除该项目（磁盘文件未改动）'
+      : result.configPersisted === false
+        ? '已移除该项目（撤销已生效，配置补写待完成；磁盘文件未改动）'
+        : '已移除该项目（已按操作编号核对：撤销生效；磁盘文件未改动）';
+  return synced !== null && synced.status === 'pending' ? `${base}；工作区身份待同步` : base;
+}
+
+/**
+ * 装配 `actions.removeProject`（Provider 用它，测试也走这条路径）。
+ *
+ * **生命周期**：一个实例 = 一个 `inflight` 表。Provider 必须把它放进稳定作用域
+ * （`useMemo(() => …, STABLE_DEPS)`），否则每次点击都会新建一个编排器，
+ * 单飞形同虚设——并发确认会各自发一次 remove。
+ */
+export function createRemoveProjectAction(host: RemoveProjectActionHost): RemoveProjectAction {
+  const remover = createProjectRemover(host);
+  return {
+    precheck(projectId) {
+      return remover.precheck(projectId);
+    },
+
+    localBlockers(projectId) {
+      return [...(host.localBlockers?.(projectId) ?? [])];
+    },
+
+    async remove(projectId) {
+      // 代次在**动作开始时**捕获：后面的身份探测据此判断"还是不是同一个工作区"
+      const epoch = host.identity().epoch;
+      const result = await remover.remove(projectId);
+
+      const synced =
+        (result.kind === 'removed' || result.kind === 'unknown') && host.syncIdentity
+          ? await host.syncIdentity(epoch)
+          : null;
+
+      if (result.kind === 'removed') {
+        host.notify?.(removalNotice(result, synced));
+      } else if (result.kind === 'unknown') {
+        host.notify?.(result.message);
+      }
+      return result;
     },
   };
 }

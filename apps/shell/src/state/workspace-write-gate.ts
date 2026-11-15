@@ -21,6 +21,12 @@
  * 切焦点）**不**构成接管：记录继续保持原样，下次启动仍按完整记录恢复。
  *
  * 本模块是纯状态机：不碰存储、不碰 React，测试可以直接断言状态迁移。
+ *
+ * 另一个**独立**的拒绝来源是"身份同步窗口"（R2-01）：移除项目后 Host 的
+ * `workspaceKey` 会变，而新摘要要走一次异步健康检查。这段时间里状态已经属于
+ * **新**项目集合、摘要还是**旧**的 —— 写下去就是一条认错工作区的记录。
+ * `holdIdentity()` / `releaseIdentity()` 与上面的恢复三态互不影响，
+ * `allowsWrite()` 要求两者都放行。
  */
 
 export type GateState = 'open' | 'held' | 'sealed';
@@ -37,6 +43,22 @@ export interface WorkspaceWriteGate {
   seal(): void;
   /** 用户接管后的显式提交点：放开写入，下一次写入即合并提交。 */
   adopt(): void;
+  /**
+   * 工作区身份正在同步（UX-02B-04B-R2-01）：在拿到**新的**有效摘要之前禁止写入。
+   *
+   * 与恢复门禁是**两个独立轴**：恢复是"状态还不完整"，身份是"状态属于哪个工作区
+   * 还没确定"。移除项目会让 Host 侧摘要必然变化，而新摘要要走一次异步健康检查；
+   * 这期间任何一次自动保存（400ms）或 `pagehide` flush 都会把**新项目列表**写到
+   * **旧摘要**下面，产出一条看起来有效、实则认错工作区的记录。
+   *
+   * 必须是同步可翻转的：`holdIdentity()` 在派发 `PROJECT_REMOVED` 之前调用，
+   * 不等任何 await —— 它读的是模块内部状态，不依赖 React 渲染或 ref 更新时机。
+   */
+  holdIdentity(): void;
+  /** 拿到新摘要（或确认进入待同步）后放开；之后自动保存按新身份继续。 */
+  releaseIdentity(): void;
+  /** 身份是否仍在同步（诊断/测试用）。 */
+  identityPending(): boolean;
   state(): GateState;
   reason(): GateReason;
   /** 唯一判定入口：自动保存据此决定"能不能写"。 */
@@ -53,6 +75,8 @@ export function createWorkspaceWriteGate(): WorkspaceWriteGate {
    * 只记下意图，等恢复到达终态时按"合并提交"处理（结转列表此时已经就绪）。
    */
   let adoptPending = false;
+  /** 身份同步窗口：为 true 时任何写入都被拒绝（见 `holdIdentity` 的注释）。 */
+  let identityPending = false;
 
   return {
     hold() {
@@ -89,6 +113,15 @@ export function createWorkspaceWriteGate(): WorkspaceWriteGate {
       // 恢复进行中：记下接管意图，等终态再放开，避免用残缺状态抢先落盘
       if (state === 'held') adoptPending = true;
     },
+    holdIdentity() {
+      identityPending = true;
+    },
+    releaseIdentity() {
+      identityPending = false;
+    },
+    identityPending() {
+      return identityPending;
+    },
     state() {
       return state;
     },
@@ -96,7 +129,7 @@ export function createWorkspaceWriteGate(): WorkspaceWriteGate {
       return reason;
     },
     allowsWrite() {
-      return state === 'open';
+      return state === 'open' && !identityPending;
     },
   };
 }

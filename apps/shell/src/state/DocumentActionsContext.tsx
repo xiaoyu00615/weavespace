@@ -20,6 +20,7 @@ import type { ReactNode } from 'react';
 import {
   createDemoClient,
   createLiveClient,
+  type RemoveBlockerCode,
   type RemovalPrecheckOutcome,
   type WeaveSpaceClient,
 } from '../client/client-api';
@@ -51,8 +52,17 @@ import {
 } from './add-project.ts';
 import type { RenameOutcome } from '../client/client-api.ts';
 import { refreshProject } from './refresh-project';
-import { createProjectRemover, defaultNewOpId, type RemoveUiResult } from './remove-project.ts';
-import { createWorkspaceIdentitySync } from './workspace-identity-sync.ts';
+import {
+  createRemoveProjectAction,
+  defaultNewOpId,
+  localRemovalBlockers,
+  type RemoveUiResult,
+} from './remove-project.ts';
+import {
+  createWorkspaceIdentitySync,
+  settleIdentitySync,
+  type IdentitySyncOutcome,
+} from './workspace-identity-sync.ts';
 import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
 import { useWorkspace } from './WorkspaceContext';
@@ -130,6 +140,11 @@ export interface DocumentActions {
    * 只做"查询 + 只读刷新列表 + 提示人工核对"，**不自动重试**。
    */
   removeProject(projectId: string): Promise<RemoveUiResult>;
+  /**
+   * 该项目在 Shell 侧的本地阻断（R2-02）：还有标签 / 未保存 / 保存中 / 结果未知时
+   * 确认框只显示原因，不提供确认按钮。**不替代** Host 门禁。
+   */
+  localRemovalBlockers(projectId: string): RemoveBlockerCode[];
 }
 
 const DocumentActionsContext = createContext<DocumentActions | null>(null);
@@ -397,6 +412,66 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   const autosaveRef = useRef<Autosave | null>(null);
 
   /**
+   * 摘要同步 + 写入门禁联动（R2-01）。
+   *
+   * 门禁的"身份"那一轴在 `onRemoved` 里**同步**合上（先于 `PROJECT_REMOVED` 派发），
+   * 这里负责在拿到新摘要后放开；进入待同步时保持合上，让自动保存彻底停下来，
+   * 而不是写一条挂在旧摘要上的记录。
+   */
+  const syncIdentity = useCallback(
+    async (epoch: number): Promise<IdentitySyncOutcome> => {
+      const outcome = await identitySync.refresh(epoch);
+      // 规则与测试共用同一个纯函数（workspace-identity-sync.settleIdentitySync）
+      const settled = settleIdentitySync(gate, outcome);
+      if (settled === 'released') autosaveRef.current?.schedule();
+      return outcome;
+    },
+    [gate, identitySync],
+  );
+
+  /**
+   * 移除动作的编排器（R2-03）：**稳定作用域**下只装配一次。
+   *
+   * 之前每次 `actions.removeProject(...)` 都新建一个 `createProjectRemover`，
+   * 它内部的 `inflight` 表随即被丢掉——单飞形同虚设，双击就是两次 remove。
+   * 这里把实例提到 Provider 级；所有可变依赖都通过 ref 读取，因此这个 memo
+   * 在整个会话里不会重建。
+   */
+  const removeAction = useMemo(
+    () =>
+      createRemoveProjectAction({
+        port: {
+          removalPrecheck: (pid) => liveClient.removalPrecheck(pid),
+          removeProject: (pid, opId) => liveClient.removeProject(pid, opId),
+          queryRemovalOp: (opId) => liveClient.queryRemovalOp(opId),
+          listProjects: () => liveClient.listProjects(),
+        },
+        newOpId: defaultNewOpId,
+        identity: () => ({ mode: stateRef.current.mode, epoch: loadEpoch.current.current() }),
+        isCurrent: (value) => loadEpoch.current.isCurrent(value),
+        // 本地危险状态：Host 重启后 activeViews 归零，Shell 仍可能握着未保存 buffer
+        localBlockers: (pid) => localRemovalBlockers(stateRef.current.tabs, pid),
+        onRemoved: (pid) => {
+          /**
+           * R2-01 的关键顺序：**先**同步合上旧身份下的写入资格，**再**派发
+           * `PROJECT_REMOVED`。派发之后状态里已经是新项目集合，而新摘要还要走一次
+           * 异步健康检查；这之间的任意一次 400ms 自动保存或 pagehide flush，
+           * 都会把新列表写到旧摘要下面。
+           */
+          gate.holdIdentity();
+          // 先作废该项目所有在途层请求（推高 projectGeneration，迟到响应一律 stale），
+          // 再从列表移除并清空层表缓存——两道防线共同阻止旧行复活。
+          treeLoader.current.invalidateProject(pid);
+          dispatch({ type: 'PROJECT_REMOVED', projectId: pid });
+        },
+        onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
+        syncIdentity,
+        notify: (message) => dispatch({ type: 'NOTICE', message }),
+      }),
+    [dispatch, gate, liveClient, syncIdentity],
+  );
+
+  /**
    * 进入 live 并加载工作区；失败（Host 不在线）返回 null，由调用方决定如何降级。
    *
    * `isCancelled()`：恢复流程用它在**每次 await 之后**自检。用户已经切走时，
@@ -434,9 +509,14 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       });
       // 加载期间用户接管了：结果不属于当前工作区，交出 null 让恢复流程收手
       if (cancelled()) return null;
+      // 重新连上并拿到身份 = 上一次"身份待同步"自然结束（R2-01）：别让门禁永久拦住写入
+      if (loaded && loaded.workspaceKey) {
+        gate.releaseIdentity();
+        autosaveRef.current?.schedule();
+      }
       return loaded ? { workspaceKey: loaded.workspaceKey, workspaceMode: loaded.workspaceMode } : null;
     },
-    [dispatch, demoClient, liveClient],
+    [dispatch, demoClient, gate, liveClient],
   );
 
   const restorer = useMemo(
@@ -667,59 +747,17 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
        * 移除项目（UX-02B-04B）。
        *
        * 编排全在 `remove-project.ts`（纯 TS、可确定性测试）：opId 提交前落定、
-       * 超时后按 opId 查持久证据、结果不确定时只读刷新列表且**不自动重试**。
-       * 这里只注入宿主依赖，并在"确认已移除"时先作废该项目在途层请求、再清缓存，
-       * 确保迟到的目录响应不会把已移除项目重新长出来。
+       * 超时后按 opId 查持久证据、结果不确定时只读刷新列表且**不自动重试**；
+       * 移除成功后接着同步工作区摘要（R1-03），期间写入被门禁拦住（R2-01）。
+       * 编排器实例在 Provider 级只装配一次（R2-03），这里只做转发。
        */
       async removeProject(projectId: string): Promise<RemoveUiResult> {
-        // 本次操作的归属代次：响应/探测回来时若已经不是这个工作区，一律不回填
-        const epoch = loadEpoch.current.current();
-        const remover = createProjectRemover({
-          port: {
-            removalPrecheck: (pid) => clientFor('live').removalPrecheck(pid),
-            removeProject: (pid, opId) => clientFor('live').removeProject(pid, opId),
-            queryRemovalOp: (opId) => clientFor('live').queryRemovalOp(opId),
-            listProjects: () => clientFor('live').listProjects(),
-          },
-          newOpId: defaultNewOpId,
-          identity: () => ({ mode: stateRef.current.mode, epoch: loadEpoch.current.current() }),
-          isCurrent: (value) => loadEpoch.current.isCurrent(value),
-          onRemoved: (pid) => {
-            // 先作废该项目所有在途层请求（推高 projectGeneration，迟到响应一律 stale），
-            // 再从列表移除并清空层表缓存——两道防线共同阻止旧行复活。
-            treeLoader.current.invalidateProject(pid);
-            dispatch({ type: 'PROJECT_REMOVED', projectId: pid });
-          },
-          onProjects: (projects) => dispatch({ type: 'SET_PROJECTS', projects }),
-        });
-        const result = await remover.remove(projectId);
+        return removeAction.remove(projectId);
+      },
 
-        /**
-         * 身份同步（R1-03）：Host 的 `workspaceKey` 按**项目集合**重算，移除成功后
-         * 摘要必然变化。不刷新就会把"新项目列表 + 旧摘要"写成一条看起来有效的恢复
-         * 记录。`unknown` 也可能已经改变了集合，所以同样刷新一次（只读、幂等）。
-         */
-        const synced =
-          result.kind === 'removed' || result.kind === 'unknown'
-            ? await identitySync.refresh(epoch)
-            : null;
-        const needsSync = synced !== null && synced.status === 'pending';
-
-        if (result.kind === 'removed') {
-          const base =
-            result.configPersisted === true
-              ? '已从工作台移除该项目（磁盘文件未改动）'
-              : result.configPersisted === false
-                ? '已移除该项目（撤销已生效，配置补写待完成；磁盘文件未改动）'
-                : '已移除该项目（已按操作编号核对：撤销生效；磁盘文件未改动）';
-          dispatch({
-            type: 'NOTICE',
-            message: needsSync ? `${base}；工作区身份待同步` : base,
-          });
-        } else if (result.kind === 'unknown') {
-          dispatch({ type: 'NOTICE', message: result.message });
-        }
-        return result;
+      /** 本地危险状态（R2-02）：确认框据此提前拦住，不替代 Host 门禁。 */
+      localRemovalBlockers(projectId: string): RemoveBlockerCode[] {
+        return removeAction.localBlockers(projectId);
       },
 
       async openNode(node: ResourceNodeState, projectId?: string | null) {        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）
@@ -914,6 +952,12 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         opener.reset();
         restorer.noteInteraction();
         gate.adopt();
+        /**
+         * 切走就是换一份工作区身份（R2-01）：上一次移除留下的"身份待同步"到此为止。
+         * 这里只放开写入资格，**不**动摘要——新摘要由接下来的连接/加载写入，
+         * 旧身份不会被一次切换"恢复"回来。
+         */
+        gate.releaseIdentity();
         dispatch({ type: 'SET_MODE', mode });
         // 旧工作区的"加载中"标记不属于新工作区，在切换点收掉（加载链因取消不会
         // 再在 finally 里派发它）
@@ -1092,7 +1136,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         }
       },
     };
-  }, [addProject, dispatch, demoClient, gate, liveClient, opener, restorer, store]);
+  }, [addProject, dispatch, demoClient, gate, liveClient, opener, removeAction, restorer, store]);
 
   return (
     <DocumentActionsContext.Provider value={actions}>{children}</DocumentActionsContext.Provider>

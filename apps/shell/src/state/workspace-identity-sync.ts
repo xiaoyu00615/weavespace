@@ -54,6 +54,29 @@ export interface WorkspaceIdentitySync {
   refresh(epoch: number): Promise<IdentitySyncOutcome>;
 }
 
+/**
+ * 把同步结论落到写入门禁上（R2-01）。
+ *
+ * 抽成纯函数是为了让 Provider 与测试用**同一条**规则：
+ * - `updated` / `unchanged`：拿到（或确认）了新摘要 → 放开写入；
+ * - `pending`：仍在待同步 → 继续拦住（摘要已被置空，不会伪造）；
+ * - `stale`：工作区已经切走 → 这里不碰，由切换点自己收尾。
+ */
+export function settleIdentitySync(
+  gate: { holdIdentity(): void; releaseIdentity(): void },
+  outcome: IdentitySyncOutcome,
+): 'released' | 'held' | 'ignored' {
+  if (outcome.status === 'updated' || outcome.status === 'unchanged') {
+    gate.releaseIdentity();
+    return 'released';
+  }
+  if (outcome.status === 'pending') {
+    gate.holdIdentity();
+    return 'held';
+  }
+  return 'ignored';
+}
+
 export function createWorkspaceIdentitySync(host: WorkspaceIdentitySyncHost): WorkspaceIdentitySync {
   return {
     async refresh(epoch) {

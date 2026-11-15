@@ -1,0 +1,67 @@
+{
+  "twoProjects": [
+    "tree01-proj1",
+    "tree01-proj2"
+  ],
+  "workspaceKeyBefore": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+  "lastRecordBefore": "eca489d7cbaf1983231e28f543d854d60f4963ba7fa2ab588b03717acef0c792",
+  "bufferAfterTyping": "# Project One\n\n// R2-02 未保存草稿（不应被移除流程丢弃）",
+  "dirtyMarkerPresent": false,
+  "precheckBeforeRestart": {
+    "status": "APPLIED",
+    "projectId": "tree01-proj1",
+    "allowed": false,
+    "blockedBy": [
+      "ACTIVE_VIEWS",
+      "DIRTY"
+    ],
+    "state": "ACTIVE"
+  },
+  "hostRestarted": true,
+  "precheckAfterRestart": {
+    "status": "APPLIED",
+    "projectId": "tree01-proj1",
+    "allowed": true,
+    "blockedBy": [],
+    "state": "ACTIVE"
+  },
+  "hostSaysAllowed": true,
+  "localBlockClick": "OK",
+  "localBlockPhase": "blocked",
+  "localBlockText": "移除项目「tree01-proj1」现在不能移除：请先处理下列情况。该项目下还有文件正打开着。请先关闭这些文件，再移除项目。该项目下有未保存的修改。请先保存（或按你的意愿处理）后再移除。这些是本地界面里的内容，Host 侧可能已经看不到；请先自行保存或关闭，这里不会替你处理。为保护未保存的内容，这里不提供\"强制移除\"。处理好之后可以再次尝试。好的",
+  "localBlockHasConfirm": false,
+  "removeRequestsDuringLocalBlock": 0,
+  "bufferAfterBlocked": "# Project One\n\n// R2-02 未保存草稿（不应被移除流程丢弃）",
+  "bufferKeptIntact": true,
+  "removalClickAt": 1794722381604,
+  "readyPhase": "ready",
+  "projectsAfterRemove": [
+    "tree01-proj1"
+  ],
+  "workspaceKeyAfter": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+  "workspaceKeyChanged": true,
+  "lastRecordAfter": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+  "lastRecordMatchesHost": true,
+  "recordKeysAfter": [
+    "ws:workspace:v1:record:82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606"
+  ],
+  "storageWritesDuringRemoval": [
+    {
+      "key": "ws:workspace:v1:record:82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+      "at": 1794722382504,
+      "from": "setItem"
+    },
+    {
+      "key": "ws:workspace:v1:last",
+      "at": 1794722382504,
+      "from": "setItem"
+    }
+  ],
+  "writesUnderOldRecordKey": 0,
+  "writesWithNewRecordKey": 1,
+  "afterReload": [
+    "tree01-proj1"
+  ],
+  "afterReloadLastRecord": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606",
+  "afterReloadKey": "82de4474be55aef5f255e5335011c54bfc6509e5a91878ac90ad059dad200606"
+}

@@ -30,8 +30,15 @@ function blockedText(blockedBy: readonly RemoveBlockerCode[], state: string): st
   if (state === 'REVOKE_UNKNOWN') {
     return ['该项目上一次撤销的结果尚待核对，暂时不能再次移除。请重启 Host 或等待核对完成。'];
   }
-  if (blockedBy.length === 0) return ['当前状态不允许移除该项目。'];
-  return blockedBy.map((code) => BLOCKER_TEXT[code] ?? `存在阻断原因：${code}`);
+  const texts =
+    blockedBy.length === 0
+      ? ['当前状态不允许移除该项目。']
+      : blockedBy.map((code) => BLOCKER_TEXT[code] ?? `存在阻断原因：${code}`);
+  if (state === 'LOCAL') {
+    // Host 重启后它自己已经看不到这些 View：必须说清楚是"界面里还有内容"
+    texts.push('这些是本地界面里的内容，Host 侧可能已经看不到；请先自行保存或关闭，这里不会替你处理。');
+  }
+  return texts;
 }
 
 export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
@@ -59,6 +66,18 @@ export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
     setPhase('checking');
     setBlocked(null);
     setResult(null);
+    /**
+     * R2-02：先看**本地**（同步、不依赖网络）。
+     *
+     * Host 的 `activeViews` 在它重启后归零，而界面里可能还挂着一份从未落盘的
+     * buffer。这种情况下 Host 前检会返回 allowed=true，但那不代表可以丢草稿。
+     */
+    const local = actions.localRemovalBlockers(project.projectId);
+    if (local.length > 0) {
+      setBlocked({ reasons: blockedText(local, 'LOCAL') });
+      setPhase('blocked');
+      return;
+    }
     const pre = await actions.removalPrecheck(project.projectId);
     if (pre.status === 'APPLIED' && pre.allowed) {
       setPhase('ready');
