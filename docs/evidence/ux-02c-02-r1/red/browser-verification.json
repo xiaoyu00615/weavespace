@@ -1,0 +1,36 @@
+{
+  "run": "red",
+  "steps": {
+    "firstOpen": {
+      "clientInstanceId": null,
+      "viewId": "view-1",
+      "sessionId": "session-1"
+    },
+    "secondOpen": {
+      "clientInstanceId": null,
+      "viewId": "view-2",
+      "sessionId": "session-1"
+    },
+    "oldViewReadStatus": 200,
+    "blockedWhileOpen": {
+      "error": "无法改名或移动：该文件（或目录内文件）仍有打开的编辑标签。请先关闭相关标签并处理草稿，操作没有任何磁盘副作用。",
+      "untouched": true
+    },
+    "renamed": {
+      "oldGone": false,
+      "newExists": false,
+      "files": [
+        "a.md",
+        "docs"
+      ]
+    }
+  },
+  "checks": {
+    "刷新后沿用同一页面实例 id": false,
+    "刷新后建立了新 View": true,
+    "旧 View 已释放": false,
+    "刷新后标签仍开着时改名被拦": true,
+    "关闭标签后改名成功": false
+  },
+  "ok": false
+}

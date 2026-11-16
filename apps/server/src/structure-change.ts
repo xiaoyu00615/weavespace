@@ -172,8 +172,13 @@ export interface StructureChangeDeps {
   readonly actorId: string;
   /** 只读枚举会话（DocumentService 内部状态，不采信 Shell）。 */
   sessionsUnder(projectId: string, pathPrefix: string): readonly SessionGuardView[];
-  /** G-DISK 门禁：runtime.withDiskOp。 */
-  withDiskOp<T>(fn: () => Promise<T>): Promise<T>;
+  /**
+   * 结构变更专用磁盘通道：runtime.withStructureDiskOp（UX-02C-02-R1）。
+   *
+   * 屏障外的普通 `withDiskOp` 在屏障持有期间会被拒（ERR_PROJECT_BUSY），
+   * 因此结构变更自己的那次磁盘操作必须走这条通道，否则会把自己关在门外。
+   */
+  withStructureDiskOp<T>(fn: () => Promise<T>): Promise<T>;
   /** 结构变更准入独占 + 排空在途磁盘操作：runtime.withStructureChange。 */
   withStructureChange<T>(fn: () => Promise<T>): Promise<T>;
 }
@@ -235,7 +240,7 @@ export async function runManagedStructureChange(
 
       let result: MoveEntryResult;
       try {
-        result = await deps.withDiskOp(() =>
+        result = await deps.withStructureDiskOp(() =>
           provider.moveEntry!(request.sourcePath, request.targetParentDir, request.targetName),
         );
       } catch (err) {

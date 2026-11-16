@@ -223,8 +223,21 @@ export interface ProjectRuntime {
   /**
    * 把一个 G-DISK 操作纳入计数（屏障要等它结束）。
    * 进入前先判屏障：一旦 QUIESCING 就**不再准入**新操作。
+   *
+   * UX-02C-02-R1：结构变更屏障持有期间同样拒绝（`ERR_PROJECT_BUSY`）。
+   * 否则"检查无活动会话 → 执行改名"之间会插进新的 open/save/create，
+   * 让刚被判定为空的项目在变更过程中多出一个绑定旧路径的 View。
    */
   withDiskOp<T>(projectId: string, fn: () => Promise<T> | T): Promise<T>;
+  /**
+   * 结构变更**专用**磁盘通道（UX-02C-02-R1）：只在 `withStructureChange` 持有
+   * 屏障期间可用，因此不会被普通调用方借道绕过屏障。
+   *
+   * 仍然执行全部既有门禁（全局磁盘信任 / 项目生命周期 / REVOKE_UNKNOWN /
+   * QUIESCING / 根身份），并正常增减 `activeOps`——它不是"后门"，只是把
+   * "结构变更自己的那一次磁盘操作"与"其它新操作"区分开。
+   */
+  withStructureDiskOp<T>(projectId: string, fn: () => Promise<T> | T): Promise<T>;
   /**
    * 结构变更屏障（UX-02C-02）：改名/移动期间短暂独占该项目的**准入**。
    *
@@ -829,6 +842,43 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       if (entry.state === 'QUIESCING' || entry.state === 'REMOVING') {
         throw domainError(ERROR_CODES.ERR_PROJECT_QUIESCING, '项目正在移除中，磁盘操作被拒绝');
       }
+      // UX-02C-02-R1：结构变更屏障持有期间拒绝一切新的普通磁盘操作。
+      // 结构变更自己走 `withStructureDiskOp`，因此这条不会误伤它。
+      if (structureBusy.has(projectId)) {
+        throw domainError(ERROR_CODES.ERR_PROJECT_BUSY, '项目正在执行结构变更，暂不接受其它磁盘操作');
+      }
+      enterDiskOp(projectId);
+      try {
+        return await fn();
+      } finally {
+        leaveDiskOp(projectId);
+      }
+    },
+
+    /**
+     * 结构变更专用磁盘通道（UX-02C-02-R1）。
+     *
+     * 与 `withDiskOp` 的**唯一**差别是允许在屏障内使用；其它门禁一个都不放宽：
+     * 全局磁盘信任 → 项目生命周期（REVOKE_UNKNOWN / QUIESCING / REMOVING /
+     * ACTIVE+handle）→ 根身份刷新 → `activeOps` 计数。
+     */
+    async withStructureDiskOp(projectId, fn) {
+      if (!structureBusy.has(projectId)) {
+        throw domainError(
+          ERROR_CODES.ERR_PROJECT_BUSY,
+          '结构变更通道只能在结构变更屏障持有期间使用',
+        );
+      }
+      assertGlobalDiskTrust();
+      const entry = entries.get(projectId);
+      if (!entry) throw domainError(ERROR_CODES.ERR_PROJECT_NOT_FOUND, `未注册的项目: ${projectId}`);
+      if (entry.state === 'REVOKE_UNKNOWN' || diskDenied.has(projectId)) throw revokeUnknownError(projectId);
+      if (entry.state === 'QUIESCING' || entry.state === 'REMOVING') {
+        throw domainError(ERROR_CODES.ERR_PROJECT_QUIESCING, '项目正在移除中，磁盘操作被拒绝');
+      }
+      if (entry.state !== 'ACTIVE' || !entry.handle) throw unavailableError(projectId, entry.reason);
+      refreshEntry(entry);
+      if (entry.state !== 'ACTIVE' || !entry.handle) throw unavailableError(projectId, entry.reason);
       enterDiskOp(projectId);
       try {
         return await fn();

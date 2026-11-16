@@ -431,7 +431,7 @@ test('10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝'
       absolutePath: 'C:/evil',
     });
     assert.equal(forbidden.status, 400);
-    // 直接编排：授权服务拒绝时，连 withDiskOp 都不进入
+    // 直接编排：授权服务拒绝时，连结构变更磁盘通道都不进入
     let diskOps = 0;
     const denied = await runManagedStructureChange({
       request: {
@@ -446,7 +446,7 @@ test('10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝'
       permission: createPermissionService([]),
       actorId: 'test-actor',
       sessionsUnder: () => [],
-      withDiskOp: async (fn) => {
+      withStructureDiskOp: async <T,>(fn: () => Promise<T>): Promise<T> => {
         diskOps += 1;
         return fn();
       },

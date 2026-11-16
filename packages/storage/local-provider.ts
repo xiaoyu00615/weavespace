@@ -123,6 +123,14 @@ export interface StorageFaultHooks {
    * 以 ERR_ENTRY_EXISTS 拒绝且外部对象不被覆盖。仅测试注入。
    */
   beforeMoveReserve?: () => void;
+  /**
+   * 排他占位**已建立并记录文件身份**、`rename` 尚未执行时调用（UX-02C-02-R1）。
+   *
+   * 用途：确定性模拟"占位被外部进程删除并换成同名 0 字节文件"。旧实现用
+   * `isFile() && size===0` 判断占位归属，会把外部文件当成自己的占位并删除；
+   * 有了 dev+ino 身份核对，这里必须以 ERR_ENTRY_EXISTS 拒绝且不碰外部文件。
+   */
+  afterMoveReserve?: () => void;
 }
 
 export type CreateEntryKind = 'file' | 'directory';
@@ -256,6 +264,34 @@ function codeOf(err: unknown): string | undefined {
 
 function domainError(errorCode: string, message: string): Error {
   return Object.assign(new Error(message), { errorCode });
+}
+
+/**
+ * 文件系统对象身份（UX-02C-02-R1）。
+ *
+ * `dev + ino` 是目录项背后的真实对象身份：同一个路径被删除后重建，即使大小、
+ * 时间戳都相同，ino 也会变。排他占位据此判断"目标还是不是本次操作自己创建
+ * 的那个 0 字节文件"——绝不再用 `isFile() && size === 0` 这种可被外部伪造的
+ * 外观特征来认定归属。
+ */
+interface EntryIdentity {
+  readonly dev: string;
+  readonly ino: string;
+}
+
+function identityOfStats(stats: {
+  dev: number | bigint;
+  ino: number | bigint;
+}): EntryIdentity {
+  // Windows 上 ino 可能以 number 或 bigint 出现，统一按字符串比较
+  return { dev: String(stats.dev), ino: String(stats.ino) };
+}
+
+function sameEntryIdentity(
+  left: EntryIdentity | null,
+  right: EntryIdentity | null,
+): boolean {
+  return left !== null && right !== null && left.dev === right.dev && left.ino === right.ino;
 }
 
 /** 结构指纹上限：超过即返回 null（如实说明"未完整核对"，不做全树扫描的假保证）。 */
@@ -1024,6 +1060,31 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         return reject(mapStorageError(err) as ErrorCode);
       }
 
+      /**
+       * 本次排他占位的真实对象身份（dev+ino）；`null` = 没有占位（大小写仅变化路径）。
+       *
+       * 声明在 `verify` 之前：结果确认与失败清理都要用它判断"目标还是不是我建的"。
+       */
+      let reservedIdentity: EntryIdentity | null = null;
+
+      /**
+       * 占位归属复核（UX-02C-02-R1）：
+       * - `owned`：目标确实仍是本次操作创建的那个对象（dev+ino 一致）；
+       * - `missing`：占位已不在（被外部删除，当前没有对象占着这个名字）；
+       * - `foreign`：同名路径上是**别的**对象（哪怕它恰好也是 0 字节文件）。
+       *
+       * 只有 `owned` 才允许覆盖或删除；`foreign` 一律拒绝，绝不碰外部文件。
+       */
+      const reservationState = async (): Promise<'owned' | 'missing' | 'foreign'> => {
+        if (reservedIdentity === null) return 'missing';
+        try {
+          const info = await lstat(targetAbs);
+          return sameEntryIdentity(identityOfStats(info), reservedIdentity) ? 'owned' : 'foreign';
+        } catch (err) {
+          return isMissing(err) ? 'missing' : 'foreign';
+        }
+      };
+
       /** 结果确认：'moved' / 'unchanged' / 'ambiguous'。绝不以"目标存在"单独推断成功。 */
       const verify = async (): Promise<'moved' | 'unchanged' | 'ambiguous'> => {
         try {
@@ -1045,8 +1106,9 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
             return isMissing(err) && !sourceGone ? 'unchanged' : 'ambiguous';
           }
           if (!sourceGone) {
-            // 源还在，目标只是我们的 0 字节占位 → 确认零变更
-            return targetInfo.isFile() && targetInfo.size === 0 ? 'unchanged' : 'ambiguous';
+            // 源还在：只有目标仍是**本次占位那个对象**才算零变更。
+            // 目标被外部替换（哪怕同样 0 字节）时结果不确定，绝不据外观推断。
+            return (await reservationState()) === 'owned' ? 'unchanged' : 'ambiguous';
           }
           const isDir = targetInfo.isDirectory();
           if (isDir !== sourceIsDir) return 'ambiguous';
@@ -1085,10 +1147,42 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         try {
           const handle = await open(targetAbs, 'wx');
           reserved = true;
-          await handle.close();
+          try {
+            // 立刻记下真实对象身份（dev+ino）：后续一切归属判断都以它为准，
+            // 不再使用 isFile()+size===0 这种外部可伪造的外观特征
+            reservedIdentity = identityOfStats(await handle.stat());
+          } finally {
+            await handle.close();
+          }
         } catch (err) {
           if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
           return reject(moveErrorOf(err, sourceIsDir));
+        }
+        // 仅测试注入：模拟"占位建立之后被外部删除并替换成同名文件"
+        faults.afterMoveReserve?.();
+      }
+
+      // 10b) rename 前再次核对占位归属：Windows 的 rename 会覆盖已存在目标，
+      // 因此"目标是不是我的占位"必须在动手前确认，而不是事后靠外观猜测。
+      if (reserved) {
+        const owned = await reservationState();
+        if (owned === 'foreign') {
+          // 同名路径上是外部对象：拒绝覆盖，且绝不删除它（源保持原位）
+          return reject('ERR_ENTRY_EXISTS');
+        }
+        if (owned === 'missing') {
+          // 占位被外部删除但这个名字还空着：重新占一次，把竞争窗口重新收紧
+          try {
+            const handle = await open(targetAbs, 'wx');
+            try {
+              reservedIdentity = identityOfStats(await handle.stat());
+            } finally {
+              await handle.close();
+            }
+          } catch (err) {
+            if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
+            return reject(moveErrorOf(err, sourceIsDir));
+          }
         }
       }
 
@@ -1099,15 +1193,18 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         const state = await verify();
         if (state === 'moved') return finish(); // 已确认结构变更完成
         if (state === 'ambiguous') return unknown();
-        // 确认零变更：只清掉本次操作自己创建的 0 字节占位
+        // 确认零变更：只有目标仍是本次占位（dev+ino 一致）才允许清理
         if (reserved) {
-          try {
-            const info = await lstat(targetAbs);
-            if (info.isFile() && info.size === 0) await unlink(targetAbs);
-            else return unknown();
-          } catch (cleanupErr) {
-            if (!isMissing(cleanupErr)) return unknown();
+          const owned = await reservationState();
+          if (owned === 'foreign') return unknown(); // 外部对象：绝不删除
+          if (owned === 'owned') {
+            try {
+              await unlink(targetAbs);
+            } catch (cleanupErr) {
+              if (!isMissing(cleanupErr)) return unknown();
+            }
           }
+          // missing：占位已不在，无需清理
         }
         return reject(moveErrorOf(err, sourceIsDir));
       }

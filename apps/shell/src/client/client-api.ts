@@ -13,6 +13,43 @@
 
 export type ClientMode = 'demo' | 'live';
 
+/**
+ * 本浏览器页面的稳定实例 id（UX-02C-02-R1）。
+ *
+ * 存在 `sessionStorage` 里：页面刷新后仍是同一个值，新标签页/新窗口则是各自
+ * 不同的值。用途只有一个——Host 据此识别"同一页面重开同一资源"，把该页面
+ * 上一次留下的 View 释放掉（否则刷新后旧 View 永远无人关闭，改名/移动被永久
+ * 拦住）。它**不是授权凭据**：服务端从不据此放行任何操作。
+ *
+ * 没有 sessionStorage（Node 测试、隐私模式禁用存储）时返回 `null`，请求里就
+ * 不带这个字段，行为退回旧语义。
+ */
+const CLIENT_INSTANCE_KEY = 'weavespace.clientInstanceId';
+const CLIENT_INSTANCE_SHAPE = /^[A-Za-z0-9._-]{8,64}$/;
+
+export function clientInstanceId(): string | null {
+  try {
+    const storage = (globalThis as { sessionStorage?: Storage }).sessionStorage;
+    if (!storage) return null;
+    const existing = storage.getItem(CLIENT_INSTANCE_KEY);
+    if (existing !== null && CLIENT_INSTANCE_SHAPE.test(existing)) return existing;
+    const created = createInstanceId();
+    storage.setItem(CLIENT_INSTANCE_KEY, created);
+    return created;
+  } catch {
+    // 存储被禁用/超限：不生成"每次请求都不同"的假 id（那会让旧 View 永远留不下线索）
+    return null;
+  }
+}
+
+function createInstanceId(): string {
+  // 用结构化类型而不是 DOM 的 `Crypto`：Node 侧（测试）也能安全求值
+  const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
+  // 退化路径：时间戳 + 随机数，仅用于极老环境；形状仍需通过服务端校验
+  return `ws-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 /** 服务端运行模式（G2-03）：不得假定连接的一定是 Multi。 */
 export type WorkspaceMode = 'legacy' | 'multi';
 
@@ -579,9 +616,16 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       };
     },
     async openDocument(path: string, projectId?: string) {
+      // 页面实例 id（R1）：让 Host 能在"同页刷新后重开同一资源"时释放旧 View。
+      // 取不到（无 sessionStorage）就不带该字段，服务端保持旧语义。
+      const instanceId = clientInstanceId();
       const { body } = await request(baseUrl, '/api/open', {
         method: 'POST',
-        body: JSON.stringify(projectId ? { projectId, path } : { path }),
+        body: JSON.stringify({
+          ...(projectId ? { projectId } : {}),
+          path,
+          ...(instanceId ? { clientInstanceId: instanceId } : {}),
+        }),
       });
       return {
         status: body.status === 'APPLIED' ? 'APPLIED' : 'REJECTED',

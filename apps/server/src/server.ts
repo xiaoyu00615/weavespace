@@ -524,6 +524,30 @@ interface ViewRecord {
   path: string;
   /** 创建该视图的服务端 actor（G1-09）：草稿门禁据此拒绝跨主体猜读。 */
   actorId: string;
+  /**
+   * 页面实例归属（UX-02C-02-R1）：仅用于识别"同一个浏览器页面"。
+   *
+   * 只解决一个问题：同一页面刷新后重新打开同一资源时，旧 View 已经没有任何
+   * 客户端会去关闭它（页面上下文没了），必须由 Host 在**新 View 登记成功后**
+   * 释放。**不是授权凭据**——它从不参与任何授权判定，`null` 表示旧客户端。
+   */
+  clientInstanceId: string | null;
+}
+
+/**
+ * 校验页面实例 id（UX-02C-02-R1）。只约束形状，不做任何授权语义：
+ * 长度与字符集限得很死，避免把它当成任意负载塞进 Host 内存。
+ */
+function parseClientInstanceId(body: Record<string, unknown>): string | null {
+  const raw = body.clientInstanceId;
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    throw new HttpError(400, 'ERR_COMMAND_INVALID', 'clientInstanceId 必须是字符串');
+  }
+  if (!/^[A-Za-z0-9._-]{8,64}$/.test(raw)) {
+    throw new HttpError(400, 'ERR_COMMAND_INVALID', 'clientInstanceId 形状非法');
+  }
+  return raw;
 }
 
 export async function createShellServer(options: ShellServerOptions): Promise<ShellServer> {
@@ -1495,7 +1519,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
        *
        * 校验顺序：模式(501) → T1 → 显式同源 Origin → 禁字段/形状(400，零 IO)
        * → 项目可用性(G-DISK 前置) → 项目级写授权 → 结构变更准入屏障 + 排空在途
-       * 磁盘操作 → Host 会话保护 → `withDiskOp` → 排他路径变更。
+       * 磁盘操作 → Host 会话保护 → `withStructureDiskOp` → 排他路径变更。
        * 浏览器只提交 `projectId + 项目内相对路径 + 单段名称`。
        */
       const structureKind: StructureKind | null =
@@ -1533,7 +1557,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           permission,
           actorId,
           sessionsUnder: (projectId, prefix) => document.sessionsUnder(projectId, prefix),
-          withDiskOp: <T,>(fn: () => Promise<T>) => withDiskOp(request.projectId, fn),
+          // 屏障持有期间普通 withDiskOp 已被拒，结构变更自己的磁盘操作走专用通道
+          withStructureDiskOp: <T,>(fn: () => Promise<T>) =>
+            runtime.withStructureDiskOp(request.projectId, fn),
           withStructureChange: <T,>(fn: () => Promise<T>) =>
             runtime.withStructureChange(request.projectId, fn),
         });
@@ -1808,6 +1834,8 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         if (!projectPath) {
           throw new HttpError(400, 'ERR_COMMAND_INVALID', '非法路径（越界/绝对路径/空）');
         }
+        // UX-02C-02-R1：页面归属标识（非授权凭据）。形状不合法在零 IO 前拒绝。
+        const clientInstanceId = parseClientInstanceId(body);
 
         // resourceId / providerId 一律由服务端派生（G1-04），客户端只能断言不能指定
         let resourceId: string;
@@ -1886,7 +1914,35 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           resourceId: identity.resourceId,
           path: identity.path,
           actorId,
+          clientInstanceId,
         });
+
+        /**
+         * 同一页面重开同一资源：释放该页面此前遗留的旧 View（UX-02C-02-R1）。
+         *
+         * 场景：页面刷新后 sessionStorage 里的 clientInstanceId 不变，客户端会
+         * 重新 /api/open 同一文件；旧 View 的持有者（旧页面上下文）已经消失，
+         * 永远不会自己关闭，若不清理就会让该项目永远"有活动 View"，改名/移动
+         * 被永久拦住。
+         *
+         * 边界（按契约逐条）：
+         * - 只处理**同一个 clientInstanceId + 同一个 resourceId**；
+         *   其它页面、其它文件一律不动。
+         * - 一定在新 View 登记成功之后才关旧的：即使关闭被拒，新 View 也已可用。
+         * - `document.closeView` 拒绝（例如保护最后一个脏视图）时**保留**记录，
+         *   不伪造成功；脏草稿因此不会被静默丢弃。
+         * - 关闭过程不触碰磁盘，也不改变会话缓冲。
+         */
+        if (clientInstanceId) {
+          for (const [oldViewId, record] of [...views]) {
+            if (oldViewId === handle.viewId) continue;
+            if (record.clientInstanceId !== clientInstanceId) continue;
+            if (record.sessionId !== handle.sessionId) continue;
+            if (record.resourceId !== identity.resourceId) continue;
+            const closed = await document.closeView(oldViewId).catch(() => ({ closed: false }));
+            if (closed.closed) views.delete(oldViewId);
+          }
+        }
         // open 的 CommandBus 已按实际资源授权；正文读取再按会话实际资源授权一次
         authorizeRead(handle.sessionId);
         sendJson(res, 200, {
