@@ -555,6 +555,14 @@ function parseReclaimPrevious(body: Record<string, unknown>): boolean {
   return raw;
 }
 
+/**
+ * 一次"回收本页面遗留 View"请求最多处理多少条路径（UX-02C-02-R1.2）。
+ *
+ * 上限只防"把整棵树的路径全塞进来"这种滥用：恢复记录本身最多 24 个标签，
+ * 64 条已经足够宽松，同时保证这次内存操作不会被拉长到影响其它请求。
+ */
+const MAX_RECLAIM_PATHS = 64;
+
 function parseClientInstanceId(body: Record<string, unknown>): string | null {
   const raw = body.clientInstanceId;
   if (raw === undefined || raw === null) return null;
@@ -1844,6 +1852,102 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           'ERR_COMMAND_UNSUPPORTED',
           PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持该接口',
         );
+      }
+
+      /**
+       * 回收"本页面上一轮"遗留的 View（UX-02C-02-R1.2）。
+       *
+       * 场景：页面刷新后旧 View 留在 Host。恢复流程逐个重开标签时，`/api/open`
+       * 会顺带回收每个文件的旧 View；但如果用户在恢复途中主动打开某个**尚未恢复**
+       * 的文件，恢复立即被接管中止，剩下那些文件的旧 View 就再也没人关了。
+       * 它们会让项目一直判定为"有活动编辑会话"，改名/移动被永久 409 拦住。
+       *
+       * 因此需要一次"只回收、不打开"的批量通道：不读盘、不建会话、不动任何草稿。
+       *
+       * 边界（与 `/api/open` 的 reclaim 完全同源）：
+       * - 必须声明 `clientInstanceId`，且只处理**同一页面实例 + 同一 actor +
+       *   同一 resourceId** 的 View；其它页面、其它文件一律不动。
+       * - `keepViewIds` 是调用方此刻在用的 View（标签持有的那些）：**永不关闭**。
+       *   这是"当前活动 View"与"上轮历史 View"的显式分界。
+       * - `document.closeView` 拒绝时（例如保护最后一个脏视图）保留记录并如实
+       *   报告 `blocked`，绝不为了回收 View 丢弃 DIRTY 草稿。
+       * - 只操作 Host 内存，不触碰磁盘，因此不需要项目 grant；项目不存在仍是 404。
+       * - 与 `/api/close` 同一档门禁（T1 令牌 + 同源）：`isWrite` 阶段已经对带
+       *   Origin 的请求做了同源校验，而令牌本身只发给同源页面；这里不额外要求
+       *   Origin 头——Node 里的真实集成测试没有该头，强制要求会让生产链路无法被
+       *   端到端验证（视图操作不碰磁盘，风险面与 `/api/close` 相同）。
+       */
+      if (pathname === '/api/views/reclaim') {
+        requireSessionToken(req);
+        const pageInstance = parseClientInstanceId(body);
+        if (!pageInstance) {
+          throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少或非法的 clientInstanceId');
+        }
+        const rawPaths = body.paths;
+        if (!Array.isArray(rawPaths) || rawPaths.length === 0) {
+          throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少 paths');
+        }
+        if (rawPaths.length > MAX_RECLAIM_PATHS) {
+          throw new HttpError(400, 'ERR_COMMAND_INVALID', `paths 不能超过 ${MAX_RECLAIM_PATHS} 条`);
+        }
+        const keep = new Set(
+          Array.isArray(body.keepViewIds)
+            ? body.keepViewIds.filter((item): item is string => typeof item === 'string')
+            : [],
+        );
+
+        let reclaimProjectId: string | undefined;
+        if (mode === 'multi') {
+          reclaimProjectId = typeof body.projectId === 'string' ? body.projectId : '';
+          if (!reclaimProjectId) {
+            throw new HttpError(
+              400,
+              'ERR_PROJECT_REQUIRED',
+              PUBLIC_ERROR_MESSAGES.ERR_PROJECT_REQUIRED ?? '必须声明 projectId',
+            );
+          }
+          // 项目不存在 → 404（与其它项目级端点一致），不虚构"回收成功"
+          requireProjectHandle(reclaimProjectId);
+        } else if ('projectId' in body) {
+          throw new HttpError(400, 'ERR_COMMAND_INVALID', 'Legacy 模式不接受 projectId');
+        }
+
+        const wanted: string[] = [];
+        for (const raw of rawPaths) {
+          const normalized = normalizeProjectPath(raw);
+          if (!normalized) {
+            throw new HttpError(400, 'ERR_COMMAND_INVALID', '非法路径（越界/绝对路径/空）');
+          }
+          wanted.push(normalized);
+        }
+
+        let closed = 0;
+        const blocked: Array<{ path: string; viewId: string; reason: string }> = [];
+        for (const path of new Set(wanted)) {
+          const resourceId = reclaimProjectId ? `doc:${reclaimProjectId}/${path}` : `doc:${path}`;
+          for (const [viewId, record] of [...views]) {
+            if (record.clientInstanceId !== pageInstance) continue;
+            if (record.actorId !== actorId) continue;
+            if (record.resourceId !== resourceId) continue;
+            // 当前标签正在用的 View：属于"当前活动"，不是"上轮历史"
+            if (keep.has(viewId)) continue;
+            const outcome = await document
+              .closeView(viewId)
+              .catch((err: unknown) => ({ closed: false, reason: String(err) }));
+            if (outcome.closed) {
+              views.delete(viewId);
+              closed += 1;
+            } else {
+              blocked.push({
+                path,
+                viewId,
+                reason: (outcome as { reason?: string }).reason ?? '拒绝关闭',
+              });
+            }
+          }
+        }
+        sendJson(res, 200, { status: 'APPLIED', closed, blocked });
+        return;
       }
 
       if (pathname === '/api/open') {

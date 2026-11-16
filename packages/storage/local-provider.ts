@@ -125,12 +125,15 @@ export interface StorageFaultHooks {
    */
   beforeMoveReserve?: () => void;
   /**
-   * 排他占位**建立之后**、记录身份 / 关闭句柄之前调用（UX-02C-02-R1.1）。
+   * 排他占位**建立之后**、记录身份 / 关闭句柄之前调用（UX-02C-02-R1.1 / R1.2）。
    *
    * 用来确定性验证"占位已存在但拿不到身份 / 关不掉句柄"必须收敛为 UNKNOWN：
    * 此时磁盘已经有本次操作的副作用，绝不能返回一个"什么都没发生"的普通拒绝。
+   *
+   * `attempt`：1 = 初次占位；2 = 占位被外部删除后的重新占位。两条路径共用同一段
+   * 实现，因此注入点的语义也完全一致（R1.2-04）。
    */
-  reserveFault?: (stage: 'beforeStat' | 'beforeClose') => void;
+  reserveFault?: (stage: 'beforeStat' | 'beforeClose', attempt: 1 | 2) => void;
   /**
    * 排他占位**已建立并记录文件身份**、`rename` 尚未执行时调用（UX-02C-02-R1）。
    *
@@ -139,6 +142,18 @@ export interface StorageFaultHooks {
    * 有了 dev+ino 身份核对，这里必须以 ERR_ENTRY_EXISTS 拒绝且不碰外部文件。
    */
   afterMoveReserve?: () => void;
+  /**
+   * 身份复核完成、`rename` 即将执行时调用（UX-02C-02-R1.2 / R1-05）。
+   *
+   * 这是本 Provider **唯一**无法用"再检查一次"消除的竞争窗口：`rename` 由
+   * libuv 映射为 `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`，Node 没有原子
+   * no-replace 变体（实测见 `docs/evidence/ux-02c-02-r12/notes.md`），因此
+   * 复核与 rename 之间被外部替换的同名对象仍会被覆盖。
+   *
+   * 提供这个注入点不是为了掩饰它，而是为了把窗口行为钉成可观测断言，
+   * 并保证"复核之后才动手"这个顺序本身可被测试验证。
+   */
+  beforeMoveRename?: () => void;
 }
 
 export type CreateEntryKind = 'file' | 'directory';
@@ -1093,7 +1108,69 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         }
       };
 
-      /** 结果确认：'moved' / 'unchanged' / 'ambiguous'。绝不以"目标存在"单独推断成功。 */
+      /**
+       * 建立排他占位并取得真实身份（**唯一实现**，初次占位与重新占位共用）。
+       *
+       * R1-04 复审缺陷：两条路径各写一份，初次走"副作用之后一律 UNKNOWN"，
+       * 重新占位却退化成 `catch → REJECTED`。同一块磁盘上已经多了一个 0 字节
+       * 占位，却报告"什么都没发生"——调用方据此可以安全重试，于是留下第二个
+       * 占位；更糟的是它会把"结果不明"当成"目标已存在"来展示。
+       *
+       * 统一后的语义（与尝试次数无关）：
+       * - `open('wx')` 失败：**零副作用**。EEXIST → ERR_ENTRY_EXISTS，其余按
+       *   `moveErrorOf` 映射成普通拒绝（可以放心重试）。
+       * - 占位已建立但 `stat` 失败：身份未知 → UNKNOWN，**不删除目标**
+       *   （此刻那个名字上的对象可能已经不是我们的了）。
+       * - 占位已建立但 `close` 失败：句柄状态未知 → UNKNOWN，并再尽力释放一次
+       *   句柄；绝不因为"关不掉"就宣称成功或失败。
+       */
+      type ReservationOutcome =
+        | { status: 'RESERVED'; identity: EntryIdentity }
+        | { status: 'FAILED'; result: MoveEntryResult };
+
+      const reserveExclusive = async (attempt: 1 | 2): Promise<ReservationOutcome> => {
+        let handle: FileHandle;
+        try {
+          handle = await open(targetAbs, 'wx');
+        } catch (err) {
+          if (codeOf(err) === 'EEXIST') {
+            return { status: 'FAILED', result: reject('ERR_ENTRY_EXISTS') };
+          }
+          return { status: 'FAILED', result: reject(moveErrorOf(err, sourceIsDir)) };
+        }
+
+        /**
+         * 从这里开始磁盘上已经有本次操作的副作用（0 字节占位）。之后所有
+         * "拿不准"都必须 UNKNOWN：既不能用普通拒绝谎称"什么都没发生"，
+         * 也不能在身份无法确认时去删除这个目标。
+         */
+        let identity: EntryIdentity;
+        try {
+          faults.reserveFault?.('beforeStat', attempt);
+          identity = identityOfStats(await handle.stat());
+        } catch {
+          await handle.close().catch(() => undefined);
+          return { status: 'FAILED', result: unknown() };
+        }
+        try {
+          faults.reserveFault?.('beforeClose', attempt);
+          await handle.close();
+        } catch {
+          /**
+           * 句柄关不上：实测 Windows 上"保持句柄打开"会让随后的 rename 报
+           * EPERM（见 docs/evidence/ux-02c-02-r11/notes.md），而且此刻既不能
+           * 确认磁盘、也不能安全清理 → fail-closed。释放句柄只是尽力而为，
+           * 绝不因为它成功就把结果改报成"已完成"。
+           */
+          await handle.close().catch(() => undefined);
+          return { status: 'FAILED', result: unknown() };
+        }
+        return { status: 'RESERVED', identity };
+      };
+
+      /**
+       * 结果确认：'moved' / 'unchanged' / 'ambiguous'。绝不以"目标存在"单独推断成功。
+       */
       const verify = async (): Promise<'moved' | 'unchanged' | 'ambiguous'> => {
         try {
           if (isCaseOnly) {
@@ -1152,42 +1229,10 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       if (!isCaseOnly) {
         // 仅测试注入：模拟"目标存在性检查之后、占位之前外部创建了同名对象"
         faults.beforeMoveReserve?.();
-        let handle: FileHandle;
-        try {
-          handle = await open(targetAbs, 'wx');
-        } catch (err) {
-          if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
-          return reject(moveErrorOf(err, sourceIsDir));
-        }
+        const first = await reserveExclusive(1);
+        if (first.status === 'FAILED') return first.result;
+        reservedIdentity = first.identity;
         reserved = true;
-        /**
-         * 从这里开始磁盘上已经有本次操作的副作用（那个 0 字节占位）。
-         * 之后任何"拿不准"都必须 UNKNOWN——绝不能用普通 REJECTED 谎称
-         * "什么都没发生"，也不能盲目删除（可能是外部对象）。
-         */
-        try {
-          faults.reserveFault?.('beforeStat');
-          // 记下真实对象身份（dev+ino）：后续一切归属判断都以它为准，
-          // 不再使用 isFile()+size===0 这种外部可伪造的外观特征
-          reservedIdentity = identityOfStats(await handle.stat());
-        } catch {
-          await handle.close().catch(() => undefined);
-          return unknown();
-        }
-        try {
-          faults.reserveFault?.('beforeClose');
-          await handle.close();
-        } catch {
-          /**
-           * 句柄关不上：实测 Windows 上「保持句柄打开」会让随后的 rename 报
-           * EPERM，而且此刻我们既不能确认磁盘、也不能安全清理 → fail-closed。
-           *
-           * 这就是"不采用『保持句柄直到 rename 完成』方案"的直接原因（评估结论
-           * 见 docs/evidence/ux-02c-02-r11/notes.md）：Windows 无法在持有句柄的
-           * 同时把自己这份占位 rename 覆盖掉。
-           */
-          return unknown();
-        }
         // 仅测试注入：模拟"占位建立之后被外部删除并替换成同名文件"
         faults.afterMoveReserve?.();
       }
@@ -1195,26 +1240,25 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       // 10b) rename 前再次核对占位归属：Windows 的 rename 会覆盖已存在目标，
       // 因此"目标是不是我的占位"必须在动手前确认，而不是事后靠外观猜测。
       if (reserved) {
-        const owned = await reservationState();
-        if (owned === 'foreign') {
+        const state = await reservationState();
+        if (state === 'foreign') {
           // 同名路径上是外部对象：拒绝覆盖，且绝不删除它（源保持原位）
           return reject('ERR_ENTRY_EXISTS');
         }
-        if (owned === 'missing') {
-          // 占位被外部删除但这个名字还空着：重新占一次，把竞争窗口重新收紧
-          try {
-            const handle = await open(targetAbs, 'wx');
-            try {
-              reservedIdentity = identityOfStats(await handle.stat());
-            } finally {
-              await handle.close();
-            }
-          } catch (err) {
-            if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
-            return reject(moveErrorOf(err, sourceIsDir));
-          }
+        if (state === 'missing') {
+          // 占位被外部删除但这个名字还空着：重新占一次，把竞争窗口重新收紧。
+          // 与初次占位**同一段实现**、同一套失败语义（R1.2-04）。
+          const again = await reserveExclusive(2);
+          if (again.status === 'FAILED') return again.result;
+          reservedIdentity = again.identity;
         }
       }
+
+      /**
+       * 仅测试注入：身份复核完成、rename 尚未执行（R1-05 的竞争窗口）。
+       * 放在这里而不是更早，是为了让"先复核、后动手"的顺序本身可被验证。
+       */
+      faults.beforeMoveRename?.();
 
       // 11) 真正的路径变更：只覆盖我们自己的占位
       try {

@@ -1,0 +1,84 @@
+{
+  "run": "green",
+  "steps": {
+    "projectId": "ux02c02r12-green-727256-proja",
+    "firstOpen": {
+      "viewId": "view-1",
+      "sessionId": "session-1",
+      "clientInstanceId": "a1efe43e-12ef-4925-a6b5-fc1caad243ad"
+    },
+    "save": {
+      "saveClick": "OK",
+      "notice": "已保存到磁盘",
+      "diskF14": "# EDITED-IN-BROWSER\n"
+    },
+    "repeatedOpen": {
+      "tabsBefore": 14,
+      "tabsAfter": 14,
+      "opensBefore": 14,
+      "opensAfter": 15,
+      "firstViewAlive": 200
+    },
+    "isolation": {
+      "aViewF02": "view-2",
+      "bView": "view-16",
+      "bAliveAfterA": 200,
+      "aAliveAfterB": 200
+    },
+    "pageAReload": {
+      "notice": "已恢复 14/14 个文件标签",
+      "clientInstanceId": "a1efe43e-12ef-4925-a6b5-fc1caad243ad",
+      "firstRestoredViewId": "view-17",
+      "oldViewStatus": 403,
+      "bStillAlive": 200
+    },
+    "restoreInterrupt": {
+      "notices": [
+        "真实文件模式：读取本机测试项目（写入经 Core）",
+        "正在打开 f01.md …",
+        "正在打开 f05.md …",
+        "恢复被中断：原记录已保留；本次恢复了 4 个文件标签"
+      ],
+      "clickAt": 1794847758351,
+      "opensDuringRestore": 6,
+      "tabCount": 6
+    },
+    "renamePendingFile": {
+      "status": 200,
+      "errorCode": null,
+      "blockedBy": null
+    },
+    "uiRename": {
+      "renamedOnDisk": "# g01.md\n",
+      "oldGone": true
+    },
+    "uiMove": {
+      "options": [
+        "docs"
+      ],
+      "moveItem": "OK",
+      "movedContent": "# g02.md\n"
+    },
+    "externalCollision": {
+      "status": 409,
+      "errorCode": "ERR_ENTRY_EXISTS",
+      "blockedBy": null,
+      "victimContent": "FOREIGN-VICTIM\n"
+    }
+  },
+  "checks": {
+    "拿到真实项目 id": true,
+    "编辑与保存：内容真实落盘": true,
+    "重复打开：不新增标签且原 View 仍有效": true,
+    "双页面隔离：两页各自持有有效 View": true,
+    "页面刷新：页面身份不变": true,
+    "页面刷新：旧 View 被回收": true,
+    "页面刷新：不影响另一个页面": true,
+    "恢复中断：页面成功抢在恢复完成前接管": true,
+    "遗留 View 已回收：未恢复文件改名成功": true,
+    "文件改名：UI 改名真实落盘": true,
+    "文件移动：UI 移动到 docs/ 成功": true,
+    "外部同名文件：拒绝覆盖且内容不变": true
+  },
+  "ok": true
+}

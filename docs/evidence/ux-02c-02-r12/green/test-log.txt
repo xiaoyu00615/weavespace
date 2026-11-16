@@ -1,0 +1,46 @@
+UX-02C-02-R1.2 测试日志（简洁版）
+基线 89bd9f2 · 分支 wip/ux-02c-02-r1-view-barrier-reservation-20261116
+环境 Windows 11 / Node 22.22.2 / TMP=TEMP=TMPDIR=C:/Users/Administrator/AppData/Local/Temp
+
+== 修复前（红） ==
+77 page-instance-storage   SyntaxError: module does not provide an export named 'resolvePageInstance'（模块未实现）
+78 reservation-rename      R1.2-04a / 04b / 04c / 04d / 05a / 05b 红（1 pass / 6 fail）
+                           - 04c/04d: 期望 UNKNOWN(202)，实际 REJECTED(409)
+                           - 04b/04d: 期望句柄释放，实际 replace-rename EPERM
+                           - 05a/05b: 期望 beforeMoveRename 触发 1 次，实际 0
+79 restore-takeover        R1.2-01a「第 2 个旧 View 必须被回收」红；01c「本页面旧 View 必须回收」红
+
+== 修复后（绿） ==
+node tests/suites/<suite>
+  72-s11ux02c02-structure-host.test.ts              16 pass / 0 fail / 0 skip
+  73-s11ux02c02-structure-shell.test.ts             11 pass / 0 fail / 0 skip
+  74-s11ux02c02r1-view-barrier-reservation.test.ts   9 pass / 0 fail / 1 skip
+  75-s11ux02c02r11-page-instance.test.ts             8 pass / 0 fail / 0 skip
+  76-s11ux02c02r11-shell-host-integration.test.ts    4 pass / 0 fail / 0 skip
+  77-s11ux02c02r12-page-instance-storage.test.ts     6 pass / 0 fail / 0 skip  (新增)
+  78-s11ux02c02r12-reservation-rename.test.ts        7 pass / 0 fail / 0 skip  (新增)
+  79-s11ux02c02r12-restore-takeover.test.ts          5 pass / 0 fail / 0 skip  (新增)
+
+npm run test:p0
+  1..907 / tests 907 / pass 905 / fail 0 / cancelled 0 / skipped 2 / todo 0
+  duration_ms 24263.5（skip 两条：POSIX ino 语义 + 既有历史 skip）
+
+== 变异探针 ==
+P1 重新占位失败退回 REJECTED        → 78-04c/04d 红
+P2 close 失败后不再尽力关句柄       → 78-04b/04d 红
+P3 去掉 beforeMoveRename 注入点     → 78-05a 红
+P4 shouldReclaim 只认显式 reclaimPage→ 79-01a 红（即时回收）
+P5 reclaimStaleViews 空操作         → 79-01e 红
+P6 keepViewIds 传空                 → 79-01a 红
+P7 未持久化的新 id 也返回           → 77-02b 红
+
+== 真实 Chrome ==
+docs/evidence/ux-02c-02-r12/green/browser-verification.json  ok=true，12/12 检查通过
+00-opened-14.png / 01-after-reload.png / 02-pageB.png
+连续两次运行结果一致（恢复中断：6 个标签、f13 改名 200）
+
+== 其他门禁 ==
+npm run typecheck        OK
+npm run typecheck:apps   OK
+npm run build:shell      OK（dist/assets/index-*.js 401.39 kB / gzip 123.05 kB）
+git diff --check         OK

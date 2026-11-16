@@ -16,6 +16,9 @@
  *    把它显示成普通干净标签等于谎称"草稿已恢复"。这类标签只保留提示，由用户自己决定；
  * 5. 恢复全程**禁止自动写入**（AS-01…AS-03）：阶段 C 的状态是"残缺"的，写下去就会用
  *    2 个标签覆盖上次离开时的 8 个。门禁在第一个 await 之前合上，终态才放开。
+ * 6. 被接管时**不留孤儿 View**（R1.2）：恢复不会再重开那些没处理完的文件，它们的
+ *    旧 View 只能在这一刻回收（`reclaimStaleViews`）；回收被拒（最后一个脏视图）
+ *    时如实保留，绝不为了清理而丢草稿。
  *
  * 这里不做：A2 的动态重绑定、STALE 会话回收、草稿正文持久化、`/api/edit|save|reload`。
  */
@@ -107,6 +110,17 @@ export interface RestoreDeps {
   connectLive(isCancelled: () => boolean): Promise<ConnectedWorkspace | null>;
   /** 后台打开：复用 open-document 的并发合并、模式守卫与 View 释放。 */
   openInBackground(node: ResourceNodeState, projectId: string | null): Promise<OpenNodeResult>;
+  /**
+   * 回收**本页面**遗留的 View（UX-02C-02-R1.2）。
+   *
+   * 只对"恢复被接管后还没处理完"的标签调用：这些文件不会再被重开，它们的旧
+   * View 只能在这里清掉，否则该项目会一直判定为"有活动编辑会话"，改名/移动
+   * 被永久拦住。实现方必须只处理同一页面实例、且不碰当前标签正在用的 View
+   * （由 `open-document.ts` 的 `reclaimStaleViews` 保证）。
+   *
+   * 缺省（未注入）时跳过：回收是清理动作，不影响恢复结论。
+   */
+  reclaimStaleViews?(tabs: readonly PersistedTab[]): Promise<{ closed: number; blocked: number }>;
   /** 到达终态后回调（Provider 据此决定是否补一次提交）。 */
   onSettled?(report: RestoreReport): void;
 }
@@ -126,6 +140,16 @@ export interface WorkspaceRestorer {
    * 被中断时还没处理完的标签（AS-05）：接管后的提交必须合并它们，不能只写当前界面。
    */
   pendingTabs(): readonly PersistedTab[];
+  /**
+   * 恢复是否**仍在进行**（UX-02C-02-R1.2）。
+   *
+   * 打开流程据此判定"这次打开可以回收本页面上轮遗留的 View"：恢复窗口内，
+   * 用户主动打开的正是待恢复文件，它的旧 View 已经没人关了。窗口之外一律不回收。
+   *
+   * 注意窗口的终点是**报告落地**，不是 `noteInteraction()`：接管打开发生在
+   * "用户已经接管、但恢复尚未收手"之间，这段时间必须仍然算恢复中。
+   */
+  isRestoring(): boolean;
 }
 
 /** 在资源树里按相对路径找文件节点（`path` 缺失时退回节点 id 的末段匹配）。 */
@@ -304,11 +328,31 @@ function buildNotice(report: RestoreReport): string {
 export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
   let epoch = 0;
   let running: Promise<RestoreReport> | null = null;
+  let restoring = false;
   let report: RestoreReport | null = null;
   let hints: PersistedTab[] = [];
   let pending: PersistedTab[] = [];
 
   const isCurrent = (token: number): boolean => epoch === token;
+
+  /**
+   * 恢复被接管时，回收本页面遗留的 View（UX-02C-02-R1.2）。
+   *
+   * 只针对**不会再被重开**的标签（= 本次没处理完的那些）。不做任何判断上的
+   * 额外承诺：实现方只关"同页面上轮"的 View，并在关闭被拒（最后一个脏视图）
+   * 时如实保留。这里吞掉异常，因为回收失败不能改写"恢复被接管"这个结论。
+   */
+  async function reclaimAbandoned(tabs: readonly PersistedTab[]): Promise<void> {
+    if (!deps.reclaimStaleViews || tabs.length === 0) return;
+    // 已经切到 demo：那边的 View 由 switchMode 收回，这里不该再发 live 请求
+    if (deps.getMode() !== 'live') return;
+    try {
+      await deps.reclaimStaleViews(tabs);
+    } catch {
+      // 尽力而为：旧 View 留下来是可见的（改名会被 409 拦住），
+      // 但不能因此伪造一次成功的回收。
+    }
+  }
 
   /**
    * 阶段 A：界面局部。
@@ -576,6 +620,8 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
     if (!isCurrent(token)) {
       hints = [];
       pending = snapshot.tabs.slice();
+      // 一个标签都没重开：全部旧 View 都是孤儿，必须在这里回收
+      await reclaimAbandoned(pending);
       const interrupted = emptyReport({
         status: 'interrupted',
         reason: 'superseded',
@@ -635,6 +681,9 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
         skipped: result.skipped,
       });
       const next = { ...interrupted, notice: buildNotice(interrupted) };
+      // 接管前还没处理完的标签：恢复不会再重开它们，旧 View 在这里一次性回收
+      // （刚被用户接管打开的那个由打开路径自己回收，且它的新 View 在 keep 列表里）
+      await reclaimAbandoned(pending);
       deps.dispatch({ type: 'NOTICE', message: next.notice });
       return settle(next, 'seal');
     }
@@ -660,10 +709,20 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
     restore() {
       if (running) return running;
       if (report) return Promise.resolve(report);
-      running = run().then((value) => {
-        report = value;
-        return value;
-      });
+      restoring = true;
+      running = run().then(
+        (value) => {
+          report = value;
+          restoring = false;
+          return value;
+        },
+        (err: unknown) => {
+          // 恢复流程本身不应该抛：真抛了也必须退出"恢复中"，否则打开流程会一直
+          // 以为自己在恢复窗口内、继续回收旧 View（比失败本身更危险）。
+          restoring = false;
+          throw err;
+        },
+      );
       return running;
     },
     noteInteraction() {
@@ -677,6 +736,9 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
     },
     pendingTabs() {
       return pending;
+    },
+    isRestoring() {
+      return restoring;
     },
   };
 }

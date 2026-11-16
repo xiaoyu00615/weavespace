@@ -69,7 +69,7 @@ import {
   settleIdentitySync,
   type IdentitySyncOutcome,
 } from './workspace-identity-sync.ts';
-import { createWorkspaceRestorer, type RestoreReport } from './workspace-restore';
+import { createWorkspaceRestorer, type RestoreReport, type WorkspaceRestorer } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
 import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
@@ -476,7 +476,12 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   /**
    * 打开流程的编排器（G2-R1）：真实实现放在 `open-document.ts`，
    * 这里只注入宿主依赖，便于在 Node 里用真实 Host + reducer 验证时序。
+   *
+   * `restorerRef` 用来打通"opener 需要知道恢复是否在进行"这个反向依赖：
+   * restorer 的构造依赖 opener，两者不能互相直接引用（会形成循环 memo）。
+   * 通过 ref 读当前实例既避免 TDZ，也保证读到的是**实时**状态而不是快照。
    */
+  const restorerRef = useRef<WorkspaceRestorer | null>(null);
   const opener = useMemo<DocumentOpener>(    () =>
       createDocumentOpener({
         getState: () => stateRef.current,
@@ -484,6 +489,12 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         dispatch,
         clientFor,
         editEpochs: edits.current,
+        /**
+         * 恢复窗口（R1.2）：这个窗口内的打开可以回收"本页面上轮遗留的 View"。
+         * 用 `restorer.isRestoring()` 而不是"当前标签是否存在"——接管打开的时刻
+         * 恰好是"用户已经接管、恢复尚未收手"，此时那个文件的旧 View 已经没人关了。
+         */
+        isRestoring: () => restorerRef.current?.isRestoring() === true,
       }),
     [dispatch, demoClient, liveClient],
   );
@@ -641,11 +652,18 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         // 普通点击与 refreshCleanTab 的临时打开都不得申请回收。
         openInBackground: (node, projectId) =>
           opener.openNode(node, projectId, { background: true, reclaimPage: true }),
+        /**
+         * 恢复被接管后，回收那些再也不会被重开的文件的本页面旧 View（R1.2-01）。
+         * 只清理、不打开：不读盘、不建会话、不动草稿（脏视图的关闭由 Host 拒绝）。
+         */
+        reclaimStaleViews: (tabs) => opener.reclaimStaleViews(tabs),
         // 终态后再排一次写入：此时标签已经全部登记完，写下去的是完整状态（AS-04）
         onSettled: () => autosaveRef.current?.schedule(),
       }),
     [connectWorkspace, dispatch, gate, opener, store],
   );
+  // opener 通过 ref 读"恢复是否在进行"，因此这里必须在渲染期把它指到当前实例
+  restorerRef.current = restorer;
 
   const autosave = useMemo(
     () =>

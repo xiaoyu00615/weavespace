@@ -12,7 +12,7 @@
  */
 
 import {
-  resolvePageInstanceId,
+  resolvePageInstance,
   type InstanceLockPort,
   type InstanceStoragePort,
 } from './page-instance.ts';
@@ -34,10 +34,14 @@ export type WorkspaceMode = 'legacy' | 'multi';
 let pageInstanceResolved: Promise<string | null> | null = null;
 
 export function pageInstanceId(): Promise<string | null> {
-  pageInstanceResolved ??= resolvePageInstanceId({
+  pageInstanceResolved ??= resolvePageInstance({
     storage: browserSessionStorage(),
     locks: browserLockPort(),
-  });
+  })
+    // R1.2：没有任何"身份解析"异常值得让一次打开失败。拿不到就是没有身份，
+    // Host 会退回旧语义（不回收、不猜测归属），绝不因此报"无法连接本地服务"。
+    .then((resolved) => resolved.id)
+    .catch(() => null);
   return pageInstanceResolved;
 }
 
@@ -233,6 +237,20 @@ export interface CloseOutcome {
   status: 'APPLIED' | 'REJECTED';
   errorCode?: string | null;
   message?: string;
+}
+
+/**
+ * "回收本页面遗留 View"的结果（UX-02C-02-R1.2）。
+ *
+ * `closed` 是真正被关掉的 View 数；`blocked` 是 Host 明确拒绝关闭的数量
+ * （目前只可能是"最后一个视图且有未保存草稿"）。两者相加才等于命中的 View 数，
+ * 因此 `blocked > 0` 表示**回收没做完**——调用方不得把它当成成功。
+ */
+export interface ReclaimViewsOutcome {
+  status: 'APPLIED' | 'REJECTED';
+  closed: number;
+  blocked: number;
+  errorCode?: string | null;
 }
 
 /**
@@ -469,6 +487,21 @@ export interface WeaveSpaceClient {
   ): Promise<OpenOutcome>;
   saveDocument(sessionId: string, expectedVersion: string, viewId?: string | null): Promise<SaveOutcome>;
   closeDocument(sessionId: string, viewId: string): Promise<CloseOutcome>;
+  /**
+   * 回收**本页面**遗留的 View（UX-02C-02-R1.2）：只关闭、不打开、不读盘。
+   *
+   * 用于"恢复被用户接管"：剩下的待恢复文件不会再被重开，它们的旧 View 只能
+   * 通过这条通道回收，否则会永久拦住该项目的改名/移动。
+   *
+   * `keepViewIds` 是调用方此刻**正在用**的 View（标签持有的那些）：Host 永不关闭
+   * 它们。没有页面身份（`clientInstanceId` 拿不到）时直接跳过——宁可留下旧 View，
+   * 也不能在不知道"这是谁的 View"的情况下去关别人的。
+   */
+  reclaimPageViews(input: {
+    projectId?: string | null;
+    paths: readonly string[];
+    keepViewIds?: readonly string[];
+  }): Promise<ReclaimViewsOutcome>;
   /** 只读查看磁盘当前内容（冲突恢复入口的第一步）。 */
   readDisk(sessionId: string, viewId?: string | null): Promise<
     | { status: 'APPLIED'; content: string; contentVersion: string }
@@ -770,6 +803,39 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         status: body.status === 'APPLIED' ? 'APPLIED' : 'REJECTED',
         errorCode: body.errorCode ?? null,
         message: body.message,
+      };
+    },
+    async reclaimPageViews(input) {
+      // 没有页面身份 → 不知道这些 View 是不是"本页面上轮"的，宁可不回收。
+      const instanceId = await pageInstanceId();
+      if (!instanceId || input.paths.length === 0) {
+        return { status: 'REJECTED', closed: 0, blocked: 0, errorCode: null };
+      }
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return { status: 'REJECTED', closed: 0, blocked: 0, errorCode: 'ERR_PERMISSION_DENIED' };
+      }
+      const { httpStatus, body } = await request(baseUrl, '/api/views/reclaim', {
+        method: 'POST',
+        headers: { 'x-ws-token': token },
+        body: JSON.stringify({
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          clientInstanceId: instanceId,
+          paths: input.paths,
+          ...(input.keepViewIds && input.keepViewIds.length > 0
+            ? { keepViewIds: input.keepViewIds }
+            : {}),
+        }),
+      });
+      const asReclaim = body as { closed?: unknown; blocked?: unknown };
+      const blocked = Array.isArray(asReclaim.blocked) ? asReclaim.blocked.length : 0;
+      return {
+        status: httpStatus === 200 && body.status === 'APPLIED' ? 'APPLIED' : 'REJECTED',
+        closed: typeof asReclaim.closed === 'number' ? asReclaim.closed : 0,
+        blocked,
+        errorCode: body.errorCode ?? null,
       };
     },
     async readDisk(sessionId: string, viewId?: string | null) {
@@ -1377,6 +1443,10 @@ export function createDemoClient(
     },
     async closeDocument() {
       return { status: 'APPLIED' };
+    },
+    // 演示模式没有任何真实 View：回收是空操作，不假装做过什么
+    async reclaimPageViews() {
+      return { status: 'APPLIED' as const, closed: 0, blocked: 0 };
     },
     async readDisk(sessionId: string) {
       const id = sessionId.replace('demo-session:', '');

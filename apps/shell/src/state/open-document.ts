@@ -38,6 +38,18 @@ export interface OpenDocumentDeps {
   dispatch(action: WorkspaceAction): void;
   clientFor(mode: ClientMode): WeaveSpaceClient;
   editEpochs: EditEpochs;
+  /**
+   * 本页面此刻是否处于**启动恢复**中（UX-02C-02-R1.2）。
+   *
+   * 只有这个窗口内的打开才允许回收"本页面上轮遗留的 View"：
+   * - 恢复自己的后台打开：重开同一资源，旧 View 已无人持有；
+   * - 用户接管恢复时的普通打开：它打开的文件本来就在待恢复列表里，旧 View
+   *   同样已经没人关了（被接管后恢复不会再重开它）。
+   *
+   * 窗口之外一律不回收——否则会把当前标签正在用的 View 当成遗留物关掉
+   * （这正是 R1.1 修掉的缺陷）。
+   */
+  isRestoring?(): boolean;
 }
 
 export interface DocumentOpener {
@@ -66,6 +78,16 @@ export interface DocumentOpener {
   reset(): void;
   /** 当前在途打开数（诊断/测试用）。 */
   pendingOpens(): number;
+  /**
+   * 回收**本页面**遗留的 View（UX-02C-02-R1.2）：恢复被接管后，那些再也
+   * 不会被重开的文件只能靠这条通道清理，否则会永久拦住改名/移动。
+   *
+   * 只关闭、不打开、不读盘、不动草稿。与打开共享同一条串行链，因此
+   * 它与"某个正在进行的打开"之间不存在"把刚建好的 View 当成遗留物"的窗口。
+   */
+  reclaimStaleViews(
+    entries: readonly { projectId: string | null; path: string }[],
+  ): Promise<{ closed: number; blocked: number }>;
 }
 
 /** 一次"刷新项目"在文档层面的结果（UI 只据此拼提示，不据此改状态）。 */
@@ -175,6 +197,37 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
   const inFlight = new Map<string, Promise<OpenNodeResult>>();
   /** 正在刷新的文档：连续点击刷新时让位，避免重复建临时 View。 */
   const refreshing = new Set<string>();
+
+  /**
+   * 维护任务的串行链（UX-02C-02-R1.2）。
+   *
+   * 打开与"回收遗留 View"都会改动**这个页面在 Host 里的 View 集合**，两者必须
+   * 彼此有序，否则任何一种顺序都会出错：
+   * - 打开先、回收后：回收必须等这次打开把标签（含新 viewId）登记完，才能正确
+   *   算出"哪些 View 是当前活动"；否则会把刚建好的 View 当遗留物关掉。
+   * - 回收先、打开后：打开必须等回收完成，否则它新建的 View 可能落进在途的
+   *   回收请求里被关掉。
+   */
+  let maintenance: Promise<void> = Promise.resolve();
+  /**
+   * 维护链当前的深度。
+   *
+   * 只有深度 > 0 时打开才需要等待。**平时一次打开不能多出任何一个 await 跳步**：
+   * 调用方常在 `openNode(...)` 之后立刻切模式 / 切项目，打开流程必须在同一个
+   * 同步段里先捕获当时的模式（G2-R1 的既有语义）。
+   */
+  let maintenanceDepth = 0;
+  const enqueueMaintenance = <T>(run: () => Promise<T>): Promise<T> => {
+    maintenanceDepth += 1;
+    const task = maintenance.then(run, run).finally(() => {
+      maintenanceDepth -= 1;
+    });
+    maintenance = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
+  };
 
   const tabOf = (docId: string): DocTab | undefined =>
     deps.getState().tabs.find((tab) => tab.docId === docId);
@@ -374,6 +427,23 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
     return report;
   }
 
+  /**
+   * 本次打开是否允许回收"本页面上轮遗留的 View"。
+   *
+   * 两条来源，语义相同（都是"这些 View 已经没有人会关，而我们现在要重建同一个
+   * 资源的 View"）：
+   * 1. 恢复流程自己重开某个文件 → `reclaimPage` 显式声明；
+   * 2. **恢复期间用户接管**，打开了某个尚未恢复的文件 → 该文件本来就在待恢复
+   *    列表里，被接管后恢复不会再重开它，所以它的旧 View 同样是孤儿（R1.2）。
+   *
+   * 只有在"创建新标签"这条路径上才会命中（已有标签走 ACTIVATE / 临时刷新，
+   * 那里传的永远是 false）：因此本页面此刻不存在这个 docId 的活动 View，
+   * 回收不会误伤自己正在用的 View。
+   */
+  function shouldReclaim(explicit: boolean, isRestoring: boolean): boolean {
+    return explicit || isRestoring;
+  }
+
   async function createTab(
     node: ResourceNodeState,
     docId: string,
@@ -387,15 +457,16 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
     const client = deps.clientFor(mode);
     const before = deps.getState();
     const focus = captureFocus(before);
+    const reclaim = shouldReclaim(reclaimPage, deps.isRestoring?.() === true);
     deps.dispatch({ type: 'NOTICE', message: `正在打开 ${node.name} …` });
 
     let outcome;
     try {
-      // reclaimPage 只在恢复流程为 true：普通打开不得申请回收旧 View
+      // reclaim 只在"页面恢复或接管恢复"时为 true：普通打开不得申请回收旧 View
       outcome = await client.openDocument(
         path,
         projectId ?? undefined,
-        reclaimPage ? { reclaimPrevious: true } : undefined,
+        reclaim ? { reclaimPrevious: true } : undefined,
       );
     } catch {
       deps.dispatch({ type: 'NOTICE', message: `无法打开 ${node.name}：无法连接本地服务` });
@@ -467,6 +538,10 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
 
   return {
     async openNode(node, projectId, options) {
+      // 回收遗留 View 期间不接受新的打开：否则这次打开新建的 View 可能被
+      // 在途的回收请求当成"上轮遗留物"关掉（反向顺序由 enqueueMaintenance 保证）。
+      // 没有维护任务时**不 await**：打开必须在同一个同步段里捕获模式与工作区。
+      if (maintenanceDepth > 0) await maintenance.catch(() => undefined);
       const background = options?.background === true;
       if (node.kind === 'folder') {
         if (projectId) {
@@ -550,6 +625,48 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
 
     pendingOpens() {
       return inFlight.size;
+    },
+
+    async reclaimStaleViews(entries) {
+      if (entries.length === 0) return { closed: 0, blocked: 0 };
+      return await enqueueMaintenance(async () => {
+        // 先把在途打开等干净：它们的标签（含新 viewId）必须已经落在状态里，
+        // 否则 keep 列表不完整，会把用户刚打开的 View 关掉。
+        await Promise.all(
+          [...inFlight.values()].map((task) => task.catch(() => undefined)),
+        );
+        const keep = deps
+          .getState()
+          .tabs.map((tab) => tab.viewId)
+          .filter((viewId): viewId is string => typeof viewId === 'string' && viewId !== '');
+
+        // 按项目分组：Host 的 resourceId 是按 projectId 派生的（Legacy 没有项目）
+        const groups = new Map<string | null, string[]>();
+        for (const entry of entries) {
+          const bucket = groups.get(entry.projectId) ?? [];
+          if (!bucket.includes(entry.path)) bucket.push(entry.path);
+          groups.set(entry.projectId, bucket);
+        }
+
+        const client = deps.clientFor(deps.getMode());
+        let closed = 0;
+        let blocked = 0;
+        for (const [projectId, paths] of groups) {
+          try {
+            const outcome = await client.reclaimPageViews({
+              projectId,
+              paths,
+              keepViewIds: keep,
+            });
+            closed += outcome.closed;
+            blocked += outcome.blocked;
+          } catch {
+            // 回收是"清理遗留"的尽力而为：失败不该影响恢复的结论，
+            // 也不能把"没回收掉"说成成功（blocked 计数就是它的可见形式）。
+          }
+        }
+        return { closed, blocked };
+      });
     },
   };
 }
