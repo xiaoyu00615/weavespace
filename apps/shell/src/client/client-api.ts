@@ -11,49 +11,110 @@
  * `UNKNOWN` 既不是成功也不是失败，不得自动重试。
  */
 
+import {
+  resolvePageInstanceId,
+  type InstanceLockPort,
+  type InstanceStoragePort,
+} from './page-instance.ts';
+
 export type ClientMode = 'demo' | 'live';
-
-/**
- * 本浏览器页面的稳定实例 id（UX-02C-02-R1）。
- *
- * 存在 `sessionStorage` 里：页面刷新后仍是同一个值，新标签页/新窗口则是各自
- * 不同的值。用途只有一个——Host 据此识别"同一页面重开同一资源"，把该页面
- * 上一次留下的 View 释放掉（否则刷新后旧 View 永远无人关闭，改名/移动被永久
- * 拦住）。它**不是授权凭据**：服务端从不据此放行任何操作。
- *
- * 没有 sessionStorage（Node 测试、隐私模式禁用存储）时返回 `null`，请求里就
- * 不带这个字段，行为退回旧语义。
- */
-const CLIENT_INSTANCE_KEY = 'weavespace.clientInstanceId';
-const CLIENT_INSTANCE_SHAPE = /^[A-Za-z0-9._-]{8,64}$/;
-
-export function clientInstanceId(): string | null {
-  try {
-    const storage = (globalThis as { sessionStorage?: Storage }).sessionStorage;
-    if (!storage) return null;
-    const existing = storage.getItem(CLIENT_INSTANCE_KEY);
-    if (existing !== null && CLIENT_INSTANCE_SHAPE.test(existing)) return existing;
-    const created = createInstanceId();
-    storage.setItem(CLIENT_INSTANCE_KEY, created);
-    return created;
-  } catch {
-    // 存储被禁用/超限：不生成"每次请求都不同"的假 id（那会让旧 View 永远留不下线索）
-    return null;
-  }
-}
-
-function createInstanceId(): string {
-  // 用结构化类型而不是 DOM 的 `Crypto`：Node 侧（测试）也能安全求值
-  const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
-  // 退化路径：时间戳 + 随机数，仅用于极老环境；形状仍需通过服务端校验
-  return `ws-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
 
 /** 服务端运行模式（G2-03）：不得假定连接的一定是 Multi。 */
 export type WorkspaceMode = 'legacy' | 'multi';
 
-/** 项目摘要：与服务端 `ProjectSummary` 同构，**不含任何本机路径**。 */
+/**
+ * 本浏览器页面的稳定实例 id（UX-02C-02-R1 / R1.1）。
+ *
+ * 具体规则见 `page-instance.ts`：sessionStorage 保存候选 id，Web Locks 负责
+ * 发现"另一个活着的页面用了同一个 id"（opener 复制、Chrome 复制标签页）。
+ * 只解析一次并缓存：同一次页面生命里所有请求用同一个 id。
+ *
+ * **不是授权凭据**：服务端从不凭它放行任何操作。
+ */
+let pageInstanceResolved: Promise<string | null> | null = null;
+
+export function pageInstanceId(): Promise<string | null> {
+  pageInstanceResolved ??= resolvePageInstanceId({
+    storage: browserSessionStorage(),
+    locks: browserLockPort(),
+  });
+  return pageInstanceResolved;
+}
+
+/** 仅测试用：清除缓存，让下一次调用重新解析（不用于生产路径）。 */
+export function resetPageInstanceCache(): void {
+  pageInstanceResolved = null;
+}
+
+/**
+ * 仅测试用：固定页面实例 id。
+ *
+ * Node 集成测试里没有 sessionStorage / Web Locks，不注入就只能得到 `null`
+ * （等于"旧客户端"），无法覆盖页面恢复与回收路径。
+ */
+export function setPageInstanceForTest(id: string | null): void {
+  pageInstanceResolved = Promise.resolve(id);
+}
+
+function browserSessionStorage(): InstanceStoragePort | null {
+  try {
+    const storage = (globalThis as { sessionStorage?: Storage }).sessionStorage;
+    return storage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Web Locks 适配：拿到锁后返回一个**永不 resolve** 的 Promise 把它持有到页面销毁；
+ * 拿不到（别的页面在用）返回 false。
+ */
+function browserLockPort(): InstanceLockPort | null {
+  const nav = (globalThis as {
+    navigator?: {
+      locks?: {
+        request?: (
+          name: string,
+          options: { ifAvailable: boolean },
+          callback: (lock: unknown) => Promise<void> | void,
+        ) => Promise<void>;
+      };
+    };
+  }).navigator;
+  const locks = nav?.locks;
+  if (!locks || typeof locks.request !== 'function') return null;
+  // 绑定 this：Web IDL 方法脱离对象调用会 rejected（Illegal invocation）
+  const request = locks.request.bind(locks);
+  return {
+    tryAcquire(name: string): Promise<boolean> {
+      return new Promise<boolean>((resolve) => {
+        let settled = false;
+        const settle = (value: boolean): void => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        try {
+          // `request` 已在上面 bind(this)：Web IDL 方法脱离 this 会 rejected，
+          // 那样每次都会误判成"锁被占用"，身份退化成 null。
+          void request(name, { ifAvailable: true }, (lock) => {
+              if (!lock) {
+                settle(false);
+                return undefined;
+              }
+              settle(true);
+              // 持有到页面销毁：锁随上下文释放，刷新时新页面才能重新拿到同一把
+              return new Promise<void>(() => {});
+            })
+            .catch(() => settle(false));
+        } catch {
+          settle(false);
+        }
+      });
+    },
+  };
+}
+
 export interface ProjectSummary {
   projectId: string;
   name: string;
@@ -386,7 +447,19 @@ export interface WeaveSpaceClient {
     /** 本轮分页的目录快照（仅续页传入，第一页为 null）。 */
     snapshot?: string | null,
   ): Promise<TreeQueryOutcome>;
-  openDocument(path: string, projectId?: string): Promise<OpenOutcome>;
+  /**
+   * 打开（或重新打开）一个文档。
+   *
+   * `options.reclaimPrevious`（UX-02C-02-R1.1）只有**页面恢复**流程才允许传
+   * `true`：它表示"本页面上一轮的 View 已经没有人会关闭，请 Host 回收"。
+   * 普通打开与 `refreshCleanTab` 这类临时打开绝不传，否则会把当前标签正在用的
+   * View 当成遗留物关掉。
+   */
+  openDocument(
+    path: string,
+    projectId?: string,
+    options?: { reclaimPrevious?: boolean },
+  ): Promise<OpenOutcome>;
   readDocument(sessionId: string, viewId?: string | null): Promise<OpenOutcome>;
   applyEdit(
     sessionId: string,
@@ -615,16 +688,19 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         },
       };
     },
-    async openDocument(path: string, projectId?: string) {
-      // 页面实例 id（R1）：让 Host 能在"同页刷新后重开同一资源"时释放旧 View。
-      // 取不到（无 sessionStorage）就不带该字段，服务端保持旧语义。
-      const instanceId = clientInstanceId();
+    async openDocument(path: string, projectId?: string, options?: { reclaimPrevious?: boolean }) {
+      // 页面实例 id：只用于归属识别（Host 不会据此放行任何操作）。
+      // 解析失败（无 sessionStorage / 抢不到锁）就不带该字段，服务端退回旧语义。
+      const instanceId = await pageInstanceId();
+      const reclaim = options?.reclaimPrevious === true && instanceId !== null;
       const { body } = await request(baseUrl, '/api/open', {
         method: 'POST',
         body: JSON.stringify({
           ...(projectId ? { projectId } : {}),
           path,
           ...(instanceId ? { clientInstanceId: instanceId } : {}),
+          // 只有页面恢复才申请回收：普通打开 / 临时打开一律不提这个要求
+          ...(reclaim ? { reclaimPrevious: true } : {}),
         }),
       });
       return {

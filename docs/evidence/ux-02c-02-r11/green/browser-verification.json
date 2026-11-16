@@ -1,0 +1,36 @@
+{
+  "run": "green",
+  "steps": {
+    "pageAFirstOpen": {
+      "clientInstanceId": "3e533173-b1c8-43cd-b56f-3fa869e9f55b",
+      "viewId": "view-1",
+      "sessionId": "session-1"
+    },
+    "pageAReload": {
+      "clientInstanceId": "3e533173-b1c8-43cd-b56f-3fa869e9f55b",
+      "viewId": "view-2"
+    },
+    "oldViewAfterReload": 403,
+    "popupOpened": false,
+    "popupTargetFound": false,
+    "pageBOpen": {
+      "clientInstanceId": "bcc2b4c5-0400-454f-98f1-2c6d9c3cf674",
+      "viewId": "view-3",
+      "sessionId": "session-1"
+    },
+    "aViewAfterBOpened": 200,
+    "pageBAfterReload": {
+      "clientInstanceId": "bcc2b4c5-0400-454f-98f1-2c6d9c3cf674"
+    },
+    "aViewAfterBReload": 200
+  },
+  "checks": {
+    "刷新同一页面 id 不变": true,
+    "刷新后旧 View 被回收": true,
+    "复制页面拿到独立 id": true,
+    "B 打开同一文件不影响 A 的 View": true,
+    "刷新 B 后 B 的 id 不变": true,
+    "刷新 B 不影响 A 的 View": true
+  },
+  "ok": true
+}

@@ -31,6 +31,7 @@ import {
   stat,
   unlink,
   writeFile,
+  type FileHandle,
 } from 'node:fs/promises';
 import { basename, dirname, join, normalize, resolve as resolvePath } from 'node:path';
 import type { ErrorCode } from '../contracts/errors.ts';
@@ -123,6 +124,13 @@ export interface StorageFaultHooks {
    * 以 ERR_ENTRY_EXISTS 拒绝且外部对象不被覆盖。仅测试注入。
    */
   beforeMoveReserve?: () => void;
+  /**
+   * 排他占位**建立之后**、记录身份 / 关闭句柄之前调用（UX-02C-02-R1.1）。
+   *
+   * 用来确定性验证"占位已存在但拿不到身份 / 关不掉句柄"必须收敛为 UNKNOWN：
+   * 此时磁盘已经有本次操作的副作用，绝不能返回一个"什么都没发生"的普通拒绝。
+   */
+  reserveFault?: (stage: 'beforeStat' | 'beforeClose') => void;
   /**
    * 排他占位**已建立并记录文件身份**、`rename` 尚未执行时调用（UX-02C-02-R1）。
    *
@@ -1144,19 +1152,41 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       if (!isCaseOnly) {
         // 仅测试注入：模拟"目标存在性检查之后、占位之前外部创建了同名对象"
         faults.beforeMoveReserve?.();
+        let handle: FileHandle;
         try {
-          const handle = await open(targetAbs, 'wx');
-          reserved = true;
-          try {
-            // 立刻记下真实对象身份（dev+ino）：后续一切归属判断都以它为准，
-            // 不再使用 isFile()+size===0 这种外部可伪造的外观特征
-            reservedIdentity = identityOfStats(await handle.stat());
-          } finally {
-            await handle.close();
-          }
+          handle = await open(targetAbs, 'wx');
         } catch (err) {
           if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
           return reject(moveErrorOf(err, sourceIsDir));
+        }
+        reserved = true;
+        /**
+         * 从这里开始磁盘上已经有本次操作的副作用（那个 0 字节占位）。
+         * 之后任何"拿不准"都必须 UNKNOWN——绝不能用普通 REJECTED 谎称
+         * "什么都没发生"，也不能盲目删除（可能是外部对象）。
+         */
+        try {
+          faults.reserveFault?.('beforeStat');
+          // 记下真实对象身份（dev+ino）：后续一切归属判断都以它为准，
+          // 不再使用 isFile()+size===0 这种外部可伪造的外观特征
+          reservedIdentity = identityOfStats(await handle.stat());
+        } catch {
+          await handle.close().catch(() => undefined);
+          return unknown();
+        }
+        try {
+          faults.reserveFault?.('beforeClose');
+          await handle.close();
+        } catch {
+          /**
+           * 句柄关不上：实测 Windows 上「保持句柄打开」会让随后的 rename 报
+           * EPERM，而且此刻我们既不能确认磁盘、也不能安全清理 → fail-closed。
+           *
+           * 这就是"不采用『保持句柄直到 rename 完成』方案"的直接原因（评估结论
+           * 见 docs/evidence/ux-02c-02-r11/notes.md）：Windows 无法在持有句柄的
+           * 同时把自己这份占位 rename 覆盖掉。
+           */
+          return unknown();
         }
         // 仅测试注入：模拟"占位建立之后被外部删除并替换成同名文件"
         faults.afterMoveReserve?.();

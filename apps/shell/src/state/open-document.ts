@@ -84,6 +84,14 @@ export interface OpenTabsRefreshReport {
 export interface OpenNodeOptions {
   /** true：只登记标签（后台），不激活、不刷新既有标签。 */
   background?: boolean;
+  /**
+   * true：这是**页面恢复**（刷新/重开后重建标签），允许 Host 回收本页面上一轮
+   * 遗留的 View（UX-02C-02-R1.1）。
+   *
+   * 只有恢复流程会传；普通点击、`refreshCleanTab` 的临时打开一律不传——
+   * 它们必须保留当前标签正在使用的 View。
+   */
+  reclaimPage?: boolean;
 }
 
 /** 打开结果：恢复流程需要"成功了没有、是哪个 docId"，普通调用方可以忽略。 */
@@ -373,6 +381,8 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
     path: string,
     mode: ClientMode,
     background: boolean,
+    /** true 仅表示"这是页面恢复"，允许 Host 回收本页上一轮旧 View。 */
+    reclaimPage: boolean,
   ): Promise<OpenNodeResult> {
     const client = deps.clientFor(mode);
     const before = deps.getState();
@@ -381,7 +391,12 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
 
     let outcome;
     try {
-      outcome = await client.openDocument(path, projectId ?? undefined);
+      // reclaimPage 只在恢复流程为 true：普通打开不得申请回收旧 View
+      outcome = await client.openDocument(
+        path,
+        projectId ?? undefined,
+        reclaimPage ? { reclaimPrevious: true } : undefined,
+      );
     } catch {
       deps.dispatch({ type: 'NOTICE', message: `无法打开 ${node.name}：无法连接本地服务` });
       return { ok: false, docId, errorCode: 'ERR_STORAGE_IO' };
@@ -502,7 +517,15 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
           : { ok: false, docId, errorCode: 'ERR_DOCUMENT_NOT_FOUND' };
       }
 
-      const task = createTab(node, docId, targetProject, path, mode, background).finally(() => {
+      const task = createTab(
+        node,
+        docId,
+        targetProject,
+        path,
+        mode,
+        background,
+        options?.reclaimPage === true,
+      ).finally(() => {
         if (inFlight.get(key) === task) inFlight.delete(key);
       });
       inFlight.set(key, task);

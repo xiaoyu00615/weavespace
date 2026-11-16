@@ -134,6 +134,19 @@ export const TRUSTED_GRANT_SOURCE = 'os-dialog';
 /** 允许落盘的授权来源；其余一律视为非法配置（不进入可信集合）。 */
 const KNOWN_GRANT_SOURCES: readonly string[] = [TRUSTED_GRANT_SOURCE, 'unspecified'];
 
+/**
+ * 结构变更能力凭据（UX-02C-02-R1.1）。
+ *
+ * 由 `withStructureChange` 在进入屏障时创建、只交给本次回调；`withStructureDiskOp`
+ * 用**对象身份 + 私有 token** 双重校验。普通调用方即使知道 projectId，也拿不到
+ * 这个对象，因此进不了专用通道。
+ */
+export interface StructureChangeCapability {
+  readonly projectId: string;
+  /** 私有 token：外部无法伪造一个"看起来一样"的能力对象。 */
+  readonly token: symbol;
+}
+
 export interface ProjectRuntimeDeps {
   actorId: string;
   document: DocumentService;
@@ -230,14 +243,18 @@ export interface ProjectRuntime {
    */
   withDiskOp<T>(projectId: string, fn: () => Promise<T> | T): Promise<T>;
   /**
-   * 结构变更**专用**磁盘通道（UX-02C-02-R1）：只在 `withStructureChange` 持有
-   * 屏障期间可用，因此不会被普通调用方借道绕过屏障。
+   * 结构变更**专用**磁盘通道（UX-02C-02-R1.1）。
+   *
+   * 只接受 `withStructureChange` 交出的能力凭据：仅凭 projectId 或
+   * "屏障正忙"这一事实都不够——那等于给任何知道 id 的调用方开一条旁路。
    *
    * 仍然执行全部既有门禁（全局磁盘信任 / 项目生命周期 / REVOKE_UNKNOWN /
-   * QUIESCING / 根身份），并正常增减 `activeOps`——它不是"后门"，只是把
-   * "结构变更自己的那一次磁盘操作"与"其它新操作"区分开。
+   * QUIESCING / 根身份），并正常增减 `activeOps`。
    */
-  withStructureDiskOp<T>(projectId: string, fn: () => Promise<T> | T): Promise<T>;
+  withStructureDiskOp<T>(
+    capability: StructureChangeCapability,
+    fn: () => Promise<T> | T,
+  ): Promise<T>;
   /**
    * 结构变更屏障（UX-02C-02）：改名/移动期间短暂独占该项目的**准入**。
    *
@@ -246,7 +263,10 @@ export interface ProjectRuntime {
    * 在途 G-DISK 操作。这样"检查无活动会话"与"执行磁盘变更"之间，新的 open /
    * save / create 无法插进来；已在途的磁盘操作由 `waitForZeroOps` 排空。
    */
-  withStructureChange<T>(projectId: string, fn: () => Promise<T> | T): Promise<T>;
+  withStructureChange<T>(
+    projectId: string,
+    fn: (capability: StructureChangeCapability) => Promise<T> | T,
+  ): Promise<T>;
   /** 项目是否仍可继续创建 View（供 open 的晚到校验）。 */
   isAcceptingViews(projectId: string): boolean;
   providerOf(providerId: string): StorageProvider | undefined;
@@ -440,6 +460,11 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
    * 增加一条拒绝条件，配合 `waitForZeroOps` 排空已在途的磁盘操作。
    */
   const structureBusy = new Set<string>();
+  /**
+   * 当前有效的能力凭据（每个项目最多一个，随屏障创建与销毁）。
+   * `withStructureDiskOp` 用对象身份比对：伪造对象/过期对象一律拒绝。
+   */
+  const structureCapabilities = new Map<string, StructureChangeCapability>();
 
   // ---- 在途磁盘操作计数（屏障的 drain 对象）----
   const activeOps = new Map<string, number>();
@@ -862,11 +887,25 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
      * 全局磁盘信任 → 项目生命周期（REVOKE_UNKNOWN / QUIESCING / REMOVING /
      * ACTIVE+handle）→ 根身份刷新 → `activeOps` 计数。
      */
-    async withStructureDiskOp(projectId, fn) {
-      if (!structureBusy.has(projectId)) {
+    async withStructureDiskOp(capability, fn) {
+      const projectId = capability.projectId;
+      /**
+       * 凭据校验三条缺一不可：
+       * 1) 形状：projectId 非空、token 是 symbol（挡住构造出来的伪对象）；
+       * 2) 当前性：正是本项目此刻登记在案的那一张（挡住过期/复制的凭据）；
+       * 3) 一致性：token 也相同（双保险，防止有人复用对象引用做手脚）。
+       */
+      const current =
+        typeof capability?.projectId === 'string' ? structureCapabilities.get(capability.projectId) : undefined;
+      if (
+        !current ||
+        current !== capability ||
+        current.token !== capability.token ||
+        !structureBusy.has(projectId)
+      ) {
         throw domainError(
           ERROR_CODES.ERR_PROJECT_BUSY,
-          '结构变更通道只能在结构变更屏障持有期间使用',
+          '结构变更凭据无效或已失效：只有当前结构变更回调持有的凭据可以使用该通道',
         );
       }
       assertGlobalDiskTrust();
@@ -907,12 +946,22 @@ export function createProjectRuntime(deps: ProjectRuntimeDeps): ProjectRuntime {
       }
       if (entry.state !== 'ACTIVE' || !entry.handle) throw unavailableError(projectId, entry.reason);
       structureBusy.add(projectId);
+      // 能力凭据只在这段窗口内有效：退出屏障即吊销（下面的 finally 负责）
+      const capability: StructureChangeCapability = {
+        projectId,
+        token: Symbol(`structure-change:${projectId}`),
+      };
+      structureCapabilities.set(projectId, capability);
       try {
         // 排空在途 G-DISK 操作；超时由 waitForZeroOps 抛 ERR_PROJECT_BUSY，
         // 此时还没有任何磁盘副作用，可安全重试。
         await waitForZeroOps(projectId);
-        return await fn();
+        return await fn(capability);
       } finally {
+        // 只吊销自己那张（防止嵌套/重入时误删别人的凭据）
+        if (structureCapabilities.get(projectId) === capability) {
+          structureCapabilities.delete(projectId);
+        }
         structureBusy.delete(projectId);
       }
     },

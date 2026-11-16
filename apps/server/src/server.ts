@@ -59,6 +59,7 @@ import {
   parseCreateEntryBody,
   type CreateEntryKind,
 } from './create-entry.ts';
+import type { StructureChangeCapability } from './project-runtime.ts';
 import {
   parseStructureBody,
   runManagedStructureChange,
@@ -538,6 +539,22 @@ interface ViewRecord {
  * 校验页面实例 id（UX-02C-02-R1）。只约束形状，不做任何授权语义：
  * 长度与字符集限得很死，避免把它当成任意负载塞进 Host 内存。
  */
+/**
+ * 是否申请回收本页面遗留的旧 View（UX-02C-02-R1.1）。
+ *
+ * **只有页面恢复流程**才会传 `true`（刷新后重建标签）。普通打开、临时打开
+ * （例如 refreshCleanTab 用 open 核对磁盘）一律不传——把"每一次同页 open"
+ * 都当成恢复，就会把当前标签正在使用的 View 关掉。
+ */
+function parseReclaimPrevious(body: Record<string, unknown>): boolean {
+  const raw = body.reclaimPrevious;
+  if (raw === undefined || raw === null) return false;
+  if (typeof raw !== 'boolean') {
+    throw new HttpError(400, 'ERR_COMMAND_INVALID', 'reclaimPrevious 必须是布尔值');
+  }
+  return raw;
+}
+
 function parseClientInstanceId(body: Record<string, unknown>): string | null {
   const raw = body.clientInstanceId;
   if (raw === undefined || raw === null) return null;
@@ -1558,9 +1575,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           actorId,
           sessionsUnder: (projectId, prefix) => document.sessionsUnder(projectId, prefix),
           // 屏障持有期间普通 withDiskOp 已被拒，结构变更自己的磁盘操作走专用通道
-          withStructureDiskOp: <T,>(fn: () => Promise<T>) =>
-            runtime.withStructureDiskOp(request.projectId, fn),
-          withStructureChange: <T,>(fn: () => Promise<T>) =>
+          withStructureDiskOp: <T,>(capability: StructureChangeCapability, fn: () => Promise<T>) =>
+            runtime.withStructureDiskOp(capability, fn),
+          withStructureChange: <T,>(fn: (capability: StructureChangeCapability) => Promise<T>) =>
             runtime.withStructureChange(request.projectId, fn),
         });
         const targetPath = request.targetParentDir === ''
@@ -1836,6 +1853,8 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         }
         // UX-02C-02-R1：页面归属标识（非授权凭据）。形状不合法在零 IO 前拒绝。
         const clientInstanceId = parseClientInstanceId(body);
+        // R1.1：回收旧 View 必须由恢复流程显式申请，且必须有页面身份
+        const reclaimPrevious = parseReclaimPrevious(body) && clientInstanceId !== null;
 
         // resourceId / providerId 一律由服务端派生（G1-04），客户端只能断言不能指定
         let resourceId: string;
@@ -1920,10 +1939,12 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         /**
          * 同一页面重开同一资源：释放该页面此前遗留的旧 View（UX-02C-02-R1）。
          *
-         * 场景：页面刷新后 sessionStorage 里的 clientInstanceId 不变，客户端会
-         * 重新 /api/open 同一文件；旧 View 的持有者（旧页面上下文）已经消失，
-         * 永远不会自己关闭，若不清理就会让该项目永远"有活动 View"，改名/移动
-         * 被永久拦住。
+         * 场景：页面刷新后页面实例 id 不变，恢复流程重新 /api/open 同一文件；
+         * 旧 View 的持有者（旧页面上下文）已经消失，永远不会自己关闭，若不清理
+         * 就会让该项目永远"有活动 View"，改名/移动被永久拦住。
+         *
+         * **只有 reclaimPrevious=true 才执行**（R1.1）：普通打开与临时打开
+         * （refreshCleanTab 核对磁盘）必须保留当前标签自己的 View。
          *
          * 边界（按契约逐条）：
          * - 只处理**同一个 clientInstanceId + 同一个 resourceId**；
@@ -1933,10 +1954,13 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
          *   不伪造成功；脏草稿因此不会被静默丢弃。
          * - 关闭过程不触碰磁盘，也不改变会话缓冲。
          */
-        if (clientInstanceId) {
+        if (reclaimPrevious && clientInstanceId) {
           for (const [oldViewId, record] of [...views]) {
             if (oldViewId === handle.viewId) continue;
+            // 归属四连核对：同一页面实例 + 同一 actor + 同一会话 + 同一资源，
+            // 缺一不回收。其它页面、其它文件一律不动。
             if (record.clientInstanceId !== clientInstanceId) continue;
+            if (record.actorId !== actorId) continue;
             if (record.sessionId !== handle.sessionId) continue;
             if (record.resourceId !== identity.resourceId) continue;
             const closed = await document.closeView(oldViewId).catch(() => ({ closed: false }));

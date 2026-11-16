@@ -637,8 +637,10 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         store,
         gate,
         connectLive: connectWorkspace,
+        // 恢复流程是唯一允许回收"本页面上一轮旧 View"的入口（UX-02C-02-R1.1）：
+        // 普通点击与 refreshCleanTab 的临时打开都不得申请回收。
         openInBackground: (node, projectId) =>
-          opener.openNode(node, projectId, { background: true }),
+          opener.openNode(node, projectId, { background: true, reclaimPage: true }),
         // 终态后再排一次写入：此时标签已经全部登记完，写下去的是完整状态（AS-04）
         onSettled: () => autosaveRef.current?.schedule(),
       }),

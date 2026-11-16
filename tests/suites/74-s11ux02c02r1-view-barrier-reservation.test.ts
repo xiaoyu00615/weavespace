@@ -87,8 +87,13 @@ interface Ctx {
   token: string;
   api(path: string, init?: RequestInit): Promise<ApiResponse>;
   post(path: string, body: unknown): Promise<ApiResponse>;
-  /** 携带页面实例 id 的 open（R1 新增字段）。 */
-  open(projectId: string, path: string, clientInstanceId?: string): Promise<ApiResponse>;
+  /** 携带页面实例 id 的 open；`reclaim` 表示"这是页面恢复，允许回收本页旧 View"。 */
+  open(
+    projectId: string,
+    path: string,
+    clientInstanceId?: string,
+    opts?: { reclaim?: boolean },
+  ): Promise<ApiResponse>;
   document(sessionId: string, viewId?: string): Promise<ApiResponse>;
   edit(sessionId: string, viewId: string, buffer: string): Promise<ApiResponse>;
   close(sessionId: string, viewId: string): Promise<ApiResponse>;
@@ -181,11 +186,12 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>, options: HarnessOptions
     token,
     api,
     post,
-    open: (projectId, path, clientInstanceId) =>
+    open: (projectId, path, clientInstanceId, opts) =>
       post('/api/open', {
         projectId,
         path,
         ...(clientInstanceId ? { clientInstanceId } : {}),
+        ...(opts?.reclaim ? { reclaimPrevious: true } : {}),
       }),
     document: (sessionId, viewId) =>
       api(
@@ -218,8 +224,8 @@ test('A-01 同一页面重开同一文件：新 View 登记后旧 View 被释放
     const { viewId: viewId1, sessionId } = first.body.document as { viewId: string; sessionId: string };
     assert.equal((await h.document(sessionId, viewId1)).status, 200, '旧 View 打开时有效');
 
-    // 模拟页面刷新后重新打开：同一个 clientInstanceId
-    const second = await h.open(PROJ_A, 'docs/notes.md', 'page-instance-a');
+    // 模拟页面刷新后的**恢复**：同一个 clientInstanceId + 显式申请回收
+    const second = await h.open(PROJ_A, 'docs/notes.md', 'page-instance-a', { reclaim: true });
     assert.equal(second.status, 200, JSON.stringify(second.body));
     const viewId2 = second.body.document.viewId as string;
     assert.notEqual(viewId2, viewId1, '必须建立新 View');
@@ -255,8 +261,8 @@ test('A-02 不同页面的 View 互不影响：重开一页不得关闭另一页
     const sessionId = pageA.body.document.sessionId as string;
     const viewB = pageB.body.document.viewId as string;
 
-    // A 页重开：只处理 A 页的旧 View
-    const reopened = await h.open(PROJ_A, 'docs/notes.md', 'page-instance-a');
+    // A 页恢复（带 reclaim）：只处理 A 页的旧 View
+    const reopened = await h.open(PROJ_A, 'docs/notes.md', 'page-instance-a', { reclaim: true });
     assert.equal(reopened.status, 200);
     assert.equal((await h.document(sessionId, viewB)).status, 200, 'B 页 View 不得被关闭');
 
@@ -284,7 +290,7 @@ test('A-03 DIRTY 草稿在重新打开后正文不丢失，且仍然拦住结构
     const edited = await h.edit(sessionId, viewId, 'DIRTY-CONTENT\n');
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
 
-    const second = await h.open(PROJ_A, 'docs/notes.md', 'page-instance-a');
+    const second = await h.open(PROJ_A, 'docs/notes.md', 'page-instance-a', { reclaim: true });
     assert.equal(second.status, 200);
     const viewId2 = second.body.document.viewId as string;
     const read = await h.document(sessionId, viewId2);
@@ -301,9 +307,44 @@ test('A-03 DIRTY 草稿在重新打开后正文不丢失，且仍然拦住结构
   });
 });
 
+/**
+ * R1-01 核心：普通打开（refreshCleanTab 的临时 open 也走这条路）**不得**回收
+ * 当前标签的 View。基线缺陷是同页 open 一律当恢复，导致临时 View 被释放后
+ * 原标签持有的 view-1 已被 Host 关掉，后续编辑/保存/关闭全部失败。
+ */
+test('A-01b 普通同页打开不回收当前标签的 View（临时 View 释放后 view-1 仍可用）', async () => {
+  await withHost(async (h) => {
+    const first = await h.open(PROJ_A, 'docs/notes.md', 'page-instance-a');
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    const { viewId: view1, sessionId } = first.body.document as { viewId: string; sessionId: string };
+
+    // 不带 reclaim 的同页 open（= refreshCleanTab 的临时读取）
+    const temp = await h.open(PROJ_A, 'docs/notes.md', 'page-instance-a');
+    assert.equal(temp.status, 200, JSON.stringify(temp.body));
+    const tempView = temp.body.document.viewId as string;
+    assert.notEqual(tempView, view1);
+
+    // 临时 View 被释放（refreshCleanTab 的 finally）
+    assert.equal((await h.close(sessionId, tempView)).status, 200);
+
+    // 原标签的 view-1 必须仍然有效：读、编辑、保存、关闭全部成功
+    assert.equal((await h.document(sessionId, view1)).status, 200, 'view-1 不得被临时打开顺带关闭');
+    const edited = await h.edit(sessionId, view1, 'EDITED-BY-VIEW-1\n');
+    assert.equal(edited.status, 200, JSON.stringify(edited.body));
+    // 保存必须带期望版本（写命令的硬性要求）
+    const saved = await h.post('/api/save', {
+      sessionId,
+      viewId: view1,
+      expectedVersion: edited.body.document.baseVersion,
+    });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.equal((await h.close(sessionId, view1)).status, 200);
+  });
+});
+
 /* ------------------------------ B. 结构变更屏障 ------------------------------ */
 
-test('B-01 屏障期间普通磁盘通道被拒，结构变更通道可用，排空后结构变更完成', async () => {
+test('B-01 屏障期间普通磁盘通道被拒，伪造凭据进不了专用通道，排空后结构变更完成', async () => {
   await withHost(async (h) => {
     let release!: () => void;
     const hold = new Promise<void>((resolve) => {
@@ -344,11 +385,18 @@ test('B-01 屏障期间普通磁盘通道被拒，结构变更通道可用，排
     assert.equal(tree.status, 409, JSON.stringify(tree.body));
     assert.equal(tree.body.errorCode, 'ERR_PROJECT_BUSY');
 
-    // 4) 结构变更专用通道在屏障内可以执行（并正确计数后释放）
-    assert.equal(
-      await h.runtime.withStructureDiskOp(PROJ_A, async () => 'inner'),
-      'inner',
-      'withStructureDiskOp 在屏障持有期间必须可用',
+    // 4) 只知道 projectId 的调用方仍然进不了专用通道：伪造凭据必须被拒
+    //    （R1-03：不再仅凭 structureBusy 布尔值授权）
+    await assert.rejects(
+      () => h.runtime.withStructureDiskOp({ projectId: PROJ_A, token: Symbol('forged') }, async () => 'nope'),
+      (err: unknown) => (err as { errorCode?: string }).errorCode === 'ERR_PROJECT_BUSY',
+      '伪造的能力凭据必须被拒绝',
+    );
+    await assert.rejects(
+      // @ts-expect-error 故意用错形状：只给 projectId 字符串
+      () => h.runtime.withStructureDiskOp(PROJ_A, async () => 'nope'),
+      (err: unknown) => (err as { errorCode?: string }).errorCode === 'ERR_PROJECT_BUSY',
+      '只传 projectId 不能进入专用通道',
     );
 
     // 5) 旧操作结束后结构变更正常完成
@@ -361,17 +409,119 @@ test('B-01 屏障期间普通磁盘通道被拒，结构变更通道可用，排
   });
 });
 
-test('B-02 屏障外使用结构变更通道必须被拒', async () => {
+test('B-02 真实凭据只在屏障回调内有效，离开屏障后立即失效', async () => {
   await withHost(async (h) => {
+    let captured: { projectId: string; token: symbol } | null = null;
+    h.runtime;
+    const result = await h.runtime.withStructureChange(PROJ_A, async (capability) => {
+      captured = { projectId: capability.projectId, token: capability.token };
+      // 屏障内、凭据有效：专用通道可用（并正确增减 activeOps）
+      const inner = await h.runtime.withStructureDiskOp(capability, async () => 'inner');
+      // 同一个项目的伪造凭据无效
+      await assert.rejects(
+        () => h.runtime.withStructureDiskOp({ projectId: PROJ_A, token: capability.token }, async () => 'x'),
+        (err: unknown) => (err as { errorCode?: string }).errorCode === 'ERR_PROJECT_BUSY',
+        '对象身份不同即无效（token 相同也不行）',
+      );
+      return inner;
+    });
+    assert.equal(result, 'inner');
+    assert.ok(captured, '屏障回调必须拿到凭据');
+
+    // 屏障已退出：凭据必须立刻失效
     await assert.rejects(
-      () => h.runtime.withStructureDiskOp(PROJ_A, async () => 'nope'),
+      () => h.runtime.withStructureDiskOp(captured!, async () => 'after'),
       (err: unknown) => (err as { errorCode?: string }).errorCode === 'ERR_PROJECT_BUSY',
-      '没有屏障就不能用结构变更通道绕过 G-DISK',
+      '过期凭据必须被拒绝',
     );
+    // 普通磁盘通道在屏障外照常可用（没有被凭据机制误伤）
+    assert.equal(await h.runtime.withDiskOp(PROJ_A, async () => 'plain'), 'plain');
   });
 });
 
 /* ------------------------------ C. 排他占位归属 ------------------------------ */
+/* --------------------------- C-02 / C-03 占位失败收敛 --------------------------- */
+
+/** 占位已建立但拿不到身份：磁盘已有副作用，必须 UNKNOWN（不得普通 REJECTED）。 */
+test('C-02 handle.stat 失败（占位已建立）→ UNKNOWN，源文件不动', async () => {
+  await withHost(
+    async (h) => {
+      const res = await h.move({
+        projectId: PROJ_A,
+        sourcePath: 'docs/notes.md',
+        targetParentDir: 'archive',
+        name: 'stat-failed.md',
+      });
+      assert.equal(res.status, 202, JSON.stringify(res.body));
+      assert.equal(res.body.status, 'UNKNOWN');
+      // 绝不谎报"什么都没发生"：源仍在（没有移动），但结果状态是未确认
+      assert.equal(existsSync(join(h.rootA, 'docs', 'notes.md')), true);
+      assert.equal(await readFile(join(h.rootA, 'docs', 'notes.md'), 'utf8'), 'NOTES-CONTENT\n');
+    },
+    {
+      faults: {
+        reserveFault: (stage) => {
+          if (stage === 'beforeStat') throw new Error('stat 失败（测试注入）');
+        },
+      },
+    },
+  );
+});
+
+test('C-03 handle.close 失败（占位已建立）→ UNKNOWN', async () => {
+  await withHost(
+    async (h) => {
+      const res = await h.rename({
+        projectId: PROJ_A,
+        sourcePath: 'docs/notes.md',
+        name: 'close-failed.md',
+      });
+      assert.equal(res.status, 202, JSON.stringify(res.body));
+      assert.equal(res.body.status, 'UNKNOWN');
+      assert.equal(existsSync(join(h.rootA, 'docs', 'notes.md')), true);
+    },
+    {
+      faults: {
+        reserveFault: (stage) => {
+          if (stage === 'beforeClose') throw new Error('close 失败（测试注入）');
+        },
+      },
+    },
+  );
+});
+
+/**
+ * POSIX 行为确认（Windows 上跳过，如实标注）：
+ * 删除后用同名重新创建会得到新的 ino，因此 `dev+ino` 足以区分"我的占位"与
+ * "外部新建的同名文件"。
+ */
+test(
+  'C-04 POSIX：删除并重建同名文件后 ino 改变，身份可判别',
+  { skip: process.platform === 'win32' ? '仅在 POSIX 上验证 ino 语义' : false },
+  async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-posix-ident-'));
+    try {
+      const file = path.join(dir, 'x.md');
+      await fs.writeFile(file, '');
+      const first = await fs.lstat(file);
+      await fs.unlink(file);
+      await fs.writeFile(file, '');
+      const second = await fs.lstat(file);
+      assert.notEqual(
+        `${first.dev}:${first.ino}`,
+        `${second.dev}:${second.ino}`,
+        '重建同名文件必须得到不同的 dev+ino',
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+
 
 test('C-01 占位被外部换成 0 字节文件：拒绝覆盖、外部文件保留、源文件仍在', async () => {
   /** 占位目标的绝对路径：钩子只在 rename 请求期间触发，那时它已被赋值。 */

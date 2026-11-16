@@ -446,11 +446,13 @@ test('10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝'
       permission: createPermissionService([]),
       actorId: 'test-actor',
       sessionsUnder: () => [],
-      withStructureDiskOp: async <T,>(fn: () => Promise<T>): Promise<T> => {
+      withStructureDiskOp: async <T,>(_capability: unknown, fn: () => Promise<T>): Promise<T> => {
         diskOps += 1;
         return fn();
       },
-      withStructureChange: async (fn) => fn(),
+      withStructureChange: async <T,>(
+        fn: (capability: { projectId: string; token: symbol }) => Promise<T>,
+      ): Promise<T> => fn({ projectId: PROJ_A, token: Symbol('test-capability') }),
     });
     assert.equal(denied.status, 'REJECTED');
     assert.equal(diskOps, 0, '无写授权时零磁盘操作');
