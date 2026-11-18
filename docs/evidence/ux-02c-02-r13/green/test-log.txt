@@ -1,0 +1,51 @@
+UX-02C-02-R1.3 测试日志（简洁版）
+基线 60791ff · 分支 wip/ux-02c-02-r1-view-barrier-reservation-20261116
+环境 Windows 11 / Node 22.22.2 / TMP=TEMP=TMPDIR=C:/Users/Administrator/AppData/Local/Temp
+
+== 修复前（复现：把实现退回 R1.2 形态——不分批 + 成功路径只回收 pending） ==
+80-s11ux02c02r13-restore-reclaim   fail=7
+  01a open-rejected 的旧 View 必须被回收
+  01b file-missing 的旧 View 必须被回收
+  01c 不可用项目的旧 View 仍要回收
+  01d 批量回收这一轮没有可关的 View（blocked 必须为 1）
+  01e 跳过的文件旧 View 要回收
+  01f 本页面没有可回收的 View（其它页面不归我们关）
+  01h 失败的回收路径数必须如实报告
+81-s11ux02c02r13-reclaim-batching   fail=5
+  02b 期望 closed=65，实际 0（65 条塞进一个请求 → 400 整批失败）
+  02c / 02d 同上
+  02e 中间批失败后没有后续批次与失败计数
+  02f 未分批、keep 列表无法按批验证
+
+保留为绿的两条（预期边界）：
+  80-01g 恢复中断路径 R1.2 已回收，本轮只换输入集合
+  81-02a 64 条 = 上限，分批前后都是单次请求
+
+== 修复后（绿） ==
+node tests/suites/<suite>
+  30-s11a-g2r1-open-safety.test.ts                   11 pass / 0 fail
+  72-s11ux02c02-structure-host.test.ts               16 pass / 0 fail
+  73-s11ux02c02-structure-shell.test.ts              11 pass / 0 fail
+  74-s11ux02c02r1-view-barrier-reservation.test.ts    9 pass / 0 fail / 1 skip
+  75-s11ux02c02r11-page-instance.test.ts              8 pass / 0 fail
+  76-s11ux02c02r11-shell-host-integration.test.ts     4 pass / 0 fail
+  77-s11ux02c02r12-page-instance-storage.test.ts      6 pass / 0 fail
+  78-s11ux02c02r12-reservation-rename.test.ts         7 pass / 0 fail
+  79-s11ux02c02r12-restore-takeover.test.ts           5 pass / 0 fail
+  80-s11ux02c02r13-restore-reclaim.test.ts            8 pass / 0 fail  (新增)
+  81-s11ux02c02r13-reclaim-batching.test.ts           6 pass / 0 fail  (新增)
+
+npm run test:p0
+  1..921 / tests 921 / pass 919 / fail 0 / cancelled 0 / skipped 2 / todo 0
+
+== 变异探针 ==
+P1 取消分批                        → 81 红 5 条
+P2 成功路径只回收 pending          → 80 红 7 条
+P3 删除 failed 计数                → 81-02e 红
+P4 删除恢复成功提示里的回收结果    → 80-01h 红
+
+== 其它门禁 ==
+npm run typecheck        OK
+npm run typecheck:apps   OK（shell + server）
+npm run build:shell      OK（dist/assets/index-BICMwTtx.js 402.28 kB / gzip 123.40 kB）
+git diff --check         OK

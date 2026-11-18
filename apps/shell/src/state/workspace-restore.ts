@@ -22,7 +22,7 @@
  *
  * 这里不做：A2 的动态重绑定、STALE 会话回收、草稿正文持久化、`/api/edit|save|reload`。
  */
-import type { OpenNodeResult } from './open-document.ts';
+import type { OpenNodeResult, ReclaimSummary } from './open-document.ts';
 import type {
   ClientMode,
   LayoutMode,
@@ -85,6 +85,14 @@ export interface RestoreReport {
    */
   draftsPending: number;
   skipped: RestoreSkip[];
+  /**
+   * 本次对"本页面遗留 View"的回收结果（UX-02C-02-R1.3）。
+   *
+   * `null` = 本轮没有尝试回收（没有注入回收能力、不在 live 模式、或只恢复了界面）。
+   * 非 null 时三个计数必须都被如实呈现：`blocked` 是保护脏草稿的代价，
+   * `failed` 是"这次没清理掉、下次改名可能被拦住"的唯一可观察信号。
+   */
+  reclaim: ReclaimSummary | null;
   notice: string;
 }
 
@@ -111,16 +119,19 @@ export interface RestoreDeps {
   /** 后台打开：复用 open-document 的并发合并、模式守卫与 View 释放。 */
   openInBackground(node: ResourceNodeState, projectId: string | null): Promise<OpenNodeResult>;
   /**
-   * 回收**本页面**遗留的 View（UX-02C-02-R1.2）。
+   * 回收**本页面**遗留的 View（UX-02C-02-R1.2 / R1.3）。
    *
-   * 只对"恢复被接管后还没处理完"的标签调用：这些文件不会再被重开，它们的旧
-   * View 只能在这里清掉，否则该项目会一直判定为"有活动编辑会话"，改名/移动
-   * 被永久拦住。实现方必须只处理同一页面实例、且不碰当前标签正在用的 View
+   * 输入是"本次恢复**没有**重开的标签"（被接管后没处理完的，加上因
+   * `open-rejected` / `file-missing` / `project-unavailable` / `unsaved-changes`
+   * 被跳过的）。它们都不会再有 `/api/open` 去顺带清掉旧 View，只能在这里清；
+   * 否则该项目会一直判定为"有活动编辑会话"，改名/移动被拦住——即使文件或项目
+   * 随后恢复可用。实现方必须只处理同一页面实例、且不碰当前标签正在用的 View
    * （由 `open-document.ts` 的 `reclaimStaleViews` 保证）。
    *
+   * 脏草稿由 Host 的 `closeView` 兜底拒绝，调用方**不得**为此丢弃内容。
    * 缺省（未注入）时跳过：回收是清理动作，不影响恢复结论。
    */
-  reclaimStaleViews?(tabs: readonly PersistedTab[]): Promise<{ closed: number; blocked: number }>;
+  reclaimStaleViews?(tabs: readonly PersistedTab[]): Promise<ReclaimSummary>;
   /** 到达终态后回调（Provider 据此决定是否补一次提交）。 */
   onSettled?(report: RestoreReport): void;
 }
@@ -294,9 +305,30 @@ function emptyReport(overrides: Partial<RestoreReport> = {}): RestoreReport {
     tabsRestored: 0,
     draftsPending: 0,
     skipped: [],
+    reclaim: null,
     notice: '',
     ...overrides,
   };
+}
+
+/**
+ * 回收结果的用户可见措辞（UX-02C-02-R1.3）。
+ *
+ * 只在"真的有东西没清理掉"时追加：`blocked` 是保护未保存内容的代价，`failed`
+ * 是本次没能清理、下次改名/移动可能被 409 拦住的唯一提示。两者都不能静默。
+ */
+function reclaimNotice(reclaim: ReclaimSummary | null): string[] {
+  if (!reclaim) return [];
+  const parts: string[] = [];
+  if (reclaim.blocked > 0) {
+    parts.push(
+      `${reclaim.blocked} 个文件仍有未保存内容（已保留，未回收其编辑会话），处理草稿后才能改名/移动`,
+    );
+  }
+  if (reclaim.failed > 0) {
+    parts.push(`${reclaim.failed} 个文件的旧编辑会话未能回收，改名/移动可能被暂时拦住`);
+  }
+  return parts;
 }
 
 function buildNotice(report: RestoreReport): string {
@@ -305,6 +337,7 @@ function buildNotice(report: RestoreReport): string {
     const parts = ['恢复被中断：原记录已保留'];
     if (report.tabsRestored > 0) parts.push(`本次恢复了 ${report.tabsRestored} 个文件标签`);
     if (report.draftsPending > 0) parts.push(`${report.draftsPending} 个未保存内容未自动恢复`);
+    parts.push(...reclaimNotice(report.reclaim));
     return parts.join('；');
   }
   if (report.status === 'ui-only') {
@@ -322,6 +355,7 @@ function buildNotice(report: RestoreReport): string {
   if (report.draftsPending > 0) {
     parts.push(`${report.draftsPending} 个标签有未保存内容，未自动恢复（正文未持久化）`);
   }
+  parts.push(...reclaimNotice(report.reclaim));
   return parts.join('；');
 }
 
@@ -336,21 +370,27 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
   const isCurrent = (token: number): boolean => epoch === token;
 
   /**
-   * 恢复被接管时，回收本页面遗留的 View（UX-02C-02-R1.2）。
+   * 回收本页面遗留的 View（UX-02C-02-R1.2 / R1.3）。
    *
-   * 只针对**不会再被重开**的标签（= 本次没处理完的那些）。不做任何判断上的
-   * 额外承诺：实现方只关"同页面上轮"的 View，并在关闭被拒（最后一个脏视图）
-   * 时如实保留。这里吞掉异常，因为回收失败不能改写"恢复被接管"这个结论。
+   * 输入是**本次恢复没有重开**的标签：被接管后没处理完的，加上被跳过的
+   * （`open-rejected` / `file-missing` / `project-unavailable` / `unsaved-changes`）。
+   * 这些文件的旧 View 不会再有人关，只能在这里清。不做任何判断上的额外承诺：
+   * 实现方只关"同页面上轮"的 View，关闭被拒（最后一个脏视图）时如实保留。
+   *
+   * 返回 `null` 表示"本轮没有尝试"（没注入能力 / 不在 live 模式），与
+   * `{failed: N}` 严格区分：后者意味着"试过但没成功"，必须让用户看到。
    */
-  async function reclaimAbandoned(tabs: readonly PersistedTab[]): Promise<void> {
-    if (!deps.reclaimStaleViews || tabs.length === 0) return;
+  async function reclaimAbandoned(
+    tabs: readonly PersistedTab[],
+  ): Promise<ReclaimSummary | null> {
+    if (!deps.reclaimStaleViews || tabs.length === 0) return null;
     // 已经切到 demo：那边的 View 由 switchMode 收回，这里不该再发 live 请求
-    if (deps.getMode() !== 'live') return;
+    if (deps.getMode() !== 'live') return null;
     try {
-      await deps.reclaimStaleViews(tabs);
+      return await deps.reclaimStaleViews(tabs);
     } catch {
-      // 尽力而为：旧 View 留下来是可见的（改名会被 409 拦住），
-      // 但不能因此伪造一次成功的回收。
+      // 回收失败不能改写恢复结论，但也不能伪装成"没有需要清理的东西"
+      return { closed: 0, blocked: 0, failed: tabs.length };
     }
   }
 
@@ -428,6 +468,15 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
     draftsPending: number;
     hints: PersistedTab[];
     pending: PersistedTab[];
+    /**
+     * 本次**没有**重开的标签（= 记录里有、界面里没有）。
+     *
+     * `pending` 只回答"还没轮到/没处理成功，要结转进下一次写入"这个存储语义；
+     * 回收 View 关心的是另一个集合：只要这个文件没被重开，它上轮的 View 就是
+     * 孤儿——包括那些被判定为 `file-missing` / `open-rejected` /
+     * `project-unavailable` / `unsaved-changes` 而跳过的情况（R1.3-01）。
+     */
+    abandoned: PersistedTab[];
     interrupted: boolean;
   }
 
@@ -436,6 +485,10 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
     const restored: RestoredTab[] = [];
     const skipped: RestoreSkip[] = [];
     const hintList: PersistedTab[] = [];
+    /** 真正登记成标签的下标；其余下标（含跳过与未处理）都属于"没重开"。 */
+    const restoredIndex = new Set<number>();
+    const abandonedOf = (): PersistedTab[] =>
+      snapshot.tabs.filter((_, index) => !restoredIndex.has(index));
     let draftsPending = 0;
 
     for (const [index, tab] of snapshot.tabs.entries()) {
@@ -455,6 +508,7 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
           draftsPending,
           hints: hintList,
           pending: [...remaining],
+          abandoned: abandonedOf(),
           interrupted: true,
         };
       }
@@ -499,6 +553,7 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
         const latest = deps.getState().tabs.find((item) => item.docId === outcome.docId);
         if (outcome.ok && latest) {
           restored.push({ index, docId: outcome.docId, dirty: latest.dirty });
+          restoredIndex.add(index);
         } else {
           skipped.push({
             projectId: tab.projectId,
@@ -520,6 +575,7 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
           draftsPending,
           hints: hintList,
           pending: [...(outcome.ok && latest ? [] : [tab]), ...remaining],
+          abandoned: abandonedOf(),
           interrupted: true,
         };
       }
@@ -536,6 +592,7 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
 
       const dirty = deps.getState().tabs.find((item) => item.docId === outcome.docId)?.dirty ?? false;
       restored.push({ index, docId: outcome.docId, dirty });
+      restoredIndex.add(index);
     }
 
     return {
@@ -544,6 +601,7 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
       draftsPending,
       hints: hintList,
       pending: [],
+      abandoned: abandonedOf(),
       interrupted: false,
     };
   }
@@ -621,11 +679,12 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
       hints = [];
       pending = snapshot.tabs.slice();
       // 一个标签都没重开：全部旧 View 都是孤儿，必须在这里回收
-      await reclaimAbandoned(pending);
+      const reclaim = await reclaimAbandoned(pending);
       const interrupted = emptyReport({
         status: 'interrupted',
         reason: 'superseded',
         tabsRequested: snapshot.tabs.length,
+        reclaim,
         skipped: snapshot.tabs.map((tab) => ({
           projectId: tab.projectId,
           path: tab.path,
@@ -670,6 +729,12 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
     pending = result.pending;
 
     if (result.interrupted || !isCurrent(token) || deps.getMode() !== 'live') {
+      /**
+       * 接管前没处理完的标签 + 之前就跳过的标签：恢复都不会再重开它们，
+       * 旧 View 在这里一次性回收（刚被用户接管打开的那个由打开路径自己回收，
+       * 且它的新 View 在 keep 列表里）。
+       */
+      const reclaim = await reclaimAbandoned(result.abandoned);
       const interrupted = emptyReport({
         status: 'interrupted',
         reason: 'superseded',
@@ -679,16 +744,26 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
         tabsRestored: result.restored.length,
         draftsPending: result.draftsPending,
         skipped: result.skipped,
+        reclaim,
       });
       const next = { ...interrupted, notice: buildNotice(interrupted) };
-      // 接管前还没处理完的标签：恢复不会再重开它们，旧 View 在这里一次性回收
-      // （刚被用户接管打开的那个由打开路径自己回收，且它的新 View 在 keep 列表里）
-      await reclaimAbandoned(pending);
       deps.dispatch({ type: 'NOTICE', message: next.notice });
       return settle(next, 'seal');
     }
 
     applyPanes(snapshot, result, token, baseline);
+
+    /**
+     * 恢复成功也要清理"没能重开"的那些（UX-02C-02-R1.3）。
+     *
+     * 以前只有"被接管"才回收，于是 `file-missing` / `open-rejected` /
+     * `project-unavailable` / `unsaved-changes` 的旧 View 一直留着：等项目或
+     * 文件恢复可用、用户去改名时才发现 409，而这时已经没有任何路径能关掉它。
+     *
+     * 放在 applyPanes 之后、报告落地之前：界面照旧在同一拍落定（不因为清理
+     * 遗留会话而延后），而提示里一定带上 `blocked` / `failed` 的真实数字。
+     */
+    const reclaim = await reclaimAbandoned(result.abandoned);
 
     const restoredReport = emptyReport({
       status: 'restored',
@@ -699,6 +774,7 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
       tabsRestored: result.restored.length,
       draftsPending: result.draftsPending,
       skipped: result.skipped,
+      reclaim,
     });
     const next = { ...restoredReport, notice: buildNotice(restoredReport) };
     deps.dispatch({ type: 'NOTICE', message: next.notice });

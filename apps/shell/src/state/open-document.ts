@@ -12,6 +12,7 @@
  * 3. 结果只能写回发起时的那个工作区/文档：模式切走、标签关掉、项目切走都丢弃。
  */
 import type { DocumentSnapshot, WeaveSpaceClient } from '../client/client-api.ts';
+import { chunkReclaimPaths } from '../../../../packages/protocol/index.ts';
 import type { ClientMode } from './types.ts';
 import {
   canApplyDiskRefresh,
@@ -79,15 +80,36 @@ export interface DocumentOpener {
   /** 当前在途打开数（诊断/测试用）。 */
   pendingOpens(): number;
   /**
-   * 回收**本页面**遗留的 View（UX-02C-02-R1.2）：恢复被接管后，那些再也
-   * 不会被重开的文件只能靠这条通道清理，否则会永久拦住改名/移动。
+   * 回收**本页面**遗留的 View（UX-02C-02-R1.2 / R1.3）：恢复时那些没能重开的
+   * 文件只能靠这条通道清理，否则会永久拦住改名/移动。
    *
    * 只关闭、不打开、不读盘、不动草稿。与打开共享同一条串行链，因此
    * 它与"某个正在进行的打开"之间不存在"把刚建好的 View 当成遗留物"的窗口。
+   *
+   * 超过协议上限（`MAX_RECLAIM_PATHS`）时**按上限分批**：某批失败不影响其它
+   * 批次，失败规模计入返回值，绝不静默跳过（R1.3-02）。
    */
-  reclaimStaleViews(
-    entries: readonly { projectId: string | null; path: string }[],
-  ): Promise<{ closed: number; blocked: number }>;
+  reclaimStaleViews(entries: readonly ReclaimEntry[]): Promise<ReclaimSummary>;
+}
+
+export interface ReclaimEntry {
+  projectId: string | null;
+  path: string;
+}
+
+/**
+ * 一次回收动作的结果（UX-02C-02-R1.3）。
+ *
+ * 三者互斥且穷尽："关掉了"、"被拒绝保留（保护脏草稿）"、"没能尝试/没成功"。
+ * `failed` 不允许被当成 0 处理——不可观察的失败等于把阻塞丢给用户下次改名时才发现。
+ */
+export interface ReclaimSummary {
+  /** 已关闭的遗留 View 数。 */
+  closed: number;
+  /** 关闭被拒而保留的 View 数（Host 侧仍在，通常因为它是最后一个脏视图）。 */
+  blocked: number;
+  /** 未能成功回收的**路径**数：项目不可用、请求被拒、网络失败等。 */
+  failed: number;
 }
 
 /** 一次"刷新项目"在文档层面的结果（UI 只据此拼提示，不据此改状态）。 */
@@ -628,7 +650,7 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
     },
 
     async reclaimStaleViews(entries) {
-      if (entries.length === 0) return { closed: 0, blocked: 0 };
+      if (entries.length === 0) return { closed: 0, blocked: 0, failed: 0 };
       return await enqueueMaintenance(async () => {
         // 先把在途打开等干净：它们的标签（含新 viewId）必须已经落在状态里，
         // 否则 keep 列表不完整，会把用户刚打开的 View 关掉。
@@ -651,21 +673,34 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         const client = deps.clientFor(deps.getMode());
         let closed = 0;
         let blocked = 0;
+        let failed = 0;
+        /**
+         * 逐项目、逐批**顺序**发出：这条链本来就是为了与打开互斥，
+         * 并发发包只会把"谁先关"变成不确定的事。
+         *
+         * 分批（R1.3-02）：Host 单次最多接受 `MAX_RECLAIM_PATHS` 条路径，
+         * 超出会被整批 400。这里按同一个常量切分，且**每批都带同一份
+         * keep 列表**——保护当前活动 View 与批次无关。
+         */
         for (const [projectId, paths] of groups) {
-          try {
-            const outcome = await client.reclaimPageViews({
-              projectId,
-              paths,
-              keepViewIds: keep,
-            });
-            closed += outcome.closed;
-            blocked += outcome.blocked;
-          } catch {
-            // 回收是"清理遗留"的尽力而为：失败不该影响恢复的结论，
-            // 也不能把"没回收掉"说成成功（blocked 计数就是它的可见形式）。
+          for (const chunk of chunkReclaimPaths(paths)) {
+            try {
+              const outcome = await client.reclaimPageViews({
+                projectId,
+                paths: chunk,
+                keepViewIds: keep,
+              });
+              closed += outcome.closed;
+              blocked += outcome.blocked;
+              // 200/APPLIED 之外的结论都算"这批没回收掉"：不能当成 0 静默吞掉
+              if (outcome.status !== 'APPLIED') failed += chunk.length;
+            } catch {
+              // 单批异常只影响这一批：后续批次照发，失败规模如实计数
+              failed += chunk.length;
+            }
           }
         }
-        return { closed, blocked };
+        return { closed, blocked, failed };
       });
     },
   };

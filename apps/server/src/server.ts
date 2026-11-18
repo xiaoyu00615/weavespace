@@ -33,6 +33,7 @@ import { createCommandBus, type CommandBus } from '../../../packages/command/ind
 import { ERROR_CODES, type ErrorCode } from '../../../packages/contracts/index.ts';
 import { createDocumentService, type DocumentService } from '../../../packages/document/index.ts';
 import { createPermissionService, type PermissionService } from '../../../packages/permission/index.ts';
+import { MAX_RECLAIM_PATHS } from '../../../packages/protocol/index.ts';
 import { realpathSync } from 'node:fs';
 import {
   createLocalProvider,
@@ -558,10 +559,11 @@ function parseReclaimPrevious(body: Record<string, unknown>): boolean {
 /**
  * 一次"回收本页面遗留 View"请求最多处理多少条路径（UX-02C-02-R1.2）。
  *
- * 上限只防"把整棵树的路径全塞进来"这种滥用：恢复记录本身最多 24 个标签，
- * 64 条已经足够宽松，同时保证这次内存操作不会被拉长到影响其它请求。
+ * 常量与切分规则在 `packages/protocol`：Host 用同一个数字拒绝超大批次，
+ * 客户端用它分批（R1.3-02）。上限只防"把整棵树的路径全塞进来"这种滥用：恢复
+ * 记录本身最多 24 个标签，64 条已经足够宽松，同时保证这次内存操作不会被拉长到
+ * 影响其它请求。
  */
-const MAX_RECLAIM_PATHS = 64;
 
 function parseClientInstanceId(body: Record<string, unknown>): string | null {
   const raw = body.clientInstanceId;
