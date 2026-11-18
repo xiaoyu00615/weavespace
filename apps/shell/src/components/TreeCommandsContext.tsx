@@ -1,12 +1,12 @@
 /**
- * 文件树命令编排（UX-02C-01 创建 / UX-02C-02 改名与移动）：
+ * 文件树命令编排（UX-02C-01 创建 / UX-02C-02 改名与移动 / UX-02C-03-P1 隐藏）：
  * **菜单、顶部工具栏、行内输入框、移动对话框的唯一入口**。
  *
  * 职责：把"右键了什么 / 工具栏在哪"折算成显式 `(projectId, 相对路径)`，
  * 管住行内命名与单飞提交，然后把结果交给 `DocumentActions` 去刷新层表。
  * 不 fetch、不碰磁盘、不复制任何授权判定；同名/路径/会话的权威判定在 Host。
  *
- * 未来命令（`delete-local / hide-from-workspace / …`）只在 `ContextMenu.tsx` 的
+ * 未来命令（`delete-local / …`）只在 `ContextMenu.tsx` 的
  * `RESERVED_TREE_COMMANDS` 里占位，本轮**不渲染**成点了没反应的假菜单。
  */
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
@@ -40,6 +40,12 @@ import {
   type StructureEntryKind,
 } from '../state/structure-change.ts';
 import { entryNameOf } from '../../../../packages/storage/entry-name.ts';
+import {
+  visibilityCommandState,
+  visibilityNoopNotice,
+  visibilityNotice,
+  visibilityUnknownNotice,
+} from '../state/visibility.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { ContextMenu, type MenuItem } from './ContextMenu.tsx';
@@ -55,6 +61,12 @@ export interface TreeTarget {
   readonly nodeId?: string | null;
   /** 被右键节点的类型：改名/移动据此判断是否要检查后代。 */
   readonly entryKind?: StructureEntryKind | 'link';
+  /**
+   * 该行自身是否已有隐藏记录（UX-02C-03-P1）。
+   *
+   * 只有"显示隐藏项"打开时才可能为 true；据此决定菜单给"隐藏"还是"取消隐藏"。
+   */
+  readonly nodeHidden?: boolean;
 }
 
 export interface NamingState {
@@ -102,6 +114,13 @@ interface TreeCommandsValue {
   beginRename(target: TreeTarget): void;
   /** 右键文件/文件夹 → 打开"移动到…"选择器。 */
   openMove(target: TreeTarget): void;
+  /**
+   * 右键 → 从文件树隐藏 / 取消隐藏（UX-02C-03-P1）。
+   *
+   * `currentlyHidden` 是这一行现在的状态：true 表示要**取消隐藏**。
+   * 只改工作台可见性，不关标签、不动草稿、不碰磁盘内容。
+   */
+  toggleVisibility(target: TreeTarget, currentlyHidden: boolean): Promise<void>;
   setMoveTarget(dir: string): void;
   confirmMove(): Promise<void>;
   cancelMove(): void;
@@ -352,6 +371,57 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
 
   const cancelMove = useCallback(() => setMoveDialog(null), []);
 
+  /**
+   * 隐藏 / 取消隐藏的单飞提交（UX-02C-03-P1）。
+   *
+   * 与创建/改名不同，这里没有输入行也没有模态：一次右键就是一个完整意图。
+   * 仍然要单飞，避免同一行被双击两次产生两条并发请求（第二条会变成 no-op 提示，
+   * 用户会以为"点了没反应"）。
+   */
+  const visibilityBusy = useRef(false);
+  const toggleVisibility = useCallback(
+    async (target: TreeTarget, currentlyHidden: boolean): Promise<void> => {
+      setMenu(null);
+      const projectId = target.projectId;
+      const path = normalizeDir(target.nodePath ?? '');
+      if (!projectId || path === '') {
+        dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以从文件树隐藏' });
+        return;
+      }
+      if (visibilityBusy.current) return;
+      visibilityBusy.current = true;
+      try {
+        const outcome = currentlyHidden
+          ? await actions.unhideEntry(projectId, path)
+          : await actions.hideEntry(projectId, path);
+
+        if (outcome.status === 'APPLIED') {
+          // 先刷新父层再提示：提示"已隐藏"时树里必须真的已经不显示了
+          await actions.applyVisibilityChange(projectId, path);
+          dispatch({
+            type: 'NOTICE',
+            message: outcome.changed
+              ? visibilityNotice(path, !currentlyHidden)
+              : visibilityNoopNotice(path, !currentlyHidden),
+          });
+          return;
+        }
+        if (outcome.status === 'UNKNOWN') {
+          // 只读核对一次：不重发、不宣布成功
+          await actions.applyVisibilityChange(projectId, path);
+          dispatch({ type: 'NOTICE', message: visibilityUnknownNotice() });
+          return;
+        }
+        dispatch({ type: 'NOTICE', message: outcome.message ?? '隐藏操作失败' });
+      } catch {
+        dispatch({ type: 'NOTICE', message: '隐藏操作失败：网络或本地服务不可用' });
+      } finally {
+        visibilityBusy.current = false;
+      }
+    },
+    [actions, dispatch],
+  );
+
   const confirmMove = useCallback(async (): Promise<void> => {
     if (!moveDialog || moveDialog.submitting) return;
     setMoveDialog((current) => (current ? { ...current, submitting: true, error: null } : current));
@@ -467,6 +537,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       setMenu(null);
     };
     const structural = structureSource(target) !== null;
+    const visibility = visibilityCommandState({ target, supported: usable });
     return [
       {
         id: 'rename',
@@ -481,6 +552,20 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         hidden: !structural,
         disabled: !usable || isLink,
         command: () => openMove(target),
+      },
+      /*
+       * 从文件树隐藏 / 取消隐藏（UX-02C-03-P1）。
+       *
+       * 单独一条、紧跟在改名/移动之后：它同样是"对这一个节点动手"，但**不碰磁盘**。
+       * 链接节点不提供（Host 侧与"路径经过重解析点"同一条边界，必然 403）。
+       */
+      {
+        id: visibility.action === 'unhide' ? 'unhide' : 'hide',
+        label: visibility.action === 'unhide' ? '取消隐藏' : '从文件树隐藏',
+        hidden: !visibility.visible,
+        ...(visibility.hint ? { hint: visibility.hint } : {}),
+        disabled: visibility.disabled,
+        command: () => void toggleVisibility(target, target.nodeHidden === true),
       },
       {
         id: 'new-file',
@@ -525,6 +610,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     supportedExtensions,
     resolve,
     actions,
+    toggleVisibility,
   ]);
 
   const value = useMemo<TreeCommandsValue>(
@@ -534,6 +620,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       beginCreate,
       beginRename,
       openMove,
+      toggleVisibility,
       setMoveTarget,
       confirmMove,
       cancelMove,
@@ -555,6 +642,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       beginCreate,
       beginRename,
       openMove,
+      toggleVisibility,
       setMoveTarget,
       confirmMove,
       cancelMove,

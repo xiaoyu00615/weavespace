@@ -1,16 +1,28 @@
 /**
- * 工作区配置 v2 的解析、校验与序列化（UX-02B-02 / ADR-022 §3）。
+ * 工作区配置 v3 的解析、校验与序列化（UX-02B-02 / ADR-022 §3；v3 由 UX-02C-03-P1 引入）。
  *
  * 纪律：
  * - **解析即校验**：任何字段形态不符都返回 `undefined`，由调用方按"配置不可用"处理；
  * - `checksum` 只证明这份配置**自身**没被截断，不能证明它是最新的（ADR-022 §3.2）；
- * - v1 只读兼容：内存里升级为 v2 视图，只有发生变更时才写回 v2；
- * - 序列化必须确定性（字段顺序固定），否则 checksum 无法复算。
+ * - v1 / v2 只读兼容：内存里升级为 v3 视图，只有发生变更时才写回 v3；
+ * - 序列化必须确定性（字段顺序固定），否则 checksum 无法复算；
+ * - **校验和按"文件声明的版本"计算**：v2 文件里没有 `hidden` 字段参与哈希，
+ *   否则升级的那一刻会把所有历史配置文件判成损坏（灾难级回归）。
  */
 import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
+import { validateEntryPath } from '../../../../packages/storage/entry-name.ts';
+import { sameEntryPath } from '../../../../packages/storage/entry-name.ts';
 
 export const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+
+/**
+ * 隐藏记录上限（UX-02C-03-P1）。
+ *
+ * 这是**配置体量**的护栏，不是语义限制：隐藏只写工作台配置，条目再多也不该让
+ * 一份小 JSON 变成数据库。超过上限时写入口明确拒绝，而不是静默截断。
+ */
+export const MAX_HIDDEN_ENTRIES = 2000;
 
 export interface ConfigProject {
   readonly projectId: string;
@@ -32,27 +44,64 @@ export interface ConfigRevokedEntry {
   readonly opId: string;
 }
 
+/**
+ * 一条"从文件树隐藏"的记录（UX-02C-03-P1）。
+ *
+ * 四个字段各自解决一个问题：
+ * - `projectId`：作用域。同名路径在另一个项目里不受影响；
+ * - `path`：规范化后的项目内相对路径（正斜杠、无 `..`）；
+ * - `rootToken`：项目根身份。根被重新授权/替换后，旧记录自动失效，
+ *   不会把"新根里同名的新文件"继续当成隐藏对象；
+ * - `identity`：对象身份（`dev:ino`）。同名路径被外部换成另一个对象时，
+ *   Host 报告 `rebound` 并停止隐藏，绝不"未经核验继续隐藏新对象"。
+ */
+export interface ConfigHiddenEntry {
+  readonly projectId: string;
+  readonly path: string;
+  readonly rootToken: string;
+  readonly identity: string;
+  /** 写入该记录的时间（ISO 8601，仅用于诊断，不参与任何判定）。 */
+  readonly hiddenAt: string;
+}
+
 /** 内存形态：`checksum` 不参与（写盘时才算）。 */
 export interface ConfigState {
-  readonly version: 2;
+  readonly version: 3;
   readonly commitSeq: number;
   readonly issuedIds: readonly string[];
   readonly revoked: readonly ConfigRevokedEntry[];
   readonly projects: readonly ConfigProject[];
+  readonly hidden: readonly ConfigHiddenEntry[];
+}
+
+/**
+ * 允许序列化的输入形态。
+ *
+ * 保留 `version: 2` 是为了既有夹具与"只读兼容"路径：v2 输入序列化成 v2 文件
+ * （校验和也按 v2 计算），不会被悄悄升版。
+ */
+export interface ConfigStateInput {
+  readonly version: 2 | 3;
+  readonly commitSeq: number;
+  readonly issuedIds: readonly string[];
+  readonly revoked: readonly ConfigRevokedEntry[];
+  readonly projects: readonly ConfigProject[];
+  readonly hidden?: readonly ConfigHiddenEntry[];
 }
 
 export interface ParsedConfig {
   readonly state: ConfigState;
-  /** 原始文件声明的版本（用于判断是否需要写回 v2）。 */
-  readonly sourceVersion: 1 | 2;
+  /** 原始文件声明的版本（用于判断是否需要写回 v3）。 */
+  readonly sourceVersion: 1 | 2 | 3;
 }
 
 export interface ConfigFile {
-  readonly version: 2;
+  readonly version: 3;
   readonly commitSeq: number;
   readonly issuedIds: readonly string[];
   readonly revoked: readonly ConfigRevokedEntry[];
   readonly projects: readonly ConfigProject[];
+  readonly hidden: readonly ConfigHiddenEntry[];
   readonly checksum: string;
 }
 
@@ -68,11 +117,28 @@ function isSeq(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
+/** 隐藏记录在哈希前必须排序：入库顺序不同不代表配置不同。 */
+function canonicalHidden(hidden: readonly ConfigHiddenEntry[]): unknown[] {
+  return [...hidden]
+    .sort((a, b) =>
+      a.projectId === b.projectId ? (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) : a.projectId < b.projectId ? -1 : 1,
+    )
+    .map((entry) => ({
+      projectId: entry.projectId,
+      path: entry.path,
+      rootToken: entry.rootToken,
+      identity: entry.identity,
+      hiddenAt: entry.hiddenAt,
+    }));
+}
+
 /**
  * checksum 的输入：**固定字段顺序**的 canonical JSON。
  * 绝不直接对原始文件文本取哈希——那样缩进/键序变化就会误判为损坏。
+ *
+ * `hidden` 只在 v3 起参与哈希：v2 文件的校验和必须继续可复算。
  */
-export function checksumOf(state: ConfigState): string {
+export function checksumOf(state: ConfigStateInput): string {
   const canonical = JSON.stringify({
     version: state.version,
     commitSeq: state.commitSeq,
@@ -92,12 +158,13 @@ export function checksumOf(state: ConfigState): string {
       grantSource: project.grantSource,
       createdByOp: project.createdByOp,
     })),
+    ...(state.version >= 3 ? { hidden: canonicalHidden(state.hidden ?? []) } : {}),
   });
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-export function serializeConfig(state: ConfigState): string {
-  const file: ConfigFile = { ...state, checksum: checksumOf(state) };
+export function serializeConfig(state: ConfigStateInput): string {
+  const file = { ...state, hidden: state.hidden ?? [], checksum: checksumOf(state) };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
@@ -140,10 +207,24 @@ function parseRevoked(raw: unknown): ConfigRevokedEntry | undefined {
   return { projectId, revokedAtSeq, opId };
 }
 
+function parseHidden(raw: unknown): ConfigHiddenEntry | undefined {
+  if (!isRecord(raw)) return undefined;
+  const { projectId, path, rootToken, identity, hiddenAt } = raw;
+  if (typeof projectId !== 'string' || !PROJECT_ID_RE.test(projectId)) return undefined;
+  if (typeof path !== 'string') return undefined;
+  const checkedPath = validateEntryPath(path);
+  // 路径必须是规范化的项目内相对路径：绝对路径 / `..` / 反斜杠一律视为损坏
+  if (!checkedPath.ok || checkedPath.value !== path) return undefined;
+  if (!isNonEmptyString(rootToken) || !isNonEmptyString(identity)) return undefined;
+  if (!isNonEmptyString(hiddenAt)) return undefined;
+  return { projectId, path, rootToken, identity, hiddenAt };
+}
+
 /**
  * 解析配置。返回 `undefined` 表示**这份文件不可用**（调用方必须按 fail-closed 处理）。
  *
  * v2 额外要求：`checksum` 复算一致、`projects[].projectId ∈ issuedIds`、序号自洽。
+ * v3 在此基础上再把隐藏记录纳入校验和，并要求路径/身份字段完整、无重复条目。
  */
 export function parseConfig(text: string): ParsedConfig | undefined {
   let raw: unknown;
@@ -153,7 +234,7 @@ export function parseConfig(text: string): ParsedConfig | undefined {
     return undefined;
   }
   if (!isRecord(raw)) return undefined;
-  if (raw.version !== 1 && raw.version !== 2) return undefined;
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) return undefined;
   if (!Array.isArray(raw.projects)) return undefined;
   if (!Array.isArray(raw.revoked ?? [])) return undefined;
 
@@ -169,16 +250,17 @@ export function parseConfig(text: string): ParsedConfig | undefined {
     return {
       sourceVersion: 1,
       state: {
-        version: 2,
+        version: 3,
         commitSeq: 0,
         issuedIds: projects.map((project) => project.projectId),
         revoked: [],
         projects,
+        hidden: [],
       },
     };
   }
 
-  // ---- v2：全部字段必须自洽 ----
+  // ---- v2 / v3：全部字段必须自洽 ----
   if (!isSeq(raw.commitSeq)) return undefined;
   if (typeof raw.checksum !== 'string' || raw.checksum === '') return undefined;
   if (!Array.isArray(raw.issuedIds)) return undefined;
@@ -215,13 +297,33 @@ export function parseConfig(text: string): ParsedConfig | undefined {
     if (!issuedIds.includes(entry.projectId)) return undefined;
   }
 
+  // 隐藏记录只在 v3 存在；v2 文件里的同名字段一律忽略（不参与哈希、不参与判定）
+  const hidden: ConfigHiddenEntry[] = [];
+  if (raw.version === 3) {
+    if (!Array.isArray(raw.hidden)) return undefined;
+    if (raw.hidden.length > MAX_HIDDEN_ENTRIES) return undefined;
+    for (const item of raw.hidden as unknown[]) {
+      const entry = parseHidden(item);
+      if (!entry) return undefined;
+      // 同一项目里同一条路径只能有一条记录（Windows 下按大小写不敏感比较）
+      const duplicate = hidden.some(
+        (existing) => existing.projectId === entry.projectId && sameEntryPath(existing.path, entry.path),
+      );
+      if (duplicate) return undefined;
+      hidden.push(entry);
+    }
+  }
+
   const state: ConfigState = {
-    version: 2,
+    version: 3,
     commitSeq: raw.commitSeq,
     issuedIds,
     revoked,
     projects,
+    hidden,
   };
-  if (checksumOf(state) !== raw.checksum) return undefined;
-  return { sourceVersion: 2, state };
+  // 校验和按**文件声明的版本**计算：v2 文件不含隐藏字段
+  const declared = raw.version === 3 ? checksumOf(state) : checksumOf({ ...state, version: 2, hidden: [] });
+  if (declared !== raw.checksum) return undefined;
+  return { sourceVersion: raw.version, state };
 }

@@ -229,6 +229,20 @@ export interface StorageProvider {
   readonly providerId: string;
   readonly rootDir: string;
   stat(path: string): Promise<FileStat>;
+  /**
+   * 对象身份 `${dev}:${ino}`（**不跟随**链接，用 `lstat`）；不存在返回 `null`。
+   *
+   * 只用于回答一个问题："这个路径上还是不是当初那个对象？"——工作台隐藏记录
+   * 据此判断"同名路径是否已被换成另一个文件"，从而绝不把新对象错误当成旧对象
+   * 继续隐藏（UX-02C-03-P1）。
+   *
+   * 它不是授权凭据，也不能当作绝对防伪：`lstat` 与后续操作之间仍有竞争窗口，
+   * 调用方必须把"身份不一致"当作拒绝理由，而不是"身份一致"当作安全证明。
+   *
+   * 声明为可选：不提供该能力的 Provider（Demo / 静态多项目）由 Host 明确降级
+   * 为"按路径匹配"，并在响应里如实标注（见 `apps/server/src/hidden.ts`）。
+   */
+  identityOf?(path: string): Promise<string | null>;
   read(path: string): Promise<ReadResult>;
   /** expectedVersion=null 表示"仅当不存在时创建"。 */
   writeConditional(path: string, content: string, expectedVersion: string | null): Promise<SaveResult>;
@@ -706,6 +720,28 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         return { exists: false, size: 0, mtimeMs: 0, contentVersion: null };
       }
       return { exists: true, size: s.size, mtimeMs: s.mtimeMs, contentVersion: version };
+    },
+
+    /**
+     * 对象身份（UX-02C-03-P1）：`lstat` + `dev:ino`，**不跟随**链接。
+     *
+     * 不跟随是刻意的：工作台树里的链接是一行"链接节点"，隐藏它不会影响它的目标，
+     * 身份也必须是链接自身而不是目标目录。
+     */
+    async identityOf(path: string): Promise<string | null> {
+      const check = resolveInBoundary(boundary, path);
+      if (!check.ok) {
+        throw Object.assign(new Error(check.detail), { errorCode: check.errorCode });
+      }
+      assertRootContinuity(boundary, establishedToken);
+      let s;
+      try {
+        s = await lstat(check.absolutePath);
+      } catch (err) {
+        if (isMissing(err)) return null;
+        throw toStorageError(err);
+      }
+      return `${String(s.dev)}:${String(s.ino)}`;
     },
 
     async read(path: string): Promise<ReadResult> {

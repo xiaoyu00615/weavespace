@@ -16,6 +16,8 @@ export {
   type MoveEntryResult,
   type LstatImpl,
   type LstatResultLike,
+  type DirEntry,
+  type DirEntryKind,
 } from './local-provider.ts';
 export {
   resolveInsideRoot,
@@ -37,6 +39,7 @@ export {
 export {
   validateEntryName,
   validateParentDir,
+  validateEntryPath,
   entryRelativePath,
   parentDirOfEntry,
   entryNameOf,

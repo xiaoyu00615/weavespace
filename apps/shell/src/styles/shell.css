@@ -175,6 +175,10 @@ button {
 .tree__meta {
   color: var(--muted);
   font-size: 11px;
+  /* 侧栏很窄：这一行宁可截断，也不要被挤成"一个字一行"（真实浏览器里出现过） */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tree__root,
@@ -1749,4 +1753,72 @@ button {
   color: var(--warn);
   font-size: 12px;
   line-height: 1.55;
+}
+
+/* ---------- 工作台隐藏（UX-02C-03-P1） ---------- */
+
+/*
+ * 隐藏项是"用户主动收起来、但数据完好"的行：
+ * 变淡 + 一枚小标签，而不是变成灰色禁用态——它们照样能点开、编辑、保存。
+ */
+.tree__row--hidden .tree__name {
+  opacity: 0.62;
+}
+
+.tree__hidden-badge {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid #c8d6ef;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: #2a5cc4;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+/* 被上级隐藏的条目：标签更淡一些，避免"每一行都像我隐藏的" */
+.tree__hidden-badge--inherited {
+  border-style: dashed;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+
+/*
+ * "隐藏项"开关与 ＋/▣/↻ 同一排图标按钮：侧栏只有 260px，
+ * 带文字的胶囊会把这一排挤到换行（真实浏览器里已复现）。
+ */
+.tree__visibility-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tree__visibility-toggle[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tree__visibility-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tree__visibility-count {
+  font-size: 9px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  transform: translateY(-4px);
 }

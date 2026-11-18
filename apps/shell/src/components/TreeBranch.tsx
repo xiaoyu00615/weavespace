@@ -168,6 +168,8 @@ function TreeItem({
             // R1-01：折叠目录中创建时按这一行的真实节点 id 幂等展开
             nodeId: node.id,
             entryKind: 'directory',
+            // UX-02C-03-P1：这一行自身是否已隐藏（决定菜单给"隐藏"还是"取消隐藏"）
+            nodeHidden: node.hidden === true,
           })
         }
         onActivate={() => {
@@ -252,6 +254,7 @@ function TreeItem({
           projectId,
           nodePath: node.path ?? node.name,
           entryKind: 'file',
+          nodeHidden: node.hidden === true,
         })
       }
       onActivate={() => {

@@ -198,6 +198,21 @@ export function TreeRow({
 }: TreeRowProps) {
   const isFolder = node.kind === 'folder';
   const isLink = node.kind === 'link';
+  /**
+   * 隐藏标记（UX-02C-03-P1）。
+   *
+   * 它是**展示**而不是禁用：隐藏的文件照样能点开、能编辑、能保存，
+   * 所以这里只做"变淡 + 一枚小标签"，绝不给行加 disabled 或拦截点击。
+   */
+  const hiddenSelf = node.hidden === true;
+  const hiddenBy = node.hiddenBy;
+  const rowTitle = isLink
+    ? `${node.name}（链接不展开，避免越过项目根）`
+    : hiddenSelf
+      ? `${node.name}（已从文件树隐藏；文件仍在磁盘上，可正常打开与保存）`
+      : hiddenBy
+        ? `${node.name}（上级「${hiddenBy}」被隐藏；文件仍在磁盘上）`
+        : node.name;
   return (
     <li className="tree__item">
       <div className="tree__row-wrap">
@@ -209,13 +224,14 @@ export function TreeRow({
             isLink ? 'tree__row--link' : '',
             selected ? 'tree__row--selected' : '',
             opened ? 'tree__row--opened' : '',
+            hiddenSelf || hiddenBy ? 'tree__row--hidden' : '',
             actions ? 'tree__row--with-actions' : '',
             rowClassName ?? '',
           ]
             .filter(Boolean)
             .join(' ')}
           aria-expanded={isFolder ? expanded : undefined}
-          title={isLink ? `${node.name}（链接不展开，避免越过项目根）` : node.name}
+          title={rowTitle}
           onClick={onActivate}
           onContextMenu={onContextMenu}
         >
@@ -229,6 +245,16 @@ export function TreeRow({
             <FileGlyph extension={node.extension} />
           )}
           <span className="tree__name">{node.name}</span>
+          {hiddenSelf && (
+            <span className="tree__hidden-badge" title="已从文件树隐藏（磁盘文件未删除）">
+              隐藏
+            </span>
+          )}
+          {!hiddenSelf && hiddenBy && (
+            <span className="tree__hidden-badge tree__hidden-badge--inherited" title={`上级「${hiddenBy}」被隐藏`}>
+              随上级隐藏
+            </span>
+          )}
           {opened && (
             <span
               className={dirty ? 'tree__dot tree__dot--dirty' : 'tree__dot'}

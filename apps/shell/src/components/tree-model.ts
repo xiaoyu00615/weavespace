@@ -39,6 +39,13 @@ export interface TreeLevelState {
    * 续页必须把它原样回传；`null` 表示这一层还没有建立一致性基线。
    */
   readonly snapshot: string | null;
+  /**
+   * 服务端报告的本层隐藏条目数（UX-02C-03-P1）。
+   *
+   * 默认视图下这些条目**不在** `entries` 里，所以这个数字是"此目录有 N 个隐藏项"
+   * 唯一的来源；`0` 表示这一层没有隐藏项（或旧版服务端不返回）。
+   */
+  readonly hiddenCount: number;
 }
 
 export type TreeLevels = Readonly<Record<string, TreeLevelState>>;
@@ -67,6 +74,7 @@ function blankLevel(dir: string): TreeLevelState {
     errorCode: null,
     loadingMore: false,
     snapshot: null,
+    hiddenCount: 0,
   };
 }
 
@@ -78,6 +86,9 @@ export function entryToNode(entry: TreeEntry): ResourceNodeState {
     kind: entry.kind,
     extension: entry.extension,
     path: entry.relPath,
+    // 隐藏标记必须穿过这一层：否则"显示隐藏项"里所有行都和普通行一样（UX-02C-03-P1）
+    ...(entry.hidden ? { hidden: true } : {}),
+    ...(entry.hiddenBy ? { hiddenBy: entry.hiddenBy } : {}),
   };
 }
 
@@ -109,6 +120,8 @@ export interface AppliedPage {
   readonly total: number;
   /** 本轮分页的目录快照标识；旧版响应可能没有。 */
   readonly snapshot?: string | null;
+  /** 本层隐藏条目数；旧版响应没有。 */
+  readonly hiddenCount?: number;
 }
 
 /**
@@ -147,6 +160,7 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
       errorCode: null,
       loadingMore: false,
       snapshot: page.snapshot ?? null,
+      hiddenCount: page.hiddenCount ?? previous.hiddenCount,
     },
   };
 }
@@ -186,6 +200,7 @@ export function invalidateLevel(levels: TreeLevels, dir: string, errorCode: stri
       errorCode,
       loadingMore: false,
       snapshot: null,
+      hiddenCount: 0,
     },
   };
 }
@@ -232,6 +247,22 @@ export function countLoadedFiles(levels: TreeLevels): number {
   for (const level of Object.values(levels)) {
     for (const entry of level.entries) {
       if (entry.kind === 'file') total += 1;
+    }
+  }
+  return total;
+}
+
+/**
+ * 已加载条目里**自身被隐藏**的数量（UX-02C-03-P1）。
+ *
+ * 只统计"这一行自己有记录"的条目：被上级隐藏的条目不算，否则父目录一隐藏，
+ * 数字会按整个子树膨胀，用户会以为隐藏了几百个文件。
+ */
+export function countHiddenEntries(levels: TreeLevels): number {
+  let total = 0;
+  for (const level of Object.values(levels)) {
+    for (const entry of level.entries) {
+      if (entry.hidden) total += 1;
     }
   }
   return total;

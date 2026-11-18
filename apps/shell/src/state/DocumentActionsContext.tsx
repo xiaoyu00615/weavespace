@@ -26,6 +26,7 @@ import {
   type CreateEntryOutcome,
   type CreateEntryKindDto,
   type StructureChangeOutcome,
+  type VisibilityOutcome,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
 import { backupDraftBeforeReload } from '../client/draft-backup';
@@ -199,6 +200,30 @@ export interface DocumentActions {
     sourceParentDir: string,
     targetParentDir: string,
   ): Promise<void>;
+
+  /* ---- UX-02C-03-P1：工作台隐藏 / 取消隐藏 ---- */
+
+  /**
+   * 从文件树隐藏一个相对路径。
+   *
+   * 只改工作台可见性：**不碰磁盘、不关标签、不动草稿**。
+   * Demo / Legacy / 静态 Multi 明确 501，不会在演示树里"假装消失一行"。
+   */
+  hideEntry(projectId: string, path: string): Promise<VisibilityOutcome>;
+  /** 取消隐藏（幂等；目标文件已不存在时同样能清掉记录）。 */
+  unhideEntry(projectId: string, path: string): Promise<VisibilityOutcome>;
+  /**
+   * Host 明确 APPLIED（或结果未知需要核对）之后调用：
+   * 只作废并重取**该路径的父层**，其它层/项目/标签/草稿一概不动。
+   */
+  applyVisibilityChange(projectId: string, path: string): Promise<void>;
+  /**
+   * 切换"显示隐藏项"。
+   *
+   * 会作废所有项目的层表并重新拉取当前项目的根层——已加载的层里没有隐藏条目，
+   * 不重取就会出现"点了开关却什么都没变"。
+   */
+  setShowHidden(value: boolean): Promise<void>;
 }
 
 const DocumentActionsContext = createContext<DocumentActions | null>(null);
@@ -211,6 +236,11 @@ function unsupportedStructure(): StructureChangeOutcome {
     message: '当前模式不提供真实改名或移动',
     httpStatus: 501,
   };
+}
+
+/** Demo / Legacy / 静态 Multi 明确不提供工作台隐藏，不制造"点了会假成功"的入口。 */
+function unsupportedVisibility(message: string): VisibilityOutcome {
+  return { status: 'REJECTED', errorCode: 'ERR_COMMAND_UNSUPPORTED', message, httpStatus: 501 };
 }
 
 /** 冲突重载前的草稿备份前缀：只写 sessionStorage，不落任何用户目录。 */
@@ -266,6 +296,16 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
 
   /**
+   * "显示隐藏项"的同步镜像（UX-02C-03-P1）。
+   *
+   * 与 `modeRef` 同理：`setShowHidden` 里 dispatch 之后 state 仍是旧值，而紧接着
+   * 就要重新拉取层表。如果请求在这里读到旧的 `showHidden`，用户会看到
+   * "点了开关却没变化"（要等下一次意外重取才生效）。因此这里在**调用点**同步推进。
+   */
+  const showHiddenRef = useRef(state.showHidden);
+  showHiddenRef.current = state.showHidden;
+
+  /**
    * 模式的同步镜像：`switchMode` 里 dispatch 之后 state 仍然是旧值，
    * 而在途的 HTTP 响应可能在那之后立刻返回——必须有一个同步可读的模式。
    */
@@ -302,8 +342,16 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           activeProjectId: stateRef.current.activeProjectId,
         }),
         levels: (projectKey: string) => stateRef.current.treeByProject[projectKey] ?? emptyLevels(),
+        /**
+         * `includeHidden` 在**请求时**读取当前开关（UX-02C-03-P1）。
+         *
+         * 这样"显示隐藏项"不需要改 `tree-load.ts` 的票据语义：它只是同一层的
+         * 另一份视图，代次/单飞/快照一致性全部沿用原机制。
+         */
         listTree: (request) =>
-          clientFor('live').listTree(request.projectId, request.dir, request.cursor, undefined, request.snapshot),
+          clientFor('live').listTree(request.projectId, request.dir, request.cursor, undefined, request.snapshot, {
+            includeHidden: showHiddenRef.current,
+          }),
         dispatch,
       },
       /**
@@ -999,6 +1047,59 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         if (targetParentDir !== sourceParentDir) {
           await treeLoader.current.load(projectId, targetParentDir, false);
         }
+      },
+
+      /* ---- UX-02C-03-P1：工作台隐藏 / 取消隐藏 ---- */
+
+      async hideEntry(projectId, path) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return unsupportedVisibility('当前模式不提供工作台隐藏');
+        }
+        return liveClient.hideEntry(projectId, path);
+      },
+
+      async unhideEntry(projectId, path) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return unsupportedVisibility('当前模式不提供取消隐藏');
+        }
+        return liveClient.unhideEntry(projectId, path);
+      },
+
+      /**
+       * 只重取**受影响的那几层**：父层 + 该路径下已经加载过的层。
+       *
+       * 为什么要带上下面的层：隐藏一个目录后，它的子行要标成"随上级隐藏"。
+       * 子层缓存是在隐藏之前取的，不重取就会缺少这个标记（行还在、标记没有，
+       * 用户无法判断"这是我自己隐藏的，还是被父目录带下去的"）。
+       *
+       * 只处理**已加载**的层（用户展开过才会存在），不会递归扫描磁盘。
+       */
+      async applyVisibilityChange(projectId, path) {
+        const levels = stateRef.current.treeByProject[projectId] ?? {};
+        const below = Object.keys(levels)
+          .filter((dir) => dir === path || dir.startsWith(`${path}/`))
+          .sort((a, b) => a.length - b.length);
+        const parent = parentDirOfEntry(path);
+        treeLoader.current.invalidateLevel(projectId, parent);
+        await treeLoader.current.load(projectId, parent, false);
+        for (const dir of below) {
+          treeLoader.current.invalidateLevel(projectId, dir);
+          await treeLoader.current.load(projectId, dir, false);
+        }
+      },
+
+      async setShowHidden(value) {
+        if (showHiddenRef.current === value) return;
+        // 先同步推进镜像：随后那次重新拉取必须就已经是"新视图"
+        showHiddenRef.current = value;
+        dispatch({ type: 'SET_SHOW_HIDDEN', value });
+        // 所有项目的已加载层都代表"旧视图"：整层作废后按需重取
+        for (const project of stateRef.current.projects) {
+          treeLoader.current.invalidateProject(project.projectId);
+          dispatch({ type: 'TREE_RESET', projectId: project.projectId });
+        }
+        const active = stateRef.current.activeProjectId;
+        if (active) await treeLoader.current.load(active, '', false);
       },
 
       async openNode(node: ResourceNodeState, projectId?: string | null) {        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）

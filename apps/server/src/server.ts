@@ -38,6 +38,7 @@ import { realpathSync } from 'node:fs';
 import {
   createLocalProvider,
   rootTokenOf,
+  sameEntryPath,
   type StorageFaultHooks,
   type StorageProvider,
 } from '../../../packages/storage/index.ts';
@@ -66,6 +67,12 @@ import {
   runManagedStructureChange,
   type StructureKind,
 } from './structure-change.ts';
+import {
+  classifyHiddenRecord,
+  markVisibility,
+  parseVisibilityBody,
+  type HiddenRecordState,
+} from './hidden.ts';
 
 export type SaveOutcomeStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN';
 
@@ -887,6 +894,39 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
   }
 
   /**
+   * 保存成功后刷新隐藏记录里的对象身份（UX-02C-03-P1）。
+   *
+   * 工作区的保存是"临时文件 + rename 覆盖"，**必然换 inode**。如果不刷新，用户
+   * 隐藏一个文件、编辑并保存，这条记录立刻被判成 `rebound`，文件就会从默认视图
+   * 里复活——看起来像"隐藏功能坏了"。
+   *
+   * 只刷新**已经存在记录**的路径；失败不影响保存结论（保存已经提交），但记录会
+   * 停在 `rebound` 状态并在查询接口里如实可见，不会静默冒充成功。
+   */
+  async function refreshHiddenIdentityAfterSave(projectId: string, path: string): Promise<void> {
+    if (!managedFileStore) return;
+    const record = managedFileStore
+      .hiddenOf(projectId)
+      .find((entry) => sameEntryPath(entry.path, path));
+    if (!record) return;
+    try {
+      const handle = requireProjectHandle(projectId);
+      if (typeof handle.provider.identityOf !== 'function') return;
+      const identity = await withDiskOp(projectId, () => handle.provider.identityOf!(path));
+      if (identity === null) return;
+      await managedFileStore.commitHidden({
+        projectId,
+        path: record.path,
+        rootToken: record.rootToken,
+        identity,
+        hidden: true,
+      });
+    } catch {
+      // 刷新失败只影响"隐藏是否继续生效"，绝不改写已经提交的保存结论
+    }
+  }
+
+  /**
    * G-DISK 门禁（G1-08）：会话所属项目必须仍属于 Registry 且 READY，根身份不变。
    * 与 CommandBus 内的 gate 是同一条判定，绕过 CommandBus 的直连入口也必须调用它。
    */
@@ -1306,6 +1346,55 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     }
 
     /**
+     * 隐藏记录查询（UX-02C-03-P1，只读）。
+     *
+     * 只返回**路径**与其当前状态，不返回正文、不返回本机绝对路径。
+     * 每条记录都被核验一次（`dev:ino` 比对），因此调用方能看见
+     * `missing`（文件已不在）/ `rebound`（同名路径换了对象）这类失效状态——
+     * 界面据此提示"记录仍在，但已不生效"，而不是悄悄把新对象当成旧对象。
+     */
+    if (method === 'GET' && pathname === '/api/workspace/hidden') {
+      if (!runtime || !managedFileStore) {
+        throw new HttpError(
+          501,
+          'ERR_COMMAND_UNSUPPORTED',
+          PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持工作台隐藏',
+        );
+      }
+      requireSessionToken(req);
+      const projectId = url.searchParams.get('projectId') ?? '';
+      if (!projectId) {
+        throw new HttpError(
+          400,
+          'ERR_PROJECT_REQUIRED',
+          PUBLIC_ERROR_MESSAGES.ERR_PROJECT_REQUIRED ?? '必须声明 projectId',
+        );
+      }
+      const handle = requireProjectHandle(projectId);
+      const decision = permission.authorize({
+        actorId,
+        action: 'read',
+        resourcePath: '',
+        providerId: handle.providerId,
+      });
+      if (!decision.allowed) {
+        throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+      }
+      const records = managedFileStore
+        .hiddenOf(projectId)
+        .filter((record) => record.rootToken === handle.rootToken);
+      const entries: { path: string; state: HiddenRecordState }[] = await withDiskOp(projectId, async () => {
+        const out: { path: string; state: HiddenRecordState }[] = [];
+        for (const record of records) {
+          out.push({ path: record.path, state: await classifyHiddenRecord(record, handle.provider) });
+        }
+        return out;
+      });
+      sendJson(res, 200, { status: 'APPLIED', projectId, entries });
+      return;
+    }
+
+    /**
      * UX-02B-TREE：只读、逐层、可分页的真实目录树。
      *
      * 与 `/api/resources` 的关系：旧端点的实现与输出**冻结**（递归、只认文本后缀），
@@ -1324,8 +1413,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       // 先判项目存在与可用，再判授权：不存在的项目不该被报成"权限不足"。
       let treeProvider: StorageProvider;
       let treeProjectId: string | undefined;
+      let treeRootToken = '';
       if (mode === 'multi') {
-        treeProvider = requireProjectHandle(projectId).provider;
+        const handle = requireProjectHandle(projectId);
+        treeProvider = handle.provider;
+        treeRootToken = handle.rootToken;
         const decision = permission.authorize({
           actorId,
           action: 'read',
@@ -1345,16 +1437,42 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       const cursor = parseTreeCursor(url.searchParams.get('cursor'));
       const limit = parseTreeLimit(url.searchParams.get('limit'));
       const expectedSnapshot = parseTreeSnapshot(url.searchParams.get('snapshot'));
+      const includeHidden = url.searchParams.get('includeHidden') === '1';
+
+      /**
+       * 隐藏记录只对当前项目根有效（UX-02C-03-P1）：根被重新授权/替换后
+       * `rootToken` 变化，旧记录自动失效，不会把新根里同名的新文件继续隐藏。
+       * Legacy 没有项目身份，因此不参与过滤。
+       */
+      const hiddenRecords =
+        treeProjectId && managedFileStore && treeRootToken !== ''
+          ? managedFileStore.hiddenOf(treeProjectId).filter((record) => record.rootToken === treeRootToken)
+          : [];
 
       try {
-        const entries = await withDiskOp(treeProjectId, () =>
-          treeProvider.readDir(dir === '' ? '.' : dir),
-        );
+        const page = await withDiskOp(treeProjectId, async () => {
+          const raw = await treeProvider.readDir(dir === '' ? '.' : dir);
+          if (hiddenRecords.length === 0) return { entries: raw, hiddenCount: 0 };
+          const marked = await markVisibility(raw, {
+            level: dir,
+            records: hiddenRecords,
+            probe: treeProvider,
+            includeHidden,
+          });
+          return { entries: marked.entries, hiddenCount: marked.hiddenCount };
+        });
         // 排序 → 切片 → nextCursor 全在纯函数里，便于直接断言"没有静默截断"
         sendJson(
           res,
           200,
-          buildTreePage(entries, { projectId: treeProjectId, dir, cursor, limit, expectedSnapshot }),
+          buildTreePage(page.entries, {
+            projectId: treeProjectId,
+            dir,
+            cursor,
+            limit,
+            expectedSnapshot,
+            hiddenCount: page.hiddenCount,
+          }),
         );
       } catch (err) {
         if (err instanceof HttpError) throw err;
@@ -1536,6 +1654,117 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           name: request.name,
           kind: request.kind,
           relativePath: outcome.relativePath,
+        });
+        return;
+      }
+
+      /**
+       * 工作台隐藏 / 取消隐藏（UX-02C-03-P1）。
+       *
+       * 这是**可见性**操作，不是删除：不移动、不改写、不删除任何磁盘对象。
+       * 校验顺序：模式(501) → T1(403) → 显式同源 Origin(403) → 体/路径形状(400，零 IO)
+       * → 项目可用性(G-DISK 前置) → 项目级写授权(403) → 身份核验（`withDiskOp` 下）
+       * → 配置原子提交。
+       *
+       * 失败语义：
+       * - 目标不存在 → 404（不得登记"隐形路径"）；
+       * - 配置写不进去 → `ERR_PERSIST_FAILED`，内存投影不变；
+       * - 重复隐藏 / 重复取消 → 200 + `changed: false`（幂等，不写盘）。
+       */
+      const visibilityAction: 'hide' | 'unhide' | null =
+        pathname === '/api/workspace/hide'
+          ? 'hide'
+          : pathname === '/api/workspace/unhide'
+            ? 'unhide'
+            : null;
+      if (visibilityAction !== null) {
+        if (!runtime || !managedFileStore) {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持工作台隐藏',
+          );
+        }
+        requireSessionToken(req);
+        if (req.headers.origin === undefined) {
+          throw new HttpError(403, 'ERR_PERMISSION_DENIED', '变更类请求必须声明 Origin');
+        }
+        const parsed = parseVisibilityBody(body);
+        if (!parsed.ok) {
+          throw new HttpError(
+            httpStatusOfDomainError(parsed.errorCode),
+            parsed.errorCode,
+            publicMessageOf(parsed.errorCode),
+          );
+        }
+        const { request } = parsed;
+        const handle = requireProjectHandle(request.projectId);
+        const decision = permission.authorize({
+          actorId,
+          action: 'write',
+          resourcePath: request.path,
+          providerId: handle.providerId,
+        });
+        if (!decision.allowed) {
+          throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+        }
+
+        if (visibilityAction === 'unhide') {
+          // 取消隐藏**不需要**文件仍然存在：文件被外部删掉之后，记录必须能被清掉
+          const result = await managedFileStore.commitHidden({
+            projectId: request.projectId,
+            path: request.path,
+            hidden: false,
+          });
+          sendJson(res, 200, {
+            status: 'APPLIED',
+            projectId: request.projectId,
+            path: request.path,
+            hidden: false,
+            changed: result.changed,
+          });
+          return;
+        }
+
+        /**
+         * 隐藏前先确认"对象确实存在"，并记下它的身份。
+         *
+         * 放在 `withDiskOp` 里：QUIESCING / 结构变更进行中一律拒绝，
+         * 避免把一个正在被改名/移动的路径写进隐藏记录。
+         */
+        const probe = await withDiskOp(request.projectId, async () => {
+          if (typeof handle.provider.identityOf !== 'function') {
+            return { status: 'unsupported' as const };
+          }
+          return { status: 'ok' as const, identity: await handle.provider.identityOf(request.path) };
+        });
+        if (probe.status === 'unsupported') {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            '该项目的存储实现不提供对象身份，无法安全地登记隐藏记录',
+          );
+        }
+        if (probe.identity === null) {
+          throw new HttpError(
+            404,
+            'ERR_RESOURCE_NOT_FOUND',
+            PUBLIC_ERROR_MESSAGES.ERR_RESOURCE_NOT_FOUND ?? '该路径已不存在',
+          );
+        }
+        const result = await managedFileStore.commitHidden({
+          projectId: request.projectId,
+          path: request.path,
+          rootToken: handle.rootToken,
+          identity: probe.identity,
+          hidden: true,
+        });
+        sendJson(res, 200, {
+          status: 'APPLIED',
+          projectId: request.projectId,
+          path: request.path,
+          hidden: true,
+          changed: result.changed,
         });
         return;
       }
@@ -2174,6 +2403,11 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           outcome.errorCode === 'ERR_SESSION_STALE' ||
           outcome.errorCode === 'ERR_ROOT_CHANGED' ||
           outcome.errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED';
+        // 保存会换 inode：先刷新隐藏记录的身份，否则隐藏的文件会在下次刷新时"复活"
+        if (status === 'COMMITTED' && saveIdentity?.projectId) {
+          await refreshHiddenIdentityAfterSave(saveIdentity.projectId, saveIdentity.path);
+        }
+
         const httpStatus =
           status === 'COMMITTED'
             ? 200

@@ -125,6 +125,8 @@ function completeRootLevel(files: readonly string[]): TreeLevels {
       errorCode: null,
       loadingMore: false,
       snapshot: null,
+      // UX-02C-03-P1 给层状态加了"本层隐藏条目数"：这个夹具不涉及隐藏，固定 0
+      hiddenCount: 0,
     },
   };
 }

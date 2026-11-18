@@ -93,6 +93,30 @@ export function entryRelativePath(parentDir: string, name: string): string {
   return parentDir === '' ? name : `${parentDir}/${name}`;
 }
 
+/**
+ * 校验一条**完整**的项目内相对路径（UX-02C-03-P1）。
+ *
+ * 拆成「父目录 + 末段名称」后复用上面两条规则，因此绝对路径、盘符、UNC、
+ * `..`/`.`、空段、反斜杠、保留设备名都会在任何 IO 之前被拒。
+ * 返回值是规范化后的 `a/b/c`；空串（项目根）**不是**合法条目路径。
+ */
+export function validateEntryPath(raw: unknown): EntryNameCheck {
+  if (typeof raw !== 'string' || raw === '') {
+    return invalid('ERR_COMMAND_INVALID', '缺少条目路径');
+  }
+  if (raw.length > MAX_PARENT_DIR_LENGTH + MAX_ENTRY_NAME_LENGTH + 1) {
+    return invalid('ERR_COMMAND_INVALID', '路径过长');
+  }
+  const slash = raw.lastIndexOf('/');
+  const parent = slash < 0 ? '' : raw.slice(0, slash);
+  const name = slash < 0 ? raw : raw.slice(slash + 1);
+  const dir = validateParentDir(parent);
+  if (!dir.ok) return dir;
+  const checked = validateEntryName(name);
+  if (!checked.ok) return checked;
+  return { ok: true, value: entryRelativePath(dir.value, checked.value) };
+}
+
 /** 项目内相对路径 → 父目录（根下条目返回 ''）。仅做字符串拆分，不做 IO。 */
 export function parentDirOfEntry(path: string): string {
   const slash = path.lastIndexOf('/');

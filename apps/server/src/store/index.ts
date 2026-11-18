@@ -14,7 +14,16 @@ export {
   type StoreIo,
 } from './io.ts';
 export { createFileProjectStore, type FileProjectStore, type FileStoreOptions } from './file-store.ts';
-export { checksumOf, parseConfig, serializeConfig, PROJECT_ID_RE, type ConfigState } from './config.ts';
+export {
+  checksumOf,
+  parseConfig,
+  serializeConfig,
+  PROJECT_ID_RE,
+  MAX_HIDDEN_ENTRIES,
+  type ConfigHiddenEntry,
+  type ConfigState,
+  type ConfigStateInput,
+} from './config.ts';
 export { LOG_HEAD_HASH, readLog, type LogReadResult, type RevocationEntry } from './revocation-log.ts';
 export type {
   ConfigSource,

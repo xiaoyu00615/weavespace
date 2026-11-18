@@ -1,0 +1,53 @@
+UX-02C-03-P1 · 工作台隐藏 / 取消隐藏 —— 测试日志（简洁文本）
+
+== 完整门禁 ==
+npm run test:p0            tests 957 / pass 955 / fail 0 / skip 2
+npm run typecheck          OK
+npm run typecheck:apps     OK
+npm run build:shell        OK（408.93 kB / gzip 125.11 kB）
+git diff --check           OK
+
+== 本轮新增 / 相关套件（逐条）==
+44-s11ux02b02-project-store            pass=28 fail=0 skip=0   （S-23 迁移目标版本 2→3）
+72-s11ux02c02-structure-host           pass=16 fail=0 skip=0
+73-s11ux02c02-structure-shell          pass=11 fail=0 skip=0
+74-s11ux02c02r1-view-barrier-…         pass=9  fail=0 skip=1
+75-s11ux02c02r11-page-instance         pass=8  fail=0 skip=0
+76-s11ux02c02r11-shell-host-integration pass=4 fail=0 skip=0
+77-s11ux02c02r12-page-instance-storage pass=6  fail=0 skip=0
+78-s11ux02c02r12-reservation-rename    pass=7  fail=0 skip=0
+79-s11ux02c02r12-restore-takeover      pass=5  fail=0 skip=0
+80-s11ux02c02r13-restore-reclaim       pass=8  fail=0 skip=0
+81-s11ux02c02r13-reclaim-batching      pass=6  fail=0 skip=0
+82-s11ux02c03p1-visibility-host        pass=17 fail=0 skip=0   ← 新增
+83-s11ux02c03p1-visibility-tree        pass=6  fail=0 skip=0   ← 新增
+84-s11ux02c03p1-visibility-shell       pass=8  fail=0 skip=0   ← 新增
+85-s11ux02c03p1-visibility-drafts      pass=5  fail=0 skip=0   ← 新增
+
+== 实现前（红）==
+82  17/17 fail（隐藏端点当时 501；ConfigState 无 hidden；FileProjectStore 无 commitHidden）
+83   6/6  fail（同上：/api/tree 没有 includeHidden，也没有 hiddenCount）
+84  无法加载（apps/shell/src/state/visibility.ts 尚不存在）
+
+== 变异探针（跑完自动还原；PROBE-FAILURES=0）==
+P1  /api/tree 不做隐藏过滤
+      82 fail=7（01a/01c/01d/01e/01i/01j/…）
+      83 fail=3（02a/02b/02c）
+      84 fail=1（03a）
+P2  保存成功后不刷新隐藏记录身份
+      85 fail=1（04c）
+P4  rebound 也当作仍然隐藏
+      82 fail=1（01m）
+      85 fail=1（05b）
+
+== 真实 Chrome（docs/evidence/ux-02c-03-p1/green/browser-verification.json）==
+checks = 20 / failed = 0
+截图 7 张（含 02b-tree-zoom.png 为 3× 局部放大）
+
+== 中间修复记录（浏览器阶段暴露、已回归）==
+1. 保存换 inode → 隐藏记录被判 rebound → 文件复活
+   修法：/api/save COMMITTED 后刷新同路径记录身份；用例 85-04c；探针 P2
+2. 开关首次点击不生效（dispatch 后 stateRef 仍是旧值）
+   修法：showHiddenRef 同步镜像；浏览器断言 aria-pressed false→true 且条目回来
+3. 260px 侧栏里文字胶囊把工具栏挤到换行；.tree__meta 被挤成"一字一行"
+   修法：开关改图标 + 计数；meta 单行截断（真实浏览器截图复核）

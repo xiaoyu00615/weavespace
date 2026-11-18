@@ -126,6 +126,15 @@ export interface TreeEntryDto {
   extension: string;
   /** 项目内相对路径（正斜杠）。**永不是绝对路径。** */
   relPath: string;
+  /**
+   * 该条目**自身**有一条（核验通过的）隐藏记录（UX-02C-03-P1）。
+   *
+   * 只有 `includeHidden=1` 时才会真正出现在结果里；默认视图直接把它过滤掉，
+   * 这个字段仍然保留，是为了让"显示隐藏项"的界面能给出明显但克制的标识。
+   */
+  hidden?: true;
+  /** 自身没有记录，但某个上级目录被隐藏：值是那个上级的相对路径。 */
+  hiddenBy?: string;
 }
 
 export interface TreePageMeta {
@@ -143,6 +152,14 @@ export interface TreePageMeta {
    * 每一页都拿到同一个值。续页必须原样回传，服务端据此发现集合变化。
    */
   snapshot: string;
+  /**
+   * 本层**隐藏条目**的数量（UX-02C-03-P1）。
+   *
+   * 与 `total` 的关系：`total` 只统计本次视图里会返回的条目；`hiddenCount` 统计
+   * 被隐藏（自身记录或被上级隐藏）的条目。只有 `includeHidden=1` 时两者才重叠
+   * （此时隐藏项也在 `entries` 里，并带 `hidden` / `hiddenBy` 标记）。
+   */
+  hiddenCount: number;
 }
 
 export interface TreePageDto {
@@ -159,6 +176,10 @@ export const TREE_PAGE_MAX_LIMIT = 2000;
 interface DirEntryLike {
   readonly name: string;
   readonly kind: TreeEntryKind;
+  /** 该条目自身的隐藏记录已核验通过（UX-02C-03-P1）。 */
+  readonly hidden?: boolean;
+  /** 上级隐藏目录的相对路径（自身没有记录时才有）。 */
+  readonly hiddenBy?: string;
 }
 
 /** 扩展名（小写含点）。点开头的隐藏文件与无扩展名文件都返回空串。 */
@@ -216,6 +237,13 @@ export interface BuildTreePageOptions {
   limit?: number;
   /** 客户端首轮分页带回的快照；不一致时抛 `ERR_DIR_CHANGED`。 */
   expectedSnapshot?: string | null;
+  /**
+   * 本层隐藏条目数（UX-02C-03-P1）。
+   *
+   * 默认从 `entries` 里的隐藏标记统计；调用方在**过滤之后**建页时必须显式给出
+   * 真实数量，否则"此目录有 N 个隐藏项"会变成 0。
+   */
+  hiddenCount?: number;
 }
 
 /**
@@ -233,11 +261,18 @@ export function directorySnapshotOf(
   entries: readonly TreeEntryDto[],
   level: string,
   projectId?: string,
+  hiddenCount = 0,
 ): string {
   const hash = createHash('sha256');
-  hash.update(`ws-tree-v1\n${projectId ?? ''}\n${level}\n`);
+  // hiddenCount 参与哈希：隐藏集合变化必须让旧游标失效，否则续页会把
+  // "少了一条"当成"读完了"（UX-02C-03-P1）。
+  hash.update(`ws-tree-v2\n${projectId ?? ''}\n${level}\n${hiddenCount}\n`);
   for (const entry of entries) {
-    hash.update(`${entry.kind}\u0000${entry.name}\u0000${entry.relPath}\u0000${entry.extension}\u0000\n`);
+    hash.update(
+      `${entry.kind}\u0000${entry.name}\u0000${entry.relPath}\u0000${entry.extension}\u0000${
+        entry.hidden ? '1' : '0'
+      }\u0000${entry.hiddenBy ?? ''}\u0000\n`,
+    );
   }
   return hash.digest('hex').slice(0, 32);
 }
@@ -263,11 +298,15 @@ export function buildTreePage(
       kind: entry.kind,
       extension: entry.kind === 'folder' ? '' : extensionOf(entry.name),
       relPath: level ? `${level}/${entry.name}` : entry.name,
+      ...(entry.hidden ? { hidden: true as const } : {}),
+      ...(entry.hiddenBy ? { hiddenBy: entry.hiddenBy } : {}),
     })),
   );
 
   const total = all.length;
-  const snapshot = directorySnapshotOf(all, level, options.projectId);
+  const hiddenCount =
+    options.hiddenCount ?? all.reduce((sum, entry) => sum + (entry.hidden || entry.hiddenBy ? 1 : 0), 0);
+  const snapshot = directorySnapshotOf(all, level, options.projectId, hiddenCount);
 
   // 目录在两页之间变了：失败必须显式，绝不返回一份可能漏项的"成功"结果。
   // 错误码由 `server.ts` 统一映射成 409 + 公共文案；这里只负责判定，不碰 HTTP。
@@ -291,6 +330,7 @@ export function buildTreePage(
       nextCursor: end < total && page.length > 0 ? String(end) : null,
       total,
       snapshot,
+      hiddenCount,
     },
   };
 }

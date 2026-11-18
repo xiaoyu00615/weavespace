@@ -152,6 +152,13 @@ export interface TreeEntry {
   extension: string;
   /** 项目内相对路径；**永不是绝对路径**。 */
   relPath: string;
+  /**
+   * 该条目自身有一条（核验通过的）隐藏记录（UX-02C-03-P1）。
+   * 只在 `includeHidden=1` 的请求里出现；默认视图直接过滤掉。
+   */
+  hidden?: boolean;
+  /** 自身没有记录，但某个上级目录被隐藏：值是那个上级的相对路径。 */
+  hiddenBy?: string;
 }
 
 export interface TreePageMeta {
@@ -167,7 +174,49 @@ export interface TreePageMeta {
    * 旧版服务端不返回该字段时为 null。
    */
   snapshot: string | null;
+  /** 本层隐藏条目数（UX-02C-03-P1）；旧版服务端不返回时按 0 处理。 */
+  hiddenCount?: number;
 }
+
+/**
+ * 隐藏 / 取消隐藏的结果（UX-02C-03-P1）。
+ *
+ * `changed: false` 表示"这条指令没有改变任何记录"（幂等命中），**不是**失败；
+ * 失败一定是 `REJECTED` 且带 `errorCode`。
+ */
+export type VisibilityOutcome =
+  | {
+      status: 'APPLIED';
+      projectId: string;
+      path: string;
+      hidden: boolean;
+      changed: boolean;
+    }
+  | {
+      status: 'REJECTED';
+      errorCode: string | null;
+      message?: string;
+      httpStatus?: number;
+    }
+  /**
+   * 请求已发出但没拿到结论（网络中断/超时）。
+   *
+   * 隐藏是幂等操作，所以处理方式只有一条：**刷新该目录看真实结果**，
+   * 不自动重发（重发也无害，但会让用户看到两次提示）。
+   */
+  | { status: 'UNKNOWN'; message: string };
+
+/** 隐藏记录当前是否仍然成立：`missing` / `rebound` 都是"记录还在，但已不生效"。 */
+export type HiddenEntryState = 'active' | 'missing' | 'rebound' | 'unverified';
+
+export interface HiddenEntryDto {
+  path: string;
+  state: HiddenEntryState;
+}
+
+export type HiddenListOutcome =
+  | { status: 'APPLIED'; projectId: string; entries: HiddenEntryDto[] }
+  | { status: 'REJECTED'; errorCode: string | null; message?: string };
 
 export type TreeQueryOutcome =
   | {
@@ -464,6 +513,13 @@ export interface WeaveSpaceClient {
     limit?: number,
     /** 本轮分页的目录快照（仅续页传入，第一页为 null）。 */
     snapshot?: string | null,
+    /**
+     * `includeHidden`（UX-02C-03-P1）：仅"显示隐藏项"打开时为 true。
+     *
+     * 它不是过滤开关而是**视图**开关：Host 在分页之前决定返回哪些条目，
+     * 因此 total / nextCursor / snapshot 始终与这一份视图自洽。
+     */
+    options?: { includeHidden?: boolean },
   ): Promise<TreeQueryOutcome>;
   /**
    * 打开（或重新打开）一个文档。
@@ -583,6 +639,17 @@ export interface WeaveSpaceClient {
   /* ---- UX-02C-02：真实改名 / 移动 ---- */
 
   /** 同一目录内改名：目标目录由 Host 从 sourcePath 派生，浏览器无法偷偷换目录。 */
+  /**
+   * 从文件树隐藏（UX-02C-03-P1）：只改工作台可见性，**不删除、不移动任何磁盘对象**。
+   *
+   * 幂等：重复隐藏同一路径返回 `APPLIED + changed:false`。
+   */
+  hideEntry(projectId: string, path: string): Promise<VisibilityOutcome>;
+  /** 取消隐藏（幂等；目标文件已不存在时同样可以清掉记录）。 */
+  unhideEntry(projectId: string, path: string): Promise<VisibilityOutcome>;
+  /** 查询隐藏记录及其当前状态（只读；含 missing / rebound 这类失效态）。 */
+  hiddenEntries(projectId: string): Promise<HiddenListOutcome>;
+
   renameEntry(projectId: string, sourcePath: string, name: string): Promise<StructureChangeOutcome>;
   /** 同一授权项目内移动：只提交项目内相对目录 + 单段名称。 */
   moveEntry(
@@ -599,6 +666,11 @@ interface ApiEnvelope {
   message?: string;
   document?: DocumentSnapshot;
   contentVersion?: string | null;
+  /** 可见性端点回执（UX-02C-03-P1）。 */
+  projectId?: string;
+  path?: string;
+  hidden?: boolean;
+  changed?: boolean;
 }
 
 /** 单次请求上限：请求挂住时也要让保存流程收敛为 UNKNOWN，而不是永久锁定（F02）。 */
@@ -685,13 +757,14 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         ? ((body as { nodes: ResourceNode[] }).nodes ?? [])
         : [];
     },
-    async listTree(projectId, dir, cursor, limit, snapshot) {
+    async listTree(projectId, dir, cursor, limit, snapshot, options) {
       const query = new URLSearchParams();
       if (projectId) query.set('projectId', projectId);
       if (dir) query.set('dir', dir);
       if (cursor !== null && cursor !== undefined) query.set('cursor', cursor);
       if (limit !== undefined) query.set('limit', String(limit));
       if (snapshot !== null && snapshot !== undefined) query.set('snapshot', snapshot);
+      if (options?.includeHidden) query.set('includeHidden', '1');
       const suffix = query.toString();
       const { httpStatus, body } = await request(baseUrl, `/api/tree${suffix ? `?${suffix}` : ''}`);
       if (httpStatus !== 200 || body.status !== 'APPLIED') {
@@ -718,6 +791,7 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
           nextCursor: page.nextCursor ?? null,
           total: page.total,
           snapshot: typeof page.snapshot === 'string' ? page.snapshot : null,
+          hiddenCount: typeof page.hiddenCount === 'number' ? page.hiddenCount : 0,
         },
       };
     },
@@ -1212,7 +1286,116 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         { projectId, sourcePath, targetParentDir, targetName: name },
       );
     },
+
+    async hideEntry(projectId, path) {
+      return postVisibility('/api/workspace/hide', projectId, path, true);
+    },
+
+    async unhideEntry(projectId, path) {
+      return postVisibility('/api/workspace/unhide', projectId, path, false);
+    },
+
+    async hiddenEntries(projectId) {
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return {
+          status: 'REJECTED' as const,
+          errorCode: 'ERR_PERMISSION_DENIED',
+          message: '无法获取会话令牌',
+        };
+      }
+      let response: { httpStatus: number; body: ApiEnvelope };
+      try {
+        response = await request(
+          baseUrl,
+          `/api/workspace/hidden?projectId=${encodeURIComponent(projectId)}`,
+          { headers: { 'x-ws-token': token } },
+        );
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_STORAGE_IO', message: '读取隐藏记录失败' };
+      }
+      const { httpStatus, body } = response;
+      if (httpStatus !== 200 || body.status !== 'APPLIED') {
+        return {
+          status: 'REJECTED' as const,
+          errorCode: body.errorCode ?? null,
+          message: body.message,
+        };
+      }
+      const raw = (body as unknown as { entries?: unknown }).entries;
+      const entries: HiddenEntryDto[] = [];
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          if (typeof item !== 'object' || item === null) continue;
+          const path = (item as { path?: unknown }).path;
+          const state = (item as { state?: unknown }).state;
+          if (typeof path !== 'string') continue;
+          entries.push({
+            path,
+            state:
+              state === 'missing' || state === 'rebound' || state === 'unverified'
+                ? state
+                : 'active',
+          });
+        }
+      }
+      return { status: 'APPLIED' as const, projectId, entries };
+    },
   };
+
+  /**
+   * 隐藏 / 取消隐藏共用的请求与收敛（UX-02C-03-P1）。
+   *
+   * 与结构变更不同，这里**没有 UNKNOWN 的磁盘副作用**：隐藏只写工作台配置，
+   * 且是幂等的。因此网络中断只报告"未确认"，由调用方刷新目录核对。
+   */
+  async function postVisibility(
+    endpoint: string,
+    projectId: string,
+    path: string,
+    hidden: boolean,
+  ): Promise<VisibilityOutcome> {
+    let token: string;
+    try {
+      token = await sessionToken();
+    } catch {
+      return {
+        status: 'REJECTED',
+        errorCode: 'ERR_PERMISSION_DENIED',
+        message: '无法获取会话令牌',
+        httpStatus: 403,
+      };
+    }
+    let response: { httpStatus: number; body: ApiEnvelope };
+    try {
+      response = await request(baseUrl, endpoint, {
+        method: 'POST',
+        headers: { 'x-ws-token': token },
+        body: JSON.stringify({ projectId, path }),
+      });
+    } catch {
+      return { status: 'UNKNOWN', message: '网络中断或请求超时，隐藏状态未确认' };
+    }
+    const { httpStatus, body } = response;
+    if (httpStatus === 200 && body.status === 'APPLIED') {
+      return {
+        status: 'APPLIED',
+        projectId: typeof body.projectId === 'string' ? body.projectId : projectId,
+        path: typeof body.path === 'string' ? body.path : path,
+        hidden: body.hidden === true ? true : body.hidden === false ? false : hidden,
+        // 缺失 `changed` 时按"这次改了"处理：宁可提示一次，也不假装什么都没发生
+        changed: body.changed === false ? false : true,
+      };
+    }
+    return {
+      status: 'REJECTED',
+      errorCode: body.errorCode ?? (httpStatus === 200 ? 'ERR_COMMAND_INTERNAL' : null),
+      message: body.message ?? (hidden ? '隐藏失败' : '取消隐藏失败'),
+      httpStatus,
+    };
+  }
 
   /**
    * 两个结构变更端点共用的请求/收敛逻辑。
@@ -1390,6 +1573,7 @@ export function createDemoClient(
           nextCursor: null,
           total: entries.length,
           snapshot: null,
+          hiddenCount: 0,
         },
       };
     },
@@ -1549,6 +1733,33 @@ export function createDemoClient(
         errorCode: 'ERR_COMMAND_UNSUPPORTED',
         message: '演示模式不移动真实文件',
         httpStatus: 501,
+      };
+    },
+
+    // 演示模式没有工作台配置：绝不"假装隐藏"，也不在演示树里凭空消失一行
+    async hideEntry() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式不支持隐藏（没有真实工作区配置）',
+        httpStatus: 501,
+      };
+    },
+
+    async unhideEntry() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式不支持取消隐藏',
+        httpStatus: 501,
+      };
+    },
+
+    async hiddenEntries() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式没有隐藏记录',
       };
     },
   };

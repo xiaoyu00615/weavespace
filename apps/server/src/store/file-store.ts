@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ERROR_CODES } from '../../../../packages/contracts/index.ts';
+import { sameEntryPath } from '../../../../packages/storage/entry-name.ts';
 import {
   BACKUP_FILE,
   CONFIG_FILE,
@@ -28,7 +29,15 @@ import {
   createNodeStoreIo,
   type StoreIo,
 } from './io.ts';
-import { parseConfig, serializeConfig, type ConfigRevokedEntry, type ConfigState, type ParsedConfig } from './config.ts';
+import {
+  MAX_HIDDEN_ENTRIES,
+  parseConfig,
+  serializeConfig,
+  type ConfigHiddenEntry,
+  type ConfigRevokedEntry,
+  type ConfigState,
+  type ParsedConfig,
+} from './config.ts';
 import { appendRevocation, headerLine, readLog, type LogReadResult } from './revocation-log.ts';
 import type {
   ConfigSource,
@@ -63,6 +72,32 @@ export interface FileProjectStore {
   commitAdd(entry: StoredProjectRecord & { readonly opId: string }): Promise<void>;
   commitRename(input: { projectId: string; name: string; opId: string }): Promise<void>;
   commitRevoke(input: { projectId: string; opId: string }): Promise<StoreRevokeReceipt>;
+  /**
+   * 该项目的隐藏记录（只读内存投影，按路径升序）。
+   *
+   * 只返回属于**现存项目**的记录：项目被撤销后其记录不再对外可见
+   * （撤销时也会从配置里清掉，这里兜住"墓碑已生效、配置尚未补写"的中间态）。
+   */
+  hiddenOf(projectId: string): readonly ConfigHiddenEntry[];
+  /**
+   * 写入 / 删除一条隐藏记录（UX-02C-03-P1）。
+   *
+   * 语义：
+   * - `hidden: true` → 存在同路径记录时**替换身份**（幂等），否则追加；
+   * - `hidden: false` → 删除该路径的记录（不存在则 no-op）；
+   * - 内容没有变化时**不写盘、不推进 `commitSeq`**，返回 `changed: false`。
+   *
+   * 失败语义：配置写入是唯一的提交点，写不进去就抛 `ERR_PERSIST_FAILED`，
+   * 内存投影保持原样 —— 绝不出现"接口说成功、重启后记录没了"。
+   */
+  commitHidden(input: {
+    projectId: string;
+    path: string;
+    rootToken?: string;
+    identity?: string;
+    hidden: boolean;
+    at?: string;
+  }): Promise<{ changed: boolean }>;
   queryOp(opId: string): OpOutcome;
   /** 证据 + 归属（只读磁盘）：`unknown` 时归属恒为 `null`。 */
   opEvidence(opId: string): OpEvidence;
@@ -255,7 +290,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
     // ---- 首次初始化：配置与日志都不存在（该判定独立于其它分支）----
     if (primaryText === undefined && backupText === undefined && logText === undefined) {
-      const initial: ConfigState = { version: 2, commitSeq: 0, issuedIds: [], revoked: [], projects: [] };
+      const initial: ConfigState = {
+        version: 3,
+        commitSeq: 0,
+        issuedIds: [],
+        revoked: [],
+        projects: [],
+        hidden: [],
+      };
       writeConfigAtomic(initial);
       materializeLogHeader();
       return {
@@ -347,8 +389,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     for (const id of revokedIds) issuedIds.add(id);
     for (const project of visible) issuedIds.add(project.projectId);
 
+    // 隐藏记录只保留"仍然存在的项目"：已撤销项目的记录在投影里直接丢弃，
+    // 既不会让旧项目复活，也不会让配置在下次写入前一直带着无效条目。
+    const hidden = (parsed?.state.hidden ?? []).filter(
+      (entry) => !revokedIds.has(entry.projectId) && visible.some((project) => project.projectId === entry.projectId),
+    );
+
     const config: ConfigState = {
-      version: 2,
+      version: 3,
       commitSeq,
       issuedIds: [...issuedIds],
       revoked: configRevoked,
@@ -362,6 +410,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         ...(project.grantSource ? { grantSource: project.grantSource } : {}),
         ...(project.createdByOp ? { createdByOp: project.createdByOp } : {}),
       })),
+      hidden,
     };
 
     return {
@@ -583,7 +632,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         throw domainError(ERROR_CODES.ERR_STORE_ID_REUSED, `projectId 已签发过，不得复用: ${entry.projectId}`);
       }
       const next: ConfigState = {
-        version: 2,
+        version: 3,
         commitSeq: current.commitSeq + 1,
         issuedIds: [...current.issuedIds, entry.projectId],
         revoked: current.revoked,
@@ -601,6 +650,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
             createdByOp: entry.opId,
           },
         ],
+        hidden: current.hidden,
       };
       writeConfigAtomic(next);
       applyConfig(next);
@@ -612,13 +662,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       assertMutationsAllowed();
       const project = assertProjectKnown(input.projectId);
       const next: ConfigState = {
-        version: 2,
+        version: 3,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
         projects: current.projects.map((entry) =>
           entry.projectId === input.projectId ? { ...project, name: input.name } : entry,
         ),
+        hidden: current.hidden,
       };
       writeConfigAtomic(next);
       applyConfig(next);
@@ -702,11 +753,13 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
       // ---- step 3：补写配置（失败不回滚）----
       const next: ConfigState = {
-        version: 2,
+        version: 3,
         commitSeq: seq,
         issuedIds: current.issuedIds,
         revoked: [...current.revoked, { projectId: input.projectId, revokedAtSeq: seq, opId: input.opId }],
         projects: current.projects.filter((project) => project.projectId !== input.projectId),
+        // 项目已被撤销：它的隐藏记录随之作废（不删除任何磁盘文件，只是不再登记）
+        hidden: current.hidden.filter((entry) => entry.projectId !== input.projectId),
       };
       try {
         writeConfigAtomic(next);
@@ -728,6 +781,95 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
     issuedIds() {
       return current.issuedIds;
+    },
+
+    hiddenOf(projectId) {
+      if (!current.projects.some((project) => project.projectId === projectId)) return [];
+      return current.hidden
+        .filter((entry) => entry.projectId === projectId)
+        .slice()
+        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    },
+
+    async commitHidden(input) {
+      assertOpen();
+      assertMutationsAllowed();
+      assertProjectKnown(input.projectId);
+      if (typeof input.hidden !== 'boolean') {
+        // 缺省绝不能默认成"取消隐藏"：那会让一次写错的调用悄悄清掉记录
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, '必须显式声明 hidden');
+      }
+
+      const existing = current.hidden.find(
+        (entry) => entry.projectId === input.projectId && sameEntryPath(entry.path, input.path),
+      );
+
+      if (!input.hidden) {
+        if (!existing) return { changed: false };
+        const next: ConfigState = {
+          version: 3,
+          commitSeq: current.commitSeq + 1,
+          issuedIds: current.issuedIds,
+          revoked: current.revoked,
+          projects: current.projects,
+          hidden: current.hidden.filter((entry) => entry !== existing),
+        };
+        try {
+          writeConfigAtomic(next);
+        } catch (err) {
+          // 写不进去 = 没生效：内存投影保持原样，绝不假装成功
+          throw Object.assign(new Error('取消隐藏未能写入工作区配置'), {
+            errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+            cause: err,
+          });
+        }
+        applyConfig(next);
+        state = { ...state, commitSeq: next.commitSeq };
+        return { changed: true };
+      }
+
+      const rootToken = input.rootToken ?? '';
+      const identity = input.identity ?? '';
+      if (rootToken === '' || identity === '') {
+        // 没有根令牌/对象身份就无法在下次读取时判断"还是不是同一个对象"
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, '缺少根令牌或对象身份，不能登记隐藏记录');
+      }
+      if (existing && existing.rootToken === rootToken && existing.identity === identity) {
+        // 完全相同的记录：幂等 no-op（不写盘、不推进序号）
+        return { changed: false };
+      }
+      if (!existing && current.hidden.length >= MAX_HIDDEN_ENTRIES) {
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, `隐藏记录已达上限（${MAX_HIDDEN_ENTRIES} 条）`);
+      }
+
+      const record: ConfigHiddenEntry = {
+        projectId: input.projectId,
+        path: input.path,
+        rootToken,
+        identity,
+        hiddenAt: input.at ?? clock().toISOString(),
+      };
+      const next: ConfigState = {
+        version: 3,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: existing
+          ? current.hidden.map((entry) => (entry === existing ? record : entry))
+          : [...current.hidden, record],
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        throw Object.assign(new Error('隐藏记录未能写入工作区配置'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true };
     },
 
     queryOp(opId) {

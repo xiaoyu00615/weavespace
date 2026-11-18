@@ -15,22 +15,26 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-/** 本轮实现的命令（UX-02C-02 起 rename / move 不再是占位）。 */
+/** 本轮实现的命令（UX-02C-03-P1 起 `hide` / `unhide` 落地）。 */
 export type ActiveTreeCommand =
   | 'new-file'
   | 'new-folder'
   | 'new-supported'
   | 'refresh'
   | 'rename'
-  | 'move';
+  | 'move'
+  | 'hide'
+  | 'unhide';
 
 /**
  * 未来命令注册表（占位，不实现、不渲染）。
  * 保留 id 是为了让后续阶段接到同一套 `TreeCommandsContext`，不必重做菜单框架。
+ *
+ * `hide-from-workspace` 已在 UX-02C-03-P1 落地为真实命令（`hide` / `unhide`），
+ * 因此从占位表里移除——占位表只放"确实还没有实现"的东西。
  */
 export const RESERVED_TREE_COMMANDS = [
   'delete-local',
-  'hide-from-workspace',
   'set-alias',
   'set-tags',
   'set-row-color',

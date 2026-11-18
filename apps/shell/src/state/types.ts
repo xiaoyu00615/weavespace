@@ -28,6 +28,15 @@ export interface ResourceNodeState {
   extension?: string;
   path?: string;
   children?: ResourceNodeState[];
+  /**
+   * 该行**自身**有隐藏记录（UX-02C-03-P1）。
+   *
+   * 只有"显示隐藏项"打开时才会出现；它是展示状态，不是权限状态：
+   * 隐藏的文件照样能打开、能保存（已打开的标签完全不受影响）。
+   */
+  hidden?: boolean;
+  /** 自身没有记录，但上级目录被隐藏：值是那个上级的相对路径。 */
+  hiddenBy?: string;
 }
 
 export type SaveUiStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN' | 'DEMO' | null;
@@ -132,6 +141,13 @@ export interface WorkspaceState {
   expandedByProject: Record<string, Record<string, boolean>>;
   selectedByProject: Record<string, string | null>;
   loadingByProject: Record<string, boolean>;
+  /**
+   * 是否在文件树里显示隐藏项（UX-02C-03-P1）。
+   *
+   * 这是**视图开关**，不是持久化配置：它决定下一次 `/api/tree` 是否带
+   * `includeHidden=1`。隐藏记录本身在 Host 的工作区配置里，与它无关。
+   */
+  showHidden: boolean;
 }
 
 export type WorkspaceAction =
@@ -196,6 +212,13 @@ export type WorkspaceAction =
   | { type: 'TREE_LEVEL_ERROR'; projectId: string; dir: string; errorCode: string | null }
   /** 刷新：只作废这一个项目的层表，其他项目引用不变。 */
   | { type: 'TREE_RESET'; projectId: string }
+  /**
+   * 切换"显示隐藏项"（UX-02C-03-P1）。
+   *
+   * 只改视图开关；层表必须由调用方 `TREE_RESET` 后重新拉取——已加载的层里
+   * 没有隐藏条目，留着就会出现"点了开关却什么都没变"。
+   */
+  | { type: 'SET_SHOW_HIDDEN'; value: boolean }
   /**
    * 结构变更已由 Host 明确确认（UX-02C-02）：删掉旧路径下的层与展开/选择记录。
    * 只动这一个项目；层表重新加载由 DocumentActions 负责。

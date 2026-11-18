@@ -50,6 +50,7 @@ export const INITIAL_STATE: WorkspaceState = {
   expandedByProject: {},
   selectedByProject: {},
   loadingByProject: {},
+  showHidden: false,
 };
 
 function clampRatio(value: number): number {
@@ -530,6 +531,15 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case 'TREE_RESET':
       // 只作废这一个项目；其他项目的层表引用原样保留（T-16）
       return withTreeLevels(state, action.projectId, resetLevels());
+
+    /**
+     * 显示隐藏项（UX-02C-03-P1）。
+     *
+     * 只翻开关：层表由调用方随后 `TREE_RESET` + 重新拉取。这里刻意**不**顺手清层，
+     * 因为 reducer 无法保证"清完之后一定有人重新加载"，那会把树留在空白状态。
+     */
+    case 'SET_SHOW_HIDDEN':
+      return state.showHidden === action.value ? state : { ...state, showHidden: action.value };
 
     /**
      * UX-02C-02：Host 明确 APPLIED 之后才清理旧路径。

@@ -1,0 +1,135 @@
+{
+  "run": "green",
+  "steps": {
+    "projectId": "ux02c03p1-green-375940-proja",
+    "hideFile": {
+      "noticeHide": "已从文件树隐藏「a.md」（磁盘文件未删除、内容未改动；可用「显示隐藏项」找回）",
+      "diskBefore": "# a.md\n",
+      "diskAfterHide": "# a.md\n",
+      "treeHasA": false,
+      "tabsBefore": 1,
+      "tabsAfter": 1,
+      "draftText": "# DRAFT-BEFORE-HIDE\n"
+    },
+    "saveWhileHidden": {
+      "savedNotice": "已保存到磁盘",
+      "diskAfterSave": "# DRAFT-BEFORE-HIDE\n"
+    },
+    "showHidden": {
+      "togglePressedBefore": "false",
+      "togglePressedAfter": "true",
+      "toggleHit": "OK",
+      "shownA": true,
+      "badgeA": "隐藏",
+      "badgeBox": {
+        "text": "隐藏",
+        "x": 389,
+        "y": 166,
+        "w": 32,
+        "h": 16,
+        "font": "10px"
+      }
+    },
+    "unhide": {
+      "badgeAfterUnhide": "",
+      "notice": "已取消隐藏「a.md」：文件树恢复显示（磁盘内容自始至终未改动）"
+    },
+    "treeAfterSelect": [
+      {
+        "name": "ux02c03p1-green-375940-projA",
+        "expanded": "true",
+        "badge": ""
+      },
+      {
+        "name": "docs",
+        "expanded": "true",
+        "badge": "隐藏"
+      },
+      {
+        "name": "sub",
+        "expanded": "false",
+        "badge": "随上级隐藏"
+      },
+      {
+        "name": "guide.md",
+        "expanded": null,
+        "badge": "随上级隐藏"
+      },
+      {
+        "name": "a.md",
+        "expanded": null,
+        "badge": ""
+      },
+      {
+        "name": "b.md",
+        "expanded": null,
+        "badge": ""
+      },
+      {
+        "name": "c.md",
+        "expanded": null,
+        "badge": ""
+      },
+      {
+        "status": "已加载 6 个条目 · 当前项目"
+      }
+    ],
+    "dirHide": {
+      "docsVisibleBefore": true,
+      "docsHiddenInDefault": false,
+      "docsShownWithBadge": "隐藏",
+      "guideBadge": "随上级隐藏"
+    },
+    "parentChildIndependent": {
+      "subHiddenBadge": "隐藏",
+      "docsBackBadge": "",
+      "subBadge": "隐藏"
+    },
+    "restoreDefault": {
+      "finalDocs": true,
+      "finalSub": false,
+      "finalPressed": "false",
+      "finalDisk": "# DRAFT-BEFORE-HIDE\n"
+    },
+    "hiddenRecords": {
+      "status": "APPLIED",
+      "projectId": "ux02c03p1-green-375940-proja",
+      "entries": [
+        {
+          "path": "docs/sub",
+          "state": "active"
+        }
+      ]
+    }
+  },
+  "checks": {
+    "拿到真实项目 id": true,
+    "隐藏后默认树不再显示该文件": true,
+    "隐藏不改动磁盘内容": true,
+    "隐藏不关闭标签": true,
+    "隐藏不丢草稿": true,
+    "提示说明文件未被删除": true,
+    "隐藏中的文件可以正常保存": true,
+    "\"显示隐藏项\"是真实交互": true,
+    "隐藏项重新出现": true,
+    "隐藏项有明确标记": true,
+    "取消隐藏后标记消失": true,
+    "隐藏目录从默认树消失": true,
+    "隐藏目录有自身标记": true,
+    "子项标记为\"随上级隐藏\"": true,
+    "取消父目录后父目录恢复普通": true,
+    "取消父目录不会清掉子项自身记录": true,
+    "默认视图恢复：docs 可见、sub 仍隐藏": true,
+    "开关状态回到关闭": true,
+    "全程磁盘内容只在保存时变化": true,
+    "隐藏记录持久化在 Host 配置中": true
+  },
+  "screenshots": [
+    "00-initial-tree.png",
+    "01-hidden-draft-kept.png",
+    "02-show-hidden-on.png",
+    "03-dir-hidden-with-subtree.png",
+    "04-parent-child-independent.png",
+    "05-default-view-restored.png"
+  ]
+}
