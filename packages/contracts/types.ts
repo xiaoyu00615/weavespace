@@ -84,6 +84,18 @@ export interface SaveResult {
   errorCode?: ErrorCode;
   contentVersion?: string;
   durationMs?: number;
+  /**
+   * 本次提交写入的**对象身份**（`dev:ino`，UX-02C-03-P1-R1）。
+   *
+   * 由 Provider 在 `rename` **之前**对临时文件取 `lstat` 得到：rename 之后它
+   * 就是目标路径上的对象。调用方据此回答一个只有写入方才能回答的问题——
+   * "现在这个路径上还是不是我刚写进去的那个对象？"
+   *
+   * 它是**写入侧证据**，不是授权凭据：缺失表示"Provider 无法证明"，调用方
+   * 必须按"无法证明"处理（跳过依赖归属判断的动作），不得用路径上的现有身份顶替。
+   * 目前只有 `LocalProvider` 提供；Demo / 测试替身不提供。
+   */
+  identity?: string;
 }
 
 export interface PluginManifest {

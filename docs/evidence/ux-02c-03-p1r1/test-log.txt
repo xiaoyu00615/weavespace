@@ -1,0 +1,34 @@
+UX-02C-03-P1-R1 · 测试日志（简洁文本）
+
+== 完整门禁（本轮独立复跑）==
+npm run test:p0            tests 974 / pass 972 / fail 0 / skip 2
+npm run typecheck          OK
+npm run typecheck:apps     OK
+npm run build:shell        OK（409.91 kB / gzip 125.37 kB）
+git diff --check           OK
+
+== 新增套件 ==
+86-s11ux02c03p1r1-visibility-fixes   pass=17 fail=0 skip=0   ← 新增
+  R1-01a..f  hiddenCount 全链路（首次加载 / 刷新 / 切换视图 / 展开 / 分页 / 取消隐藏 / 重启）
+  R1-02a..d  正常保存保持隐藏、rebound 不得重绑、Provider 提交身份、判定表九分支
+  R1-03a..d  update-only + CAS（取消隐藏 / 重新隐藏 / 写失败 / 交错提交）
+  R1-04a..b  正文 COMMITTED + failed/skipped 诊断事件
+  R1-10a     其他项目与会话不受影响
+
+== 实现前（红）==
+86 无法加载（apps/server/src/hidden-refresh.ts 尚不存在，且 action 无 hiddenCount）
+
+== 变异探针（跑完自动还原；PROBE-FAILURES=0）==
+A  tree-load 不传 hiddenCount                    → 86 fail=5（01a/01b/01c/01d/01f）
+B  reducer 不把 hiddenCount 交给 applyPage        → 86 fail=5（同上）
+C  rebound 也允许刷新（盲目重绑定）               → 86 fail=3（02b/02d/04b）
+D  去掉写入侧提交身份校验                          → 86 fail=1（02d）
+E  刷新在记录不存在时重新创建                      → 86 fail=1（03a）
+F  条件提交忽略 expectIdentity                     → 86 fail=1（03b）
+
+== 真实 Chrome（docs/evidence/ux-02c-03-p1r1/browser-verification.json）==
+checks = 13 / failed = 0；截图 4 张
+  01-count-one.png          隐藏后工具栏徽标 = 1
+  02-shown-with-count.png   显示隐藏项：条目回来 + "隐藏"徽标 + 计数仍 1
+  03-saved-while-hidden.png 隐藏中在 UI 保存：提示"已保存到磁盘"，文件仍隐藏
+  04-rebound-notice.png     外部替换后保存：提示"隐藏记录未能更新"，正文成功，记录仍 rebound

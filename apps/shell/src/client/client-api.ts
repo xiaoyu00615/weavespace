@@ -280,6 +280,14 @@ export interface SaveOutcome {
   errorCode?: string | null;
   contentVersion?: string | null;
   document?: DocumentSnapshot;
+  /**
+   * 保存后"隐藏记录身份"的刷新结论（UX-02C-03-P1-R1）。
+   *
+   * 与正文保存结论**无关**：`skipped` / `failed` 只说明该文件的隐藏状态需要
+   * 人工核对（文件会重新出现在树里），正文仍然已经写入磁盘。旧版服务端不返回。
+   */
+  hiddenRefresh?: 'none' | 'refreshed' | 'skipped' | 'failed';
+  hiddenRefreshReason?: string;
 }
 
 export interface CloseOutcome {
@@ -671,6 +679,9 @@ interface ApiEnvelope {
   path?: string;
   hidden?: boolean;
   changed?: boolean;
+  /** 保存后隐藏记录身份的刷新结论（UX-02C-03-P1-R1）。 */
+  hiddenRefresh?: string;
+  hiddenRefreshReason?: string;
 }
 
 /** 单次请求上限：请求挂住时也要让保存流程收敛为 UNKNOWN，而不是永久锁定（F02）。 */
@@ -791,7 +802,8 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
           nextCursor: page.nextCursor ?? null,
           total: page.total,
           snapshot: typeof page.snapshot === 'string' ? page.snapshot : null,
-          hiddenCount: typeof page.hiddenCount === 'number' ? page.hiddenCount : 0,
+          // 旧版服务端不返回该字段：保持"缺失"，不要伪造成真实的 0（R1-01 要求 6）
+          ...(typeof page.hiddenCount === 'number' ? { hiddenCount: page.hiddenCount } : {}),
         },
       };
     },
@@ -866,6 +878,15 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         errorCode: body.errorCode ?? null,
         contentVersion: body.contentVersion ?? null,
         document: body.document,
+        ...(body.hiddenRefresh === 'none' ||
+        body.hiddenRefresh === 'refreshed' ||
+        body.hiddenRefresh === 'skipped' ||
+        body.hiddenRefresh === 'failed'
+          ? { hiddenRefresh: body.hiddenRefresh }
+          : {}),
+        ...(typeof body.hiddenRefreshReason === 'string'
+          ? { hiddenRefreshReason: body.hiddenRefreshReason }
+          : {}),
       };
     },
     async closeDocument(sessionId: string, viewId: string) {

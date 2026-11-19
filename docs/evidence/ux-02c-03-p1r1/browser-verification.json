@@ -1,0 +1,58 @@
+{
+  "run": "r1-green",
+  "steps": {
+    "hideStatus": 200,
+    "countAfterHide": "1",
+    "toggleTitle": "显示隐藏项（已加载层合计 1 项；未展开的目录不计入）",
+    "toggleDebug": {
+      "pressed": "true",
+      "disabled": false,
+      "names": [
+        "R1 浏览器验证",
+        "docs",
+        "guide.md",
+        "a.md",
+        "b.md"
+      ],
+      "notice": "已加载 1 个项目（0 个不可用）"
+    },
+    "togglePressed": "true",
+    "rowBadge": "隐藏",
+    "countWhileShown": "1",
+    "saveNotice": "已保存到磁盘",
+    "diskAfterSave": "# SAVED-WHILE-HIDDEN\n",
+    "countAfterSave": "1",
+    "countAfterRebound": "",
+    "reboundNotice": "已保存到磁盘；该文件的隐藏记录未能更新（文件会重新显示，可在「显示隐藏项」中核对）",
+    "diskAfterReboundSave": "# EDITED-NEW-OBJECT\n",
+    "hiddenRecords": [
+      {
+        "path": "b.md",
+        "state": "rebound"
+      }
+    ]
+  },
+  "checks": {
+    "文件树已加载": true,
+    "通过真实浏览器 Origin 隐藏成功": true,
+    "工具栏计数显示 1（不是 0）": true,
+    "计数标题写明\"已加载层合计\"": true,
+    "显示隐藏项后条目回来并带\"隐藏\"徽标": true,
+    "显示隐藏项时计数仍为 1": true,
+    "隐藏中的文件可以在 UI 里保存": true,
+    "保存提示不误导（不说隐藏记录未更新）": true,
+    "保存后文件仍然隐藏（身份已刷新）": true,
+    "保存后计数仍为 1": true,
+    "rebound 后新对象可见且计数归零": true,
+    "rebound 对象保存后正文成功且提示明确": true,
+    "记录保持 rebound（新对象未被吞掉）": true
+  },
+  "screenshots": [
+    "01-count-one.png",
+    "02-shown-with-count.png",
+    "03-saved-while-hidden.png",
+    "04-rebound-notice.png"
+  ],
+  "checksTotal": 13,
+  "checksPassed": 13
+}

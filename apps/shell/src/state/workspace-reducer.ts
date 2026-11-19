@@ -509,6 +509,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           nextCursor: action.nextCursor,
           total: action.total,
           snapshot: action.snapshot ?? null,
+          // 0 与"字段缺失"必须区别对待：缺失（旧版服务端）保留上一次已知值
+          hiddenCount: action.hiddenCount,
         }),
       );
       // 只在"首次拿到根层的第一页"时补默认展开；续页与刷新都不重置展开状态

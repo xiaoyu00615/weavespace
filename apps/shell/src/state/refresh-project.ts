@@ -187,6 +187,7 @@ export async function refreshProject(
       nextCursor: outcome.page.nextCursor,
       total: outcome.page.total,
       snapshot: outcome.page.snapshot ?? null,
+      hiddenCount: outcome.page.hiddenCount,
     });
     files = outcome.entries.filter((entry) => entry.kind === 'file').length;
   } catch {

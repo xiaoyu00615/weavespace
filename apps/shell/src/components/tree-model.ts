@@ -160,7 +160,9 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
       errorCode: null,
       loadingMore: false,
       snapshot: page.snapshot ?? null,
-      hiddenCount: page.hiddenCount ?? previous.hiddenCount,
+      // `0` 是真实值（这一层没有隐藏项），`undefined` 才是"没给"。用 `??` 或
+      // 任何 truthy 判断都会把真实的 0 当成缺失，或把缺失当成 0（R1-01）。
+      hiddenCount: typeof page.hiddenCount === 'number' ? page.hiddenCount : previous.hiddenCount,
     },
   };
 }
@@ -264,6 +266,26 @@ export function countHiddenEntries(levels: TreeLevels): number {
     for (const entry of level.entries) {
       if (entry.hidden) total += 1;
     }
+  }
+  return total;
+}
+
+/**
+ * "隐藏项"开关旁的数字（UX-02C-03-P1-R1）：**已加载目录层**的隐藏条目合计。
+ *
+ * 口径必须说清楚（这一点正是 R1-01 要求 5）：
+ * - 每个 `TreeLevelState.hiddenCount` 是**该层**的隐藏条目数（Host 过滤前统计），
+ *   不是全项目；
+ * - 这里把它们相加，得到的是"已经被加载过的层里一共有多少条被隐藏"；
+ * - 没展开过的目录不计入——所以它**不是**全项目总数，界面文案也必须这么写。
+ *
+ * 为什么不换个"更准"的算法：要得到全项目总数只能递归扫描磁盘，那与"懒加载 +
+ * 不偷看未展开目录"的既有约束冲突；宁可给一个口径诚实的部分数，也不编一个假总数。
+ */
+export function countHiddenInLoadedLevels(levels: TreeLevels): number {
+  let total = 0;
+  for (const level of Object.values(levels)) {
+    total += level.hiddenCount;
   }
   return total;
 }

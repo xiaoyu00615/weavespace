@@ -192,6 +192,7 @@ export async function loadWorkspace(deps: WorkspaceLoadDeps): Promise<LoadedWork
         cursor: null,
         nextCursor: outcome.page.nextCursor,
         total: outcome.page.total,
+        hiddenCount: outcome.page.hiddenCount,
       });
       const files = outcome.entries.filter((entry) => entry.kind === 'file').length;
       dispatch({
@@ -320,6 +321,7 @@ export async function loadProjectResources(
       nextCursor: outcome.page.nextCursor,
       total: outcome.page.total,
       snapshot: outcome.page.snapshot ?? null,
+      hiddenCount: outcome.page.hiddenCount,
     });
     const projects = await refreshProjectStatuses(scopedDeps);
     if (cancelled()) return false;

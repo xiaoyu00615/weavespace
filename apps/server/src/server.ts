@@ -73,8 +73,26 @@ import {
   parseVisibilityBody,
   type HiddenRecordState,
 } from './hidden.ts';
+import { decideHiddenRefresh, type HiddenRefreshSkipReason } from './hidden-refresh.ts';
+import type { ConfigHiddenEntry } from './store/index.ts';
 
 export type SaveOutcomeStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN';
+
+/** 保存后"隐藏记录身份是否刷新"的结论（UX-02C-03-P1-R1）。 */
+export type HiddenRefreshStatus = 'none' | 'refreshed' | 'skipped' | 'failed';
+
+/**
+ * 诊断事件（UX-02C-03-P1-R1）。
+ *
+ * 只包含项目 id 与**项目内相对路径**：绝不带本机绝对路径，可安全写入运行日志。
+ */
+export interface HiddenRefreshEvent {
+  readonly type: 'hidden-refresh';
+  readonly projectId: string;
+  readonly path: string;
+  readonly result: Exclude<HiddenRefreshStatus, 'none'>;
+  readonly reason?: HiddenRefreshSkipReason | 'record-gone' | 'record-conflict' | 'persist-failed';
+}
 
 export interface DocumentDto {
   sessionId: string;
@@ -150,6 +168,13 @@ export interface ShellServerOptions {
     /** 仅测试注入：可控时钟（意图过期/请求保留期断言用）。 */
     readonly now?: () => number;
   };
+  /**
+   * 诊断事件接收器（UX-02C-03-P1-R1）。
+   *
+   * 用途：让"保存成功但隐藏元数据没能刷新"这类**不影响正文结论**的异常可被观察。
+   * 缺省写 stderr（单行、不含绝对路径）；测试可注入收集器断言事件内容。
+   */
+  diagnostics?: (event: HiddenRefreshEvent) => void;
   /**
    * 仅测试注入：**包裹**内置授权表的观察/拦截层。
    *
@@ -894,35 +919,154 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
   }
 
   /**
-   * 保存成功后刷新隐藏记录里的对象身份（UX-02C-03-P1）。
+   * 保存后的隐藏记录身份刷新（UX-02C-03-P1，R1 修订）。
    *
-   * 工作区的保存是"临时文件 + rename 覆盖"，**必然换 inode**。如果不刷新，用户
-   * 隐藏一个文件、编辑并保存，这条记录立刻被判成 `rebound`，文件就会从默认视图
-   * 里复活——看起来像"隐藏功能坏了"。
+   * 背景：工作区的保存是"临时文件 + rename 覆盖"，**必然换 inode**。不刷新，
+   * 用户隐藏一个文件、编辑并保存，记录立刻被判成 `rebound`，文件从默认视图复活。
    *
-   * 只刷新**已经存在记录**的路径；失败不影响保存结论（保存已经提交），但记录会
-   * 停在 `rebound` 状态并在查询接口里如实可见，不会静默冒充成功。
+   * R1 之前这里是"保存后读一次同路径身份就直接回写"——那等于说"现在谁占着这个
+   * 路径，谁就是用户当初隐藏的对象"，于是外部替换来的新文件会被旧记录吞掉。
+   * 现在拆成两阶段，并引入三份证据（判定规则见 `hidden-refresh.ts`）：
+   *
+   * 1. `prepareHiddenRefresh()`：保存**之前**读记录与路径身份（必须仍是 `active`）；
+   * 2. 保存本身（正文语义完全不变）；
+   * 3. `applyHiddenRefresh()`：用 Provider 回报的提交身份 + 保存后的路径身份做判定，
+   *    只有三者全等才做 **update-only CAS** 提交。
+   *
+   * 任何一步不能证明，都只跳过并记诊断事件：绝不重试、绝不创建记录、绝不改写保存结论。
    */
-  async function refreshHiddenIdentityAfterSave(projectId: string, path: string): Promise<void> {
-    if (!managedFileStore) return;
-    const record = managedFileStore
-      .hiddenOf(projectId)
-      .find((entry) => sameEntryPath(entry.path, path));
-    if (!record) return;
+  interface PreparedHiddenRefresh {
+    readonly record: ConfigHiddenEntry;
+    readonly rootToken: string;
+    readonly preIdentity: string | null;
+    readonly preReadFailed: boolean;
+    readonly providerSupportsIdentity: boolean;
+  }
+
+  function emitHiddenRefresh(event: HiddenRefreshEvent): void {
     try {
-      const handle = requireProjectHandle(projectId);
-      if (typeof handle.provider.identityOf !== 'function') return;
-      const identity = await withDiskOp(projectId, () => handle.provider.identityOf!(path));
-      if (identity === null) return;
-      await managedFileStore.commitHidden({
+      (options.diagnostics ?? defaultDiagnostics)(event);
+    } catch {
+      // 诊断本身绝不能影响请求结果
+    }
+  }
+
+  function defaultDiagnostics(event: HiddenRefreshEvent): void {
+    process.stderr.write(
+      `[ws:hidden-refresh] ${event.result}${event.reason ? ` (${event.reason})` : ''} project=${event.projectId} path=${event.path}\n`,
+    );
+  }
+
+  /**
+   * 取项目句柄，但**不**触发 `requireProjectHandle` 的会话降级副作用。
+   *
+   * 隐藏刷新是保存之后的附加动作：它无权把项目里的会话提前标记为 STALE
+   * （那会改变正文保存原本的错误语义：本该是 503 的项目不可用会被报成 409 会话失效）。
+   * 因此这里直接用 Runtime 的只读门禁，失败就当"无法证明"处理。
+   */
+  function refreshHandle(projectId: string): ProjectHandle | null {
+    if (!runtime) return null;
+    try {
+      return runtime.assertUsable(projectId);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 保存前：记录必须存在、根必须一致、路径上的对象必须仍是记录里的那个。 */
+  async function prepareHiddenRefresh(projectId: string, path: string): Promise<PreparedHiddenRefresh | null> {
+    if (!managedFileStore || !runtime) return null;
+    const record = managedFileStore.hiddenOf(projectId).find((entry) => sameEntryPath(entry.path, path));
+    if (!record) return null;
+
+    const handle = refreshHandle(projectId);
+    if (!handle) return null;
+    if (typeof handle.provider.identityOf !== 'function') {
+      return {
+        record,
+        rootToken: handle.rootToken,
+        preIdentity: null,
+        preReadFailed: false,
+        providerSupportsIdentity: false,
+      };
+    }
+    try {
+      const preIdentity = await withDiskOp(projectId, () => handle.provider.identityOf!(path));
+      return {
+        record,
+        rootToken: handle.rootToken,
+        preIdentity,
+        preReadFailed: false,
+        providerSupportsIdentity: true,
+      };
+    } catch {
+      return {
+        record,
+        rootToken: handle.rootToken,
+        preIdentity: null,
+        preReadFailed: true,
+        providerSupportsIdentity: true,
+      };
+    }
+  }
+
+  /** 保存已 COMMITTED 之后：只更新、绝不创建；条件不满足即跳过并留诊断。 */
+  async function applyHiddenRefresh(
+    prepared: PreparedHiddenRefresh,
+    savedIdentity: string | null,
+  ): Promise<{ status: Exclude<HiddenRefreshStatus, 'none'>; reason?: HiddenRefreshEvent['reason'] }> {
+    const { record, rootToken } = prepared;
+    const projectId = record.projectId;
+
+    let postIdentity: string | null = null;
+    let postReadFailed = false;
+    if (prepared.providerSupportsIdentity) {
+      const handle = refreshHandle(projectId);
+      if (!handle) {
+        postReadFailed = true;
+      } else {
+        try {
+          postIdentity = await withDiskOp(projectId, () => handle.provider.identityOf!(record.path));
+        } catch {
+          postReadFailed = true;
+        }
+      }
+    }
+
+    const decision = decideHiddenRefresh({
+      record,
+      rootToken,
+      providerSupportsIdentity: prepared.providerSupportsIdentity,
+      preIdentity: prepared.preIdentity,
+      preReadFailed: prepared.preReadFailed,
+      savedIdentity,
+      // 读取失败与"路径不存在"都表示无法证明，统一按 post-missing 处理
+      postIdentity: postReadFailed ? null : postIdentity,
+    });
+
+    if (decision.action === 'skip') {
+      emitHiddenRefresh({ type: 'hidden-refresh', projectId, path: record.path, result: 'skipped', reason: decision.reason });
+      return { status: 'skipped', reason: decision.reason };
+    }
+
+    try {
+      const result = await managedFileStore!.commitHiddenUpdate({
         projectId,
         path: record.path,
-        rootToken: record.rootToken,
-        identity,
-        hidden: true,
+        rootToken,
+        identity: decision.identity,
+        expectIdentity: record.identity,
       });
+      if (result.outcome === 'updated' || result.outcome === 'unchanged') {
+        emitHiddenRefresh({ type: 'hidden-refresh', projectId, path: record.path, result: 'refreshed' });
+        return { status: 'refreshed' };
+      }
+      const reason = result.outcome === 'skipped-missing' ? 'record-gone' : 'record-conflict';
+      emitHiddenRefresh({ type: 'hidden-refresh', projectId, path: record.path, result: 'skipped', reason });
+      return { status: 'skipped', reason };
     } catch {
-      // 刷新失败只影响"隐藏是否继续生效"，绝不改写已经提交的保存结论
+      emitHiddenRefresh({ type: 'hidden-refresh', projectId, path: record.path, result: 'failed', reason: 'persist-failed' });
+      return { status: 'failed', reason: 'persist-failed' };
     }
   }
 
@@ -2365,6 +2509,22 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         const saveIdentity = identityOf(sessionId);
         assertProjectAssertion(saveIdentity, body.projectId);
 
+        /**
+         * 保存**之前**取一次隐藏记录与路径身份（UX-02C-03-P1-R1）。
+         *
+         * 必须在 `dispatch` 之前：保存会换 inode，之后再读就只能看到新对象，
+         * 无法回答"这次保存写的是不是用户当初隐藏的那个对象"。
+         * 这里任何异常都只让本次不刷新，绝不影响正文保存。
+         */
+        let hiddenPrepared: PreparedHiddenRefresh | null = null;
+        if (saveIdentity?.projectId) {
+          try {
+            hiddenPrepared = await prepareHiddenRefresh(saveIdentity.projectId, saveIdentity.path);
+          } catch {
+            hiddenPrepared = null;
+          }
+        }
+
         const outcome = await withDiskOp(saveIdentity?.projectId, () =>
           bus.dispatch(
             {
@@ -2403,9 +2563,16 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           outcome.errorCode === 'ERR_SESSION_STALE' ||
           outcome.errorCode === 'ERR_ROOT_CHANGED' ||
           outcome.errorCode === 'ERR_ROOT_IDENTITY_UNSUPPORTED';
-        // 保存会换 inode：先刷新隐藏记录的身份，否则隐藏的文件会在下次刷新时"复活"
-        if (status === 'COMMITTED' && saveIdentity?.projectId) {
-          await refreshHiddenIdentityAfterSave(saveIdentity.projectId, saveIdentity.path);
+        // 保存会换 inode：只有能证明"提交对象就是本路径上的对象"时才刷新隐藏身份。
+        // 结论只用于诊断与提示，**不参与**正文保存的成功/冲突/失败判定。
+        let hiddenRefresh: HiddenRefreshStatus = 'none';
+        let hiddenRefreshReason: HiddenRefreshEvent['reason'] | undefined;
+        if (status === 'COMMITTED' && hiddenPrepared) {
+          const savedResult = outcome.result as { identity?: unknown } | undefined;
+          const savedIdentity = typeof savedResult?.identity === 'string' ? savedResult.identity : null;
+          const refreshed = await applyHiddenRefresh(hiddenPrepared, savedIdentity);
+          hiddenRefresh = refreshed.status;
+          hiddenRefreshReason = refreshed.reason;
         }
 
         const httpStatus =
@@ -2422,6 +2589,14 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           status,
           errorCode: outcome.errorCode,
           contentVersion: outcome.resultingVersion ?? null,
+          /**
+           * 隐藏元数据的刷新结论（UX-02C-03-P1-R1）。
+           * `none` = 该路径本来就没有隐藏记录；`skipped`/`failed` 只表示"隐藏状态
+           * 需要人工核对"，正文仍然已经提交（见 `status`），前端不得把它当保存失败。
+           */
+          hiddenRefresh,
+          /** 原因（仅当 skipped/failed）：`rebound`/`missing`/`post-mismatch`/… */
+          ...(hiddenRefreshReason ? { hiddenRefreshReason } : {}),
           // G1-R1：项目级失败（根失效/会话失效）不得回传草稿正文副本；
           // dirty / baseVersion / stale 仍保留，供 UI 提示与后续恢复。
           document: documentDto(sessionId, typeof body.viewId === 'string' ? body.viewId : null, {

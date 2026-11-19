@@ -98,6 +98,33 @@ export interface FileProjectStore {
     hidden: boolean;
     at?: string;
   }): Promise<{ changed: boolean }>;
+  /**
+   * **只更新**已存在记录的对象身份（UX-02C-03-P1-R1）。
+   *
+   * 为什么不能复用 `commitHidden({hidden:true})`：那条路径在"记录已不存在"时
+   * 会**追加**一条新记录。保存后的身份刷新如果走它，用户在刷新等待期间点了
+   * "取消隐藏"，就会被这次迟到的刷新重新创建出来（复审 R1-03）。
+   *
+   * 因此这里是一个条件提交（CAS）：
+   * - 记录不存在 → `skipped-missing`，**绝不创建**；
+   * - 记录的 `rootToken` 或身份不等于调用方预期的旧身份 → `skipped-conflict`
+   *   （用户取消后重新隐藏、或两次刷新交错时，新记录不受影响）；
+   * - 身份已经等于新值 → `unchanged`（不写盘、不推进序号）；
+   * - 否则原子写入新身份，`commitSeq + 1`。
+   *
+   * 写盘失败抛 `ERR_PERSIST_FAILED`，内存投影保持原样。
+   */
+  commitHiddenUpdate(input: {
+    projectId: string;
+    path: string;
+    rootToken: string;
+    identity: string;
+    /** 调用方读取记录时看到的身份；用于拒绝"针对旧记录的迟到刷新"。 */
+    expectIdentity: string;
+  }): Promise<{
+    changed: boolean;
+    outcome: 'updated' | 'unchanged' | 'skipped-missing' | 'skipped-conflict';
+  }>;
   queryOp(opId: string): OpOutcome;
   /** 证据 + 归属（只读磁盘）：`unknown` 时归属恒为 `null`。 */
   opEvidence(opId: string): OpEvidence;
@@ -870,6 +897,62 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       applyConfig(next);
       state = { ...state, commitSeq: next.commitSeq };
       return { changed: true };
+    },
+
+    /**
+     * 只更新身份的 CAS 提交（UX-02C-03-P1-R1）。语义见接口注释：
+     * 记录不存在 → 跳过而不是创建；预期身份不匹配 → 冲突而不是覆盖。
+     *
+     * 全程同步（`writeConfigAtomic` 内部无 await），因此与其它配置提交之间
+     * 不存在"读旧值—写新值"的交错：要么这次提交先完成，要么后一次看到它的结果。
+     */
+    async commitHiddenUpdate(input) {
+      assertOpen();
+      assertMutationsAllowed();
+      if (input.identity === '' || input.expectIdentity === '') {
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, '缺少对象身份，不能刷新隐藏记录');
+      }
+      // 项目已经不在（撤销/移除）：记录在撤销时已被清理，这里同样是"没有可更新的记录"
+      if (!current.projects.some((project) => project.projectId === input.projectId)) {
+        return { changed: false, outcome: 'skipped-missing' as const };
+      }
+
+      const existing = current.hidden.find(
+        (entry) => entry.projectId === input.projectId && sameEntryPath(entry.path, input.path),
+      );
+      if (!existing) return { changed: false, outcome: 'skipped-missing' as const };
+      // 记录已经被换成另一次隐藏（根不同 / 身份不同）：这是"另一条记录"，不得覆盖
+      if (existing.rootToken !== input.rootToken) {
+        return { changed: false, outcome: 'skipped-conflict' as const };
+      }
+      if (existing.identity !== input.expectIdentity) {
+        return { changed: false, outcome: 'skipped-conflict' as const };
+      }
+      if (existing.identity === input.identity) {
+        return { changed: false, outcome: 'unchanged' as const };
+      }
+
+      const record: ConfigHiddenEntry = { ...existing, identity: input.identity };
+      const next: ConfigState = {
+        version: 3,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: current.hidden.map((entry) => (entry === existing ? record : entry)),
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        // 写不进去 = 没生效：内存投影保持旧身份，调用方按"刷新失败"处理
+        throw Object.assign(new Error('隐藏记录身份未能写入工作区配置'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true, outcome: 'updated' as const };
     },
 
     queryOp(opId) {

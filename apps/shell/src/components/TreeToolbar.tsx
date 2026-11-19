@@ -7,6 +7,7 @@
  */
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
+import { countHiddenInLoadedLevels } from './tree-model.ts';
 import { useTreeCommands } from './TreeCommandsContext.tsx';
 
 export function TreeToolbar() {
@@ -22,19 +23,21 @@ export function TreeToolbar() {
   const whyNot = usable ? undefined : '当前模式或项目不支持真实创建';
 
   /**
-   * "隐藏项"开关（UX-02C-03-P1）。
+   * "隐藏项"开关（UX-02C-03-P1 / R1）。
    *
-   * 数字取自已加载层的 `hiddenCount`（服务端在过滤前统计）：默认视图里隐藏条目
-   * 不在 `entries` 里，没有这个数字用户根本不知道还有东西被收起来了。
+   * 数字口径 = **已加载目录层合计**，只来自服务端的逐层 `hiddenCount`：
+   * 默认视图里隐藏条目不在 `entries` 里，没有这个数字用户就不知道有东西被收起来了；
+   * 但它**不是全项目总数**（没展开的目录不计入），所以标题里必须写明，
+   * 不能让局部数字被读成"整个项目只有这么多"。
    */
   const levels = projectId ? (state.treeByProject[projectId] ?? {}) : {};
-  const hiddenCount = Object.values(levels).reduce((sum, level) => sum + (level.hiddenCount ?? 0), 0);
+  const hiddenCount = countHiddenInLoadedLevels(levels);
   const toggleTitle = usable
     ? state.showHidden
-      ? `隐藏项已显示（已加载层中 ${hiddenCount} 项）；点击恢复默认视图`
+      ? `隐藏项已显示（已加载层合计 ${hiddenCount} 项）；点击恢复默认视图`
       : hiddenCount > 0
-        ? `显示隐藏项（已加载层中有 ${hiddenCount} 项被隐藏）`
-        : '显示隐藏项（当前没有隐藏项）'
+        ? `显示隐藏项（已加载层合计 ${hiddenCount} 项；未展开的目录不计入）`
+        : '显示隐藏项（已加载层中没有隐藏项）'
     : '当前模式或项目不支持工作台隐藏';
 
   return (
@@ -77,7 +80,13 @@ export function TreeToolbar() {
         type="button"
         className="tree__visibility-toggle"
         aria-pressed={state.showHidden}
-        aria-label={state.showHidden ? '隐藏项已显示，点击恢复默认视图' : '显示隐藏项'}
+        aria-label={
+          state.showHidden
+            ? `隐藏项已显示（已加载层合计 ${hiddenCount} 项），点击恢复默认视图`
+            : hiddenCount > 0
+              ? `显示隐藏项（已加载层合计 ${hiddenCount} 项）`
+              : '显示隐藏项'
+        }
         title={toggleTitle}
         disabled={!usable}
         // 真实交互：切换后由编排层作废层表并重新拉取，不是静态按钮
@@ -85,7 +94,11 @@ export function TreeToolbar() {
       >
         <span aria-hidden="true">{state.showHidden ? '◉' : '◌'}</span>
         {hiddenCount > 0 && (
-          <span className="tree__visibility-count" aria-hidden="true">
+          <span
+            className="tree__visibility-count"
+            aria-hidden="true"
+            title={`已加载层中 ${hiddenCount} 项被隐藏（未展开目录不计入）`}
+          >
             {hiddenCount}
           </span>
         )}

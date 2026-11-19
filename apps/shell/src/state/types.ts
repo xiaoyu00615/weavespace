@@ -207,6 +207,14 @@ export type WorkspaceAction =
       total: number;
       /** 本轮分页的目录快照标识（可选，兼容旧版响应与既有夹具）。 */
       snapshot?: string | null;
+      /**
+       * 本层隐藏条目数（UX-02C-03-P1-R1）。
+       *
+       * 语义是**这一层**（服务端在过滤前统计），不是全项目；调用方按层累计时必须
+       * 如实说明"已加载目录层合计"。`undefined` 表示"本次响应没有该字段"（旧版
+       * 服务端），与真实的 `0` 必须区别处理：缺失时保留上一次已知值。
+       */
+      hiddenCount?: number;
     }
   /** 该层加载失败：保留已加载条目，UI 显示"重试"。 */
   | { type: 'TREE_LEVEL_ERROR'; projectId: string; dir: string; errorCode: string | null }

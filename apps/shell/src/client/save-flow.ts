@@ -92,6 +92,12 @@ export async function runSaveFlow(input: SaveFlowInput): Promise<SaveFlowResult>
   if (outcome.status === 'COMMITTED') {
     // 保存期间若 Core 仍 dirty（有更新的编辑），不得清标记
     const stillDirty = doc?.dirty ?? false;
+    /**
+     * 隐藏元数据没刷新（UX-02C-03-P1-R1）：正文**已经**落盘，绝不能因此报保存失败；
+     * 但也必须让用户知道"这个文件的隐藏状态需要核对"，否则文件重新出现会像故障。
+     * 两种结论共用一句提示：跳过（身份无法证明）与失败（配置写不进去）。
+     */
+    const hiddenNeedsCheck = outcome.hiddenRefresh === 'skipped' || outcome.hiddenRefresh === 'failed';
     return {
       status: 'COMMITTED',
       attempted: true,
@@ -103,8 +109,12 @@ export async function runSaveFlow(input: SaveFlowInput): Promise<SaveFlowResult>
       contentVersion: outcome.contentVersion ?? null,
       document: doc,
       notice: stillDirty
-        ? '已写入磁盘，但保存期间又有新编辑（仍未保存）'
-        : '已保存到磁盘',
+        ? hiddenNeedsCheck
+          ? '已写入磁盘，但保存期间又有新编辑（仍未保存）；该文件的隐藏记录也未更新，可展开「显示隐藏项」核对'
+          : '已写入磁盘，但保存期间又有新编辑（仍未保存）'
+        : hiddenNeedsCheck
+          ? '已保存到磁盘；该文件的隐藏记录未能更新（文件会重新显示，可在「显示隐藏项」中核对）'
+          : '已保存到磁盘',
     };
   }
 

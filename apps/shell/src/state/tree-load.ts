@@ -316,6 +316,8 @@ export function createTreeLevelLoader(
         nextCursor: outcome.page.nextCursor,
         total: outcome.page.total,
         snapshot: outcome.page.snapshot ?? null,
+        // 逐层计数必须原样传递：丢了它，工具栏的"隐藏项 N"永远是 0（R1-01）
+        hiddenCount: outcome.page.hiddenCount,
       });
       return 'applied';
     } catch {

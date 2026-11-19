@@ -614,6 +614,15 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
     }
 
     let tempPath: string | null = null;
+    /**
+     * 提交对象的身份证据（UX-02C-03-P1-R1）：在 rename **之前**对临时文件取
+     * `lstat`。rename 之后该对象就是目标路径上的对象，因此它是唯一能证明
+     * "路径上现在这个对象是本次写入产生的"的凭据。
+     *
+     * 取不到时保持 `undefined`（调用方按"无法证明"处理），绝不用目标路径
+     * 的现有身份回填——那会把外部替换来的新对象冒充成本次写入的结果。
+     */
+    let committedIdentity: string | undefined;
     try {
       faults.beforeCommit?.();
 
@@ -653,6 +662,16 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       checkpoint('C3');
       assertRootContinuity(boundary, establishedToken);
 
+      // 提交身份必须在 rename 之前取：之后临时路径就不存在了，而目标路径上
+      // 可能已经被别的进程换成另一个对象。
+      try {
+        const tempStats = await lstat(tempPath);
+        const identity = identityOfStats(tempStats);
+        committedIdentity = `${identity.dev}:${identity.ino}`;
+      } catch {
+        committedIdentity = undefined;
+      }
+
       await rename(tempPath, absolutePath);
     } catch (err) {
       if (tempPath) await rm(tempPath, { force: true }).catch(() => {});
@@ -661,6 +680,9 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
     }
 
     const committedVersion = contentVersionOf(payload);
+    /** 提交侧证据：有就带上，没有就不带（绝不回填目标路径的现有身份）。 */
+    const withIdentity = <T extends Record<string, unknown>>(result: T): T =>
+      committedIdentity ? ({ ...result, identity: committedIdentity } as T) : result;
 
     // C4：rename 之后、确认提交结果之前。
     // 此处副作用可能已经发生（文件落在提交时的根内），因此只能报 UNKNOWN。
@@ -668,7 +690,11 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       checkpoint('C4');
       assertRootContinuity(boundary, establishedToken);
     } catch {
-      return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN', contentVersion: committedVersion };
+      return withIdentity({
+        status: 'UNKNOWN' as const,
+        errorCode: 'ERR_OUTCOME_UNKNOWN' as const,
+        contentVersion: committedVersion,
+      });
     }
 
     if (faults.afterCommit) {
@@ -676,10 +702,14 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         faults.afterCommit();
       } catch {
         // 副作用已落盘但确认链中断：必须报 UNKNOWN，不得报成功或失败（docs/04、CT-06）
-        return { status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN', contentVersion: committedVersion };
+        return withIdentity({
+          status: 'UNKNOWN' as const,
+          errorCode: 'ERR_OUTCOME_UNKNOWN' as const,
+          contentVersion: committedVersion,
+        });
       }
     }
-    return { status: 'COMMITTED', contentVersion: committedVersion };
+    return withIdentity({ status: 'COMMITTED' as const, contentVersion: committedVersion });
   }
 
   return {
