@@ -37,10 +37,14 @@ import { basename, dirname, join, normalize, resolve as resolvePath } from 'node
 import type { ErrorCode } from '../contracts/errors.ts';
 import type { SaveResult } from '../contracts/types.ts';
 import {
+  entryNameOf,
   entryRelativePath,
   isEntryUnder,
+  isReservedPath,
+  parentDirOfEntry,
   sameEntryPath,
   validateEntryName,
+  validateEntryPath,
   validateParentDir,
 } from './entry-name.ts';
 import {
@@ -285,6 +289,33 @@ export interface StorageProvider {
     targetParentDir: string,
     targetName: string,
   ): Promise<MoveEntryResult>;
+  /**
+   * 目录项事实（UX-02C-03-P2-01）：`lstat` 得到"这一项本身"是文件/目录/链接/重解析点，
+   * 附带 `dev:ino` 与大小，**绝不跟随链接**。
+   *
+   * 回收区需要它来回答两件事："用户选中的是普通文件吗？"、"待移动的对象是不是
+   * 意图里记录的那一个？"。只读、不产生副作用。
+   */
+  entryFacts?(path: string): Promise<EntryFacts>;
+  /**
+   * 把**普通文件**移入项目内回收区（UX-02C-03-P2-01）。
+   *
+   * 目录 / 链接 / 重解析点一律拒绝；`expectedIdentity` 必须与磁盘上的对象身份一致，
+   * 否则拒绝且零移动（绝不"删掉占着这个路径的陌生人"）。
+   *
+   * 目标固定为 `.weavespace/trash/<opId>/payload`：Recovery 侧只按 opId 定位，
+   * 不依赖原文件名（避免长路径与非法名），也不会与 `manifest.json` 冲突。
+   */
+  trashEntry?(opId: string, sourcePath: string, expectedIdentity: string): Promise<TrashOpResult>;
+  /**
+   * 从回收区恢复到**指定路径**（UX-02C-03-P2-01）。
+   *
+   * 目标已存在一律拒绝（绝不覆盖）；`expectedIdentity` 必须与回收区对象身份一致，
+   * 否则拒绝（说明回收区里的东西已经不是当初移入的那一个）。
+   */
+  restoreEntry?(opId: string, targetPath: string, expectedIdentity: string): Promise<TrashOpResult>;
+  /** 回收区对象身份；不存在返回 `null`（只读，供对账使用）。 */
+  trashIdentity?(opId: string): Promise<string | null>;
 }
 
 export function contentVersionOf(content: string | Buffer): string {
@@ -330,6 +361,218 @@ function sameEntryIdentity(
 ): boolean {
   return left !== null && right !== null && left.dev === right.dev && left.ino === right.ino;
 }
+
+/* ================================================================== */
+/* 回收区（UX-02C-03-P2-01）                                            */
+/* ================================================================== */
+
+/** 内部保留目录（项目根层）。普通入口不得到达，见 `isReservedPath`。 */
+const TRASH_OWNER_DIR = '.weavespace';
+const TRASH_ROOT_DIR = '.weavespace/trash';
+/** 回收区 payload 使用固定名称：不与 `manifest.json` 争用，也不受原文件名长度影响。 */
+const TRASH_PAYLOAD_NAME = 'payload';
+const TRASH_MANIFEST_NAME = 'manifest.json';
+const TRASH_OWNER_MARKER = '.ws-internal';
+const TRASH_OWNER_MAGIC = 'weavespace-internal-trash-v1';
+/** opId 同时是目录名：只允许小写字母数字与连字符，长度受限。 */
+const TRASH_OP_ID_RE = /^[a-z0-9][a-z0-9-]{7,63}$/;
+
+/** 目录项事实：不跟随链接，只描述"这个目录项本身是什么"。 */
+export type EntryFactKind = 'file' | 'folder' | 'link' | 'other';
+
+export interface EntryFacts {
+  readonly kind: EntryFactKind;
+  /** `dev:ino`；读不到时为 `null`（不是"不存在"，调用方按无法证明处理）。 */
+  readonly identity: string | null;
+  readonly size: number;
+  /** 目录项是重解析点（junction / 其他不可信解析），绝不能按普通对象处理。 */
+  readonly untrusted: boolean;
+}
+
+export type TrashOpStatus = 'MOVED' | 'REJECTED' | 'UNKNOWN';
+
+export interface TrashOpResult {
+  status: TrashOpStatus;
+  errorCode?: ErrorCode;
+  /** 被移动对象在移动后的身份（正常等于移动前）。 */
+  identity?: string;
+  size?: number;
+}
+
+function trashDirOf(opId: string): string {
+  return `${TRASH_ROOT_DIR}/${opId}`;
+}
+
+function trashPayloadOf(opId: string): string {
+  return `${TRASH_ROOT_DIR}/${opId}/${TRASH_PAYLOAD_NAME}`;
+}
+
+type TrashSetup = { ok: true; ownerAbs: string; opDirAbs: string } | { ok: false; errorCode: ErrorCode };
+
+/**
+ * 建立/核验内部回收区目录（UX-02C-03-P2-01 §二.3）。
+ *
+ * 规则（顺序不可交换）：
+ * 1. `.weavespace` 不存在 → 建；存在 → 必须是**真目录**且不是符号链接/junction；
+ * 2. 必须带我们的所有权标记；**没有标记就绝不接管**（用户已有同名目录/文件一律拒绝）；
+ *    唯一例外：目录为空（上一次在 mkdir 与写标记之间崩溃），此时没有可覆盖的内容；
+ * 3. 顺手写 `.gitignore`（内容 `*`），避免把回收区提交进用户仓库；
+ * 4. `trash/<opId>` 必须是真目录，不是链接。
+ *
+ * 目录身份（dev:ino）也会记进标记：项目被整体复制后目录身份必然变化，
+ * 这是**合法的**（文件也一起被复制了），因此身份变化只更新标记，不作为拒绝理由；
+ * 真正的防伪仍在每个 payload 的对象身份上。
+ */
+async function prepareTrashRoot(
+  boundary: RootBoundary,
+  token: string | null,
+  opId: string | null,
+): Promise<TrashSetup> {
+  const fail = (errorCode: ErrorCode): TrashSetup => ({ ok: false, errorCode });
+  const rootAbs = boundary.canonicalRoot;
+  const ownerAbs = resolvePath(rootAbs, TRASH_OWNER_DIR);
+  if (!isPathInsideRoot(rootAbs, ownerAbs)) return fail('ERR_PATH_OUTSIDE_ROOT');
+
+  let ownerStats;
+  try {
+    ownerStats = await lstat(ownerAbs);
+  } catch (err) {
+    if (!isMissing(err)) return fail(mapStorageError(err));
+    try {
+      await mkdir(ownerAbs);
+    } catch (mkErr) {
+      if (codeOf(mkErr) !== 'EEXIST') return fail(mapStorageError(mkErr));
+    }
+    try {
+      ownerStats = await lstat(ownerAbs);
+    } catch (again) {
+      return fail(mapStorageError(again));
+    }
+  }
+  // 链接 / junction 一律拒绝：否则回收区会被重定向到根外
+  if (ownerStats.isSymbolicLink() || isUntrustedResolution(ownerAbs)) return fail('ERR_TRASH_UNAVAILABLE');
+  if (!ownerStats.isDirectory()) return fail('ERR_TRASH_UNAVAILABLE');
+
+  const identity = `${ownerStats.dev}:${ownerStats.ino}`;
+  const markerAbs = join(ownerAbs, TRASH_OWNER_MARKER);
+  let markerRaw: string | null = null;
+  try {
+    markerRaw = await readFile(markerAbs, 'utf8');
+  } catch (err) {
+    if (!isMissing(err)) return fail(mapStorageError(err));
+  }
+
+  if (markerRaw === null) {
+    // 没有标记：只接受"空目录"（我们自己刚建、或上次崩在写标记之前）
+    let entries: string[];
+    try {
+      entries = await readdir(ownerAbs);
+    } catch (err) {
+      return fail(mapStorageError(err));
+    }
+    if (entries.length > 0) return fail('ERR_TRASH_UNAVAILABLE');
+    try {
+      await writeFile(
+        markerAbs,
+        `${JSON.stringify({ magic: TRASH_OWNER_MAGIC, identity, createdAt: new Date().toISOString() }, null, 2)}\n`,
+        { encoding: 'utf8', flag: 'wx' },
+      );
+      await writeFile(join(ownerAbs, '.gitignore'), '*\n', { encoding: 'utf8', flag: 'wx' });
+    } catch (err) {
+      // 并发/EEXIST：交给下面的复核；其它错误直接失败
+      if (codeOf(err) !== 'EEXIST') return fail(mapStorageError(err));
+    }
+    try {
+      markerRaw = await readFile(markerAbs, 'utf8');
+    } catch (err) {
+      return fail(mapStorageError(err));
+    }
+  }
+
+  let marker: { magic?: unknown; identity?: unknown };
+  try {
+    marker = JSON.parse(markerRaw) as { magic?: unknown; identity?: unknown };
+  } catch {
+    return fail('ERR_TRASH_UNAVAILABLE');
+  }
+  if (marker.magic !== TRASH_OWNER_MAGIC) return fail('ERR_TRASH_UNAVAILABLE');
+  if (typeof marker.identity === 'string' && marker.identity !== identity) {
+    // 目录身份变化 = 项目被复制/移动过（文件也一起搬了）。更新标记，但不放弃防伪：
+    // 真正被依赖的是 payload 的 dev:ino。
+    try {
+      await writeFile(
+        markerAbs,
+        `${JSON.stringify({ magic: TRASH_OWNER_MAGIC, identity, createdAt: new Date().toISOString() }, null, 2)}\n`,
+        'utf8',
+      );
+    } catch (err) {
+      return fail(mapStorageError(err));
+    }
+  }
+
+  const trashRootAbs = resolvePath(rootAbs, TRASH_ROOT_DIR);
+  try {
+    const info = await lstat(trashRootAbs);
+    if (info.isSymbolicLink() || isUntrustedResolution(trashRootAbs) || !info.isDirectory()) {
+      return fail('ERR_TRASH_UNAVAILABLE');
+    }
+  } catch (err) {
+    if (!isMissing(err)) return fail(mapStorageError(err));
+    try {
+      await mkdir(trashRootAbs);
+    } catch (mkErr) {
+      if (codeOf(mkErr) !== 'EEXIST') return fail(mapStorageError(mkErr));
+    }
+  }
+
+  if (opId === null) return { ok: true, ownerAbs, opDirAbs: trashRootAbs };
+
+  const opDirAbs = resolvePath(rootAbs, trashDirOf(opId));
+  try {
+    await mkdir(opDirAbs);
+  } catch (err) {
+    if (codeOf(err) !== 'EEXIST') return fail(mapStorageError(err));
+  }
+  try {
+    const info = await lstat(opDirAbs);
+    if (info.isSymbolicLink() || isUntrustedResolution(opDirAbs) || !info.isDirectory()) {
+      return fail('ERR_TRASH_UNAVAILABLE');
+    }
+  } catch (err) {
+    return fail(mapStorageError(err));
+  }
+  // 每一次进入都要确认根仍然连续（C1 由调用方在 rename 前再核一次）
+  try {
+    assertRootContinuity(boundary, token);
+  } catch (err) {
+    return fail(mapStorageError(err));
+  }
+  return { ok: true, ownerAbs, opDirAbs };
+}
+
+/** 该路径上的对象身份是否正好等于预期（不存在 / 读不出来 → false）。 */
+async function objectMatchesIdentity(absPath: string, expected: string): Promise<boolean> {
+  try {
+    const info = await lstat(absPath);
+    return `${info.dev}:${info.ino}` === expected;
+  } catch {
+    return false;
+  }
+}
+
+/** 只清理"确实还是我们自己的占位"，外部对象一律不碰。 */
+async function releaseReservation(absPath: string, reservation: EntryIdentity | null): Promise<void> {
+  if (reservation === null) return;
+  try {
+    const info = await lstat(absPath);
+    if (!sameEntryIdentity(identityOfStats(info), reservation)) return;
+    await unlink(absPath);
+  } catch {
+    // 清理失败不影响结论：调用方本来就要报 REJECTED/UNKNOWN
+  }
+}
+
+
 
 /** 结构指纹上限：超过即返回 null（如实说明"未完整核对"，不做全树扫描的假保证）。 */
 const MAX_FINGERPRINT_ENTRIES = 2_000;
@@ -774,6 +1017,66 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       return `${String(s.dev)}:${String(s.ino)}`;
     },
 
+    /**
+     * 目录项事实（UX-02C-03-P2-01）：不跟随链接，只回答"这一项本身是什么"。
+     *
+     * 与 `stat()` 的区别：`stat()` 跟随链接且返回内容版本；这里要的恰恰是
+     * "它是不是链接" —— 回收链接会删掉用户的项目里的一行，而回收链接**目标**
+     * 才是灾难。junction 在 `lstat` 上可能不表现为符号链接，因此额外用
+     * `isUntrustedResolution` 补判并标记 `untrusted`。
+     */
+    async entryFacts(path: string): Promise<EntryFacts> {
+      /**
+       * 这里**不能**先做 `resolveInBoundary`：它会把"末段是链接"解析成链接目标，
+       * 于是我们永远看不到 `kind: 'link'`，而是得到一个指向别处的普通文件（甚至
+       * 直接被判越界）。回收区要的恰恰是"这一项本身是不是链接"。
+       *
+       * 正确顺序：父链逐级 realpath 校验（不安全的父链直接失败、零目标元数据读取），
+       * 然后对**末段**做一次不跟随的 `lstat`。
+       */
+      const shape = validateEntryPath(path);
+      if (!shape.ok) {
+        throw Object.assign(new Error(shape.message), { errorCode: shape.errorCode });
+      }
+      const rel = shape.value;
+      const parentDir = parentDirOfEntry(rel);
+      const leaf = entryNameOf(rel);
+      assertRootContinuity(boundary, establishedToken);
+
+      const parentCheck = resolveInBoundary(boundary, parentDir === '' ? '.' : parentDir);
+      if (!parentCheck.ok) {
+        throw Object.assign(new Error(parentCheck.detail), { errorCode: parentCheck.errorCode });
+      }
+      const abs = join(parentCheck.absolutePath, leaf);
+      if (!isPathInsideRoot(boundary.canonicalRoot, abs)) {
+        throw Object.assign(new Error('路径不在允许范围内'), { errorCode: 'ERR_PATH_OUTSIDE_ROOT' });
+      }
+
+      let info;
+      try {
+        info = await lstat(abs);
+      } catch (err) {
+        if (isMissing(err)) {
+          throw Object.assign(new Error('资源不存在'), { errorCode: 'ERR_RESOURCE_NOT_FOUND' });
+        }
+        throw toStorageError(err);
+      }
+      const untrusted = isUntrustedResolution(abs);
+      const kind: EntryFactKind = info.isSymbolicLink()
+        ? 'link'
+        : info.isDirectory()
+          ? 'folder'
+          : info.isFile()
+            ? 'file'
+            : 'other';
+      return {
+        kind,
+        identity: `${info.dev}:${info.ino}`,
+        size: info.size,
+        untrusted,
+      };
+    },
+
     async read(path: string): Promise<ReadResult> {
       const check = resolveInBoundary(boundary, path);
       if (!check.ok) {
@@ -832,6 +1135,8 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
           return; // 目录不可读：跳过而不是让整个列表失败
         }
         for (const entry of entries) {
+          // 根层的内部保留目录不进入递归清单（UX-02C-03-P2-01）
+          if (prefix === '' && sameEntryPath(entry.name, TRASH_OWNER_DIR)) continue;
           const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
           // 显式跳过 junction / 符号链接：dirent 是唯一能可靠识别 junction 的通道
           if (entry.isSymbolicLink()) continue;
@@ -913,7 +1218,10 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
 
         const entries = await readdir(check.absolutePath, { withFileTypes: true });
         const out: DirEntry[] = [];
+        /** 只在**项目根层**隐藏内部保留目录（UX-02C-03-P2-01）；子层的同名目录是用户自己的。 */
+        const atRoot = requested === '.' || requested === '';
         for (const entry of entries) {
+          if (atRoot && sameEntryPath(entry.name, TRASH_OWNER_DIR)) continue;
           // `dirent` 是唯一能可靠识别 Windows junction 的通道（旧 list() 已依赖这一点）
           if (entry.isSymbolicLink()) {
             out.push({ name: entry.name, kind: 'link' });
@@ -1352,6 +1660,328 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       const state = await verify();
       if (state !== 'moved') return unknown();
       return finish();
+    },
+
+    /**
+     * 把普通文件移入回收区（UX-02C-03-P2-01）。
+     *
+     * 与 `moveEntry` 的三点关键差异：
+     * 1. **必须**给出 `expectedIdentity`，并且与磁盘对象逐次核对（意图一致性）；
+     * 2. 只接受普通文件：目录 / 符号链接 / junction / 其他重解析点一律拒绝；
+     * 3. 目标固定为 `.weavespace/trash/<opId>/payload`，由 Provider 自己拼，
+     *    客户端无法指定内部路径（否则等于给普通接口开一条进内部目录的旁路）。
+     *
+     * 残留窗口如实披露：最后一次身份复核与 `rename` 之间仍有竞争（与 `moveEntry`
+     * 相同，未消除）；缓解手段是"目标排他占位 + 只覆盖自己的占位"。
+     */
+    async trashEntry(
+      opId: string,
+      sourcePath: string,
+      expectedIdentity: string,
+    ): Promise<TrashOpResult> {
+      const reject = (errorCode: ErrorCode): TrashOpResult => ({ status: 'REJECTED', errorCode });
+      const unknown = (identity?: string): TrashOpResult => ({
+        status: 'UNKNOWN',
+        errorCode: 'ERR_OUTCOME_UNKNOWN',
+        ...(identity ? { identity } : {}),
+      });
+
+      if (!TRASH_OP_ID_RE.test(opId)) return reject('ERR_COMMAND_INVALID');
+      if (typeof expectedIdentity !== 'string' || expectedIdentity === '') return reject('ERR_COMMAND_INVALID');
+      const srcShape = validateEntryPath(sourcePath);
+      if (!srcShape.ok) return reject(srcShape.errorCode);
+      const source = srcShape.value;
+      if (isReservedPath(source)) return reject('ERR_PATH_RESERVED');
+
+      try {
+        faults.atCheckpoint?.('C0');
+        assertRootContinuity(boundary, establishedToken);
+      } catch (err) {
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      const sourceCheck = resolveInBoundary(boundary, source);
+      if (!sourceCheck.ok) return reject(sourceCheck.errorCode);
+      const sourceAbs = resolvePath(boundary.canonicalRoot, normalize(source));
+      if (!isPathInsideRoot(boundary.canonicalRoot, sourceAbs)) return reject('ERR_PATH_OUTSIDE_ROOT');
+
+      let sourceStats;
+      try {
+        sourceStats = await lstat(sourceAbs);
+      } catch (err) {
+        if (isMissing(err)) return reject('ERR_RESOURCE_NOT_FOUND');
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+      // 链接 / junction / 其他重解析点 / 目录：一律拒绝，且此前没有任何副作用
+      if (sourceStats.isSymbolicLink() || isUntrustedResolution(sourceAbs)) {
+        return reject('ERR_TRASH_KIND_UNSUPPORTED');
+      }
+      if (!sourceStats.isFile()) return reject('ERR_TRASH_KIND_UNSUPPORTED');
+
+      const sourceIdentity = `${sourceStats.dev}:${sourceStats.ino}`;
+      if (sourceIdentity !== expectedIdentity) return reject('ERR_ENTRY_SOURCE_CHANGED');
+
+      const setup = await prepareTrashRoot(boundary, establishedToken, opId);
+      if (!setup.ok) return reject(setup.errorCode);
+
+      const payloadAbs = resolvePath(boundary.canonicalRoot, normalize(trashPayloadOf(opId)));
+      if (!isPathInsideRoot(boundary.canonicalRoot, payloadAbs)) return reject('ERR_PATH_OUTSIDE_ROOT');
+
+      // 目标必须不存在：绝不覆盖回收区里已有的对象
+      try {
+        await lstat(payloadAbs);
+        return reject('ERR_ENTRY_EXISTS');
+      } catch (err) {
+        if (!isMissing(err)) return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      // 排他占位：谁先创建谁拥有这个名字（外部同名对象会 EEXIST）
+      let reservation: EntryIdentity | null = null;
+      try {
+        const handle = await open(payloadAbs, 'wx');
+        try {
+          reservation = identityOfStats(await handle.stat());
+        } catch {
+          await handle.close().catch(() => undefined);
+          return unknown();
+        }
+        await handle.close();
+      } catch (err) {
+        if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
+        return reject(moveErrorOf(err, false));
+      }
+
+      // 回收区自描述清单（配置丢失时仍能看出这是哪个文件的什么对象）
+      const manifestAbs = join(setup.opDirAbs, TRASH_MANIFEST_NAME);
+      try {
+        await writeFile(
+          manifestAbs,
+          `${JSON.stringify(
+            {
+              magic: TRASH_OWNER_MAGIC,
+              opId,
+              originalPath: source,
+              entryKind: 'file',
+              identity: sourceIdentity,
+              size: sourceStats.size,
+              deletedAt: new Date().toISOString(),
+            },
+            null,
+            2,
+          )}\n`,
+          { encoding: 'utf8', flag: 'wx' },
+        );
+      } catch (err) {
+        await releaseReservation(payloadAbs, reservation);
+        return reject(codeOf(err) === 'EEXIST' ? 'ERR_ENTRY_EXISTS' : (mapStorageError(err) as ErrorCode));
+      }
+
+      // rename 前最后一次身份核对：绝不把"占着这个路径的陌生人"搬走
+      try {
+        const again = await lstat(sourceAbs);
+        if (`${again.dev}:${again.ino}` !== expectedIdentity) {
+          await releaseReservation(payloadAbs, reservation);
+          return reject('ERR_ENTRY_SOURCE_CHANGED');
+        }
+      } catch (err) {
+        await releaseReservation(payloadAbs, reservation);
+        return reject(isMissing(err) ? 'ERR_RESOURCE_NOT_FOUND' : (mapStorageError(err) as ErrorCode));
+      }
+
+      try {
+        faults.atCheckpoint?.('C1');
+        assertRootContinuity(boundary, establishedToken);
+      } catch (err) {
+        await releaseReservation(payloadAbs, reservation);
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      try {
+        await rename(sourceAbs, payloadAbs);
+      } catch (err) {
+        // rename 可能已经生效也可能没有：只按磁盘事实判定，不猜
+        if (await objectMatchesIdentity(payloadAbs, expectedIdentity)) {
+          // 落到下面的验证分支
+        } else {
+          await releaseReservation(payloadAbs, reservation);
+          return reject(moveErrorOf(err, false));
+        }
+      }
+
+      let sourceGone = false;
+      try {
+        await lstat(sourceAbs);
+      } catch (err) {
+        if (isMissing(err)) sourceGone = true;
+        else return unknown();
+      }
+      const payloadOk = await objectMatchesIdentity(payloadAbs, expectedIdentity);
+      if (!sourceGone || !payloadOk) return unknown(payloadOk ? expectedIdentity : undefined);
+
+      try {
+        faults.atCheckpoint?.('C4');
+        assertRootContinuity(boundary, establishedToken);
+      } catch {
+        // 副作用已发生但确认链断了：只能 UNKNOWN；配置侧会停在 pending 由对账收敛
+        return unknown(expectedIdentity);
+      }
+
+      return { status: 'MOVED', identity: expectedIdentity, size: sourceStats.size };
+    },
+
+    /**
+     * 从回收区恢复到指定路径（UX-02C-03-P2-01）。
+     *
+     * 三条硬约束：
+     * - 目标已存在 → `ERR_ENTRY_EXISTS`，绝不覆盖（产品规则 7）；
+     * - 回收区对象身份必须等于记录身份，否则 `ERR_TRASH_STATE_CONFLICT`；
+     * - 仍然用"排他占位 + 只覆盖自己的占位"来兜 Windows 的覆盖语义。
+     */
+    async restoreEntry(
+      opId: string,
+      targetPath: string,
+      expectedIdentity: string,
+    ): Promise<TrashOpResult> {
+      const reject = (errorCode: ErrorCode): TrashOpResult => ({ status: 'REJECTED', errorCode });
+      const unknown = (identity?: string): TrashOpResult => ({
+        status: 'UNKNOWN',
+        errorCode: 'ERR_OUTCOME_UNKNOWN',
+        ...(identity ? { identity } : {}),
+      });
+
+      if (!TRASH_OP_ID_RE.test(opId)) return reject('ERR_COMMAND_INVALID');
+      if (typeof expectedIdentity !== 'string' || expectedIdentity === '') return reject('ERR_COMMAND_INVALID');
+      const targetShape = validateEntryPath(targetPath);
+      if (!targetShape.ok) return reject(targetShape.errorCode);
+      const target = targetShape.value;
+      if (isReservedPath(target)) return reject('ERR_PATH_RESERVED');
+
+      try {
+        faults.atCheckpoint?.('C0');
+        assertRootContinuity(boundary, establishedToken);
+      } catch (err) {
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      const payloadAbs = resolvePath(boundary.canonicalRoot, normalize(trashPayloadOf(opId)));
+      if (!isPathInsideRoot(boundary.canonicalRoot, payloadAbs)) return reject('ERR_PATH_OUTSIDE_ROOT');
+
+      let payloadStats;
+      try {
+        payloadStats = await lstat(payloadAbs);
+      } catch (err) {
+        if (isMissing(err)) return reject('ERR_TRASH_RECORD_NOT_FOUND');
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+      if (payloadStats.isSymbolicLink() || isUntrustedResolution(payloadAbs) || !payloadStats.isFile()) {
+        return reject('ERR_TRASH_STATE_CONFLICT');
+      }
+      if (`${payloadStats.dev}:${payloadStats.ino}` !== expectedIdentity) {
+        return reject('ERR_TRASH_STATE_CONFLICT');
+      }
+
+      const targetDir = parentDirOfEntry(target);
+      const parentCheck = resolveInBoundary(boundary, targetDir === '' ? '.' : targetDir);
+      if (!parentCheck.ok) return reject(parentCheck.errorCode);
+      try {
+        const info = await lstat(parentCheck.absolutePath);
+        if (!info.isDirectory() || info.isSymbolicLink() || isUntrustedResolution(parentCheck.absolutePath)) {
+          return reject('ERR_ENTRY_PARENT_INVALID');
+        }
+      } catch (err) {
+        if (isMissing(err)) return reject('ERR_ENTRY_PARENT_INVALID');
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      const targetAbs = resolvePath(boundary.canonicalRoot, normalize(target));
+      if (!isPathInsideRoot(boundary.canonicalRoot, targetAbs)) return reject('ERR_PATH_OUTSIDE_ROOT');
+      if (basename(targetAbs) !== entryNameOf(target)) return reject('ERR_ENTRY_NAME_INVALID');
+
+      // 目标存在即拒绝：这一条不是"检查后覆盖"，而是"发现即结束"
+      try {
+        await lstat(targetAbs);
+        return reject('ERR_ENTRY_EXISTS');
+      } catch (err) {
+        if (!isMissing(err)) return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      let reservation: EntryIdentity | null = null;
+      try {
+        const handle = await open(targetAbs, 'wx');
+        try {
+          reservation = identityOfStats(await handle.stat());
+        } catch {
+          await handle.close().catch(() => undefined);
+          return unknown();
+        }
+        await handle.close();
+      } catch (err) {
+        if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
+        return reject(moveErrorOf(err, false));
+      }
+
+      // 占位建立后再核一次：回收区里的对象可能在这期间被外部替换
+      if (!(await objectMatchesIdentity(payloadAbs, expectedIdentity))) {
+        await releaseReservation(targetAbs, reservation);
+        return reject('ERR_TRASH_STATE_CONFLICT');
+      }
+
+      try {
+        faults.atCheckpoint?.('C1');
+        assertRootContinuity(boundary, establishedToken);
+      } catch (err) {
+        await releaseReservation(targetAbs, reservation);
+        return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      try {
+        await rename(payloadAbs, targetAbs);
+      } catch (err) {
+        if (await objectMatchesIdentity(targetAbs, expectedIdentity)) {
+          // 落到下面的验证分支
+        } else {
+          await releaseReservation(targetAbs, reservation);
+          return reject(moveErrorOf(err, false));
+        }
+      }
+
+      let payloadGone = false;
+      try {
+        await lstat(payloadAbs);
+      } catch (err) {
+        if (isMissing(err)) payloadGone = true;
+        else return unknown();
+      }
+      const targetOk = await objectMatchesIdentity(targetAbs, expectedIdentity);
+      if (!payloadGone || !targetOk) return unknown(targetOk ? expectedIdentity : undefined);
+
+      try {
+        faults.atCheckpoint?.('C4');
+        assertRootContinuity(boundary, establishedToken);
+      } catch {
+        return unknown(expectedIdentity);
+      }
+
+      return { status: 'MOVED', identity: expectedIdentity, size: payloadStats.size };
+    },
+
+    /** 回收区对象身份（只读，供 Host 对账）。不存在 → `null`。 */
+    async trashIdentity(opId: string): Promise<string | null> {
+      if (!TRASH_OP_ID_RE.test(opId)) {
+        throw Object.assign(new Error('非法的 opId'), { errorCode: 'ERR_COMMAND_INVALID' });
+      }
+      const payloadAbs = resolvePath(boundary.canonicalRoot, normalize(trashPayloadOf(opId)));
+      if (!isPathInsideRoot(boundary.canonicalRoot, payloadAbs)) {
+        throw Object.assign(new Error('路径不在允许范围内'), { errorCode: 'ERR_PATH_OUTSIDE_ROOT' });
+      }
+      try {
+        const info = await lstat(payloadAbs);
+        if (info.isSymbolicLink() || isUntrustedResolution(payloadAbs) || !info.isFile()) return null;
+        return `${info.dev}:${info.ino}`;
+      } catch (err) {
+        if (isMissing(err)) return null;
+        throw toStorageError(err);
+      }
     },
   };
 }

@@ -1,0 +1,50 @@
+UX-02C-03-P2-01 · 测试日志（简洁文本）
+
+== 完整门禁（本轮独立复跑）==
+npm run test:p0            tests 994 / pass 992 / fail 0 / skip 2
+npm run typecheck          OK
+npm run typecheck:apps     OK
+npm run build:shell        OK（409.91 kB / gzip 125.37 kB）
+git diff --check           OK
+
+== 新增套件 ==
+87-s11ux02c03p2-trash-host    pass=10 fail=0 skip=0
+  P2-01a 普通文件回收（源消失 / payload 就位 / stored / 树里消失 / op 证据）
+  P2-01b 恢复（回到原路径 / dev:ino 不变 / 树里回来 / restored）
+  P2-01c 二进制（不做文本解码，字节完全不变）
+  P2-01d 链接与 junction 拒绝（零副作用，目标不被穿透）
+  P2-01e 目录拒绝
+  P2-01f 恢复冲突不覆盖（新文件字节不变）
+  P2-01g 回收区目标冲突（外部对象原样保留）
+  P2-01h opId 幂等重放 / 换路径冲突
+  P2-01i 容量 500（第 501 个拒绝且零副作用）
+  P2-01j 撤销后记录保留、payload 仍在磁盘、入口失效
+
+88-s11ux02c03p2-trash-guards  pass=4 fail=0 skip=0
+  P2-01k 内部目录不出现在树/递归清单（total 与快照稳定）
+  P2-01l 六个公开入口全部 403 ERR_PATH_RESERVED
+  P2-01m 活动 View 拒绝（409 + blockedBy=ACTIVE_VIEWS）
+  P2-01n 未保存草稿拒绝（草稿保留、磁盘未变）
+
+89-s11ux02c03p2-trash-crash   pass=6 fail=0 skip=0
+  P2-01o 意图写失败：409 + 零磁盘副作用
+  P2-01p 移动成功但状态提交失败：202 → 重启对账 stored → 可恢复
+  P2-01q 意图后崩溃（文件未移动）：重启对账 aborted
+  P2-01r 恢复中断（已移回、未提交）：重启对账 restored，不重复移动
+  P2-01s 回收区被外部替换：conflicted（不是 missing），恢复 409
+  P2-01t 源对象被替换：Provider 按 expectedIdentity 拒绝，替换对象毫发无损
+
+== 实现前（红）==
+87/88/89 共 22 例全部失败：/api/trash* 尚未实现（404）、
+store 无 trash API、Provider 无 entryFacts/trashEntry/restoreEntry/trashIdentity。
+
+== 既有套件的最小改动 ==
+44-S-23 / 82-P1-01j / 82-P1-01k / 82-P1-01k2：版本断言 v3 → v4（配置契约升版，语义不变）。
+
+== 变异探针（跑完自动还原）==
+A  open 去掉保留路径守卫                 → BITTEN 88-P2-01l
+B  回收区身份不符判成 missing            → BITTEN 89-P2-01s
+C  beginTrash 去掉容量检查               → BITTEN 87-P2-01i
+D  trashEntry 去掉第一道身份核对         → SURVIVED（第二道仍拦住；预期）
+E  两道身份核对同时删除                  → BITTEN 89-P2-01t
+PROBES=5 BITTEN=4 SURVIVED=1

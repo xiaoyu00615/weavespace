@@ -18,6 +18,10 @@ export {
   type LstatResultLike,
   type DirEntry,
   type DirEntryKind,
+  type EntryFacts,
+  type EntryFactKind,
+  type TrashOpResult,
+  type TrashOpStatus,
 } from './local-provider.ts';
 export {
   resolveInsideRoot,
@@ -45,6 +49,8 @@ export {
   entryNameOf,
   sameEntryPath,
   isEntryUnder,
+  isReservedPath,
+  RESERVED_ROOT_SEGMENT,
   MAX_ENTRY_NAME_LENGTH,
   MAX_PARENT_DIR_LENGTH,
   type EntryNameCheck,

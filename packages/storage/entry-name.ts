@@ -142,3 +142,28 @@ export function isEntryUnder(path: string, prefix: string): boolean {
     ? path.toLowerCase().startsWith(`${prefix.toLowerCase()}/`)
     : path.startsWith(`${prefix}/`);
 }
+
+/* ================================================================== */
+/* 内部保留命名空间（UX-02C-03-P2-01）                                  */
+/* ================================================================== */
+
+/**
+ * 项目根下的保留目录名：回收区所在处（`.weavespace/trash/<opId>/…`）。
+ *
+ * 只保留**根层**这一段：`docs/.weavespace` 仍然是用户的普通文件夹，不受影响。
+ */
+export const RESERVED_ROOT_SEGMENT = '.weavespace';
+
+/**
+ * 该路径是否落在内部保留命名空间里（根层的 `.weavespace` 或其后代）。
+ *
+ * 为什么单独成函数：它必须在**每一个**接收客户端路径的入口被显式调用，而不是
+ * 藏在授权判定里。把"内部目录不可达"混进"路径越界"会让放宽授权成为旁路，
+ * 也会让错误码无法指向真正原因（契约 P2-01 §二.4）。
+ */
+export function isReservedPath(path: unknown): boolean {
+  if (typeof path !== 'string' || path === '') return false;
+  const normalized = path.replace(/\\/g, '/');
+  const first = normalized.split('/')[0];
+  return sameEntryPath(first, RESERVED_ROOT_SEGMENT);
+}

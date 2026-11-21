@@ -31,12 +31,17 @@ import {
 } from './io.ts';
 import {
   MAX_HIDDEN_ENTRIES,
+  MAX_TRASH_RECORDS,
+  MAX_TRASH_UNRESOLVED,
+  TRASH_UNRESOLVED_STATES,
   parseConfig,
   serializeConfig,
   type ConfigHiddenEntry,
   type ConfigRevokedEntry,
   type ConfigState,
+  type ConfigTrashEntry,
   type ParsedConfig,
+  type TrashState,
 } from './config.ts';
 import { appendRevocation, headerLine, readLog, type LogReadResult } from './revocation-log.ts';
 import type {
@@ -125,6 +130,40 @@ export interface FileProjectStore {
     changed: boolean;
     outcome: 'updated' | 'unchanged' | 'skipped-missing' | 'skipped-conflict';
   }>;
+  /**
+   * 该项目的回收记录（只读内存投影，按 `deletedAt` 倒序）。
+   *
+   * **不过滤已撤销项目**：撤销时清理记录等于让用户静默失去"文件还在回收区"这一
+   * 事实（UX-02C-03-P2-01 §二.6）。调用方按需自行判断项目是否还活着。
+   */
+  trashOf(projectId: string): readonly ConfigTrashEntry[];
+  /** 全部回收记录（含已撤销项目）：启动对账与体积统计用。 */
+  trashAll(): readonly ConfigTrashEntry[];
+  /** 按 opId 精确查询（跨项目唯一）。 */
+  trashByOp(opId: string): ConfigTrashEntry | undefined;
+  /**
+   * 写入一条 **pending 意图**（UX-02C-03-P2-01）。
+   *
+   * 必须在磁盘移动**之前**提交：这是"移动成功但状态没提交"能被对账收敛的唯一依据。
+   * 同一 opId 已存在 → `replayed: true` 且零写入（幂等重放由调用方决定如何回应）。
+   * 未解决记录到达上限 → 抛 `ERR_TRASH_FULL`，不静默淘汰任何仍占用文件的记录。
+   */
+  beginTrash(entry: ConfigTrashEntry): Promise<{ changed: boolean; replayed: boolean }>;
+  /**
+   * 回收记录状态迁移（CAS）：只有当前状态 ∈ `expect` 时才写。
+   *
+   * 用一个通用迁移而不是五个专用方法，是为了让"哪些状态允许到哪些状态"只有一处
+   * 定义（`apps/server/src/trash.ts` 的判定表），存储层只负责条件提交与原子落盘。
+   */
+  commitTrashState(input: {
+    opId: string;
+    expect: readonly TrashState[];
+    next: TrashState;
+    identity?: string;
+    size?: number;
+    restoredAt?: string;
+    restoredTo?: string;
+  }): Promise<{ changed: boolean; outcome: 'updated' | 'skipped-missing' | 'skipped-conflict' }>;
   queryOp(opId: string): OpOutcome;
   /** 证据 + 归属（只读磁盘）：`unknown` 时归属恒为 `null`。 */
   opEvidence(opId: string): OpEvidence;
@@ -257,6 +296,25 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
   }
 
   /**
+   * 配置体积护栏：超过 `MAX_TRASH_RECORDS` 时，按时间淘汰**不再占用回收区文件**的
+   * 终态记录（restored / aborted / missing）。仍在占用文件的记录（pending / stored /
+   * restoring / conflicted）**永不**被淘汰——那等于静默丢掉用户的恢复能力。
+   */
+  function trimTrashHistory(trash: readonly ConfigTrashEntry[]): ConfigTrashEntry[] {
+    if (trash.length <= MAX_TRASH_RECORDS) return [...trash];
+    const freelist = new Set(['restored', 'aborted', 'missing']);
+    const excess = trash.length - MAX_TRASH_RECORDS;
+    const removable = trash
+      .filter((entry) => freelist.has(entry.state))
+      .slice()
+      .sort((a, b) => (a.deletedAt < b.deletedAt ? -1 : a.deletedAt > b.deletedAt ? 1 : 0))
+      .slice(0, excess);
+    if (removable.length === 0) return [...trash];
+    const drop = new Set(removable.map((entry) => entry.opId));
+    return trash.filter((entry) => !drop.has(entry.opId));
+  }
+
+  /**
    * 原子写：tmp → fsync(tmp) → 备份当前主文件 → rename。
    *
    * 顺序按 ADR-022 §3.1 step 3：备份在 rename 之前，所以 `.bak` 永远是**上一份**
@@ -280,8 +338,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     io.fsyncPath(LOG_PATH);
   }
 
-  function toRecord(project: ConfigState['projects'][number]): StoredProjectRecord {
-    return {
+  function toRecord(project: ConfigState['projects'][number]): StoredProjectRecord {    return {
       projectId: project.projectId,
       name: project.name,
       rootDir: project.rootDir,
@@ -318,12 +375,13 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     // ---- 首次初始化：配置与日志都不存在（该判定独立于其它分支）----
     if (primaryText === undefined && backupText === undefined && logText === undefined) {
       const initial: ConfigState = {
-        version: 3,
+        version: 4,
         commitSeq: 0,
         issuedIds: [],
         revoked: [],
         projects: [],
         hidden: [],
+        trash: [],
       };
       writeConfigAtomic(initial);
       materializeLogHeader();
@@ -422,8 +480,17 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       (entry) => !revokedIds.has(entry.projectId) && visible.some((project) => project.projectId === entry.projectId),
     );
 
+    /**
+     * 回收记录**不过滤**已撤销项目（UX-02C-03-P2-01 §二.6）。
+     *
+     * 理由与隐藏记录正好相反：隐藏记录指向的是"当前根里的某个路径"，项目没了就毫无
+     * 意义；回收记录指向的是".weavespace/trash 里还躺着一个文件"，文件没有随撤销消失。
+     * 丢掉这条索引，用户就再也不知道自己删过什么、还能不能救回来。
+     */
+    const trash = parsed?.state.trash ?? [];
+
     const config: ConfigState = {
-      version: 3,
+      version: 4,
       commitSeq,
       issuedIds: [...issuedIds],
       revoked: configRevoked,
@@ -438,6 +505,9 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         ...(project.createdByOp ? { createdByOp: project.createdByOp } : {}),
       })),
       hidden,
+      // 加载期的回收记录同样要"按已撤销项目过滤"吗？不。文件还在磁盘上，
+      // 记录本身就是唯一的索引；撤销不清索引（见 commitRevoke 的说明）。
+      trash,
     };
 
     return {
@@ -659,7 +729,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         throw domainError(ERROR_CODES.ERR_STORE_ID_REUSED, `projectId 已签发过，不得复用: ${entry.projectId}`);
       }
       const next: ConfigState = {
-        version: 3,
+        version: 4,
         commitSeq: current.commitSeq + 1,
         issuedIds: [...current.issuedIds, entry.projectId],
         revoked: current.revoked,
@@ -678,6 +748,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
           },
         ],
         hidden: current.hidden,
+        trash: current.trash,
       };
       writeConfigAtomic(next);
       applyConfig(next);
@@ -689,7 +760,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       assertMutationsAllowed();
       const project = assertProjectKnown(input.projectId);
       const next: ConfigState = {
-        version: 3,
+        version: 4,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
@@ -697,6 +768,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
           entry.projectId === input.projectId ? { ...project, name: input.name } : entry,
         ),
         hidden: current.hidden,
+        trash: current.trash,
       };
       writeConfigAtomic(next);
       applyConfig(next);
@@ -780,13 +852,16 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
       // ---- step 3：补写配置（失败不回滚）----
       const next: ConfigState = {
-        version: 3,
+        version: 4,
         commitSeq: seq,
         issuedIds: current.issuedIds,
         revoked: [...current.revoked, { projectId: input.projectId, revokedAtSeq: seq, opId: input.opId }],
         projects: current.projects.filter((project) => project.projectId !== input.projectId),
         // 项目已被撤销：它的隐藏记录随之作废（不删除任何磁盘文件，只是不再登记）
         hidden: current.hidden.filter((entry) => entry.projectId !== input.projectId),
+        // 回收记录**故意保留**（UX-02C-03-P2-01 §二.6）：文件仍在 .weavespace/trash 里，
+        // 删掉索引等于让用户静默失去"还能救回来"这一事实。入口由项目状态决定。
+        trash: current.trash,
       };
       try {
         writeConfigAtomic(next);
@@ -834,12 +909,13 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       if (!input.hidden) {
         if (!existing) return { changed: false };
         const next: ConfigState = {
-          version: 3,
+          version: 4,
           commitSeq: current.commitSeq + 1,
           issuedIds: current.issuedIds,
           revoked: current.revoked,
           projects: current.projects,
           hidden: current.hidden.filter((entry) => entry !== existing),
+          trash: current.trash,
         };
         try {
           writeConfigAtomic(next);
@@ -877,7 +953,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         hiddenAt: input.at ?? clock().toISOString(),
       };
       const next: ConfigState = {
-        version: 3,
+        version: 4,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
@@ -885,6 +961,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         hidden: existing
           ? current.hidden.map((entry) => (entry === existing ? record : entry))
           : [...current.hidden, record],
+        trash: current.trash,
       };
       try {
         writeConfigAtomic(next);
@@ -934,18 +1011,136 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
       const record: ConfigHiddenEntry = { ...existing, identity: input.identity };
       const next: ConfigState = {
-        version: 3,
+        version: 4,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
         projects: current.projects,
         hidden: current.hidden.map((entry) => (entry === existing ? record : entry)),
+        trash: current.trash,
       };
       try {
         writeConfigAtomic(next);
       } catch (err) {
         // 写不进去 = 没生效：内存投影保持旧身份，调用方按"刷新失败"处理
         throw Object.assign(new Error('隐藏记录身份未能写入工作区配置'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true, outcome: 'updated' as const };
+    },
+
+    trashOf(projectId) {
+      return current.trash
+        .filter((entry) => entry.projectId === projectId)
+        .slice()
+        .sort((a, b) => (a.deletedAt === b.deletedAt ? (a.opId < b.opId ? -1 : 1) : a.deletedAt < b.deletedAt ? 1 : -1));
+    },
+
+    trashAll() {
+      return current.trash.slice();
+    },
+
+    trashByOp(opId) {
+      return current.trash.find((entry) => entry.opId === opId);
+    },
+
+    /**
+     * 写入 pending 意图（UX-02C-03-P2-01）。
+     *
+     * 顺序纪律：容量判定 → 同路径冲突判定 → 追加 → 原子落盘。任何一步失败都
+     * **零变更**（内存投影与磁盘都不动），调用方据此可以安全地不做磁盘移动。
+     */
+    async beginTrash(entry) {
+      assertOpen();
+      assertMutationsAllowed();
+
+      const existing = current.trash.find((row) => row.opId === entry.opId);
+      if (existing) {
+        // 幂等重放：编号已被占用就不再写盘（调用方按"已存在"回应，而不是再删一次）
+        return { changed: false, replayed: true };
+      }
+
+      const unresolved = current.trash.filter((row) =>
+        (TRASH_UNRESOLVED_STATES as readonly string[]).includes(row.state),
+      ).length;
+      if (unresolved >= MAX_TRASH_UNRESOLVED) {
+        throw domainError(
+          ERROR_CODES.ERR_TRASH_FULL,
+          `回收区已达上限（${MAX_TRASH_UNRESOLVED} 个待处理项目），请先恢复`,
+        );
+      }
+
+      // 同一路径同时只能有一条未解决记录：否则"这个路径到底在不在回收区"无法回答
+      const samePath = current.trash.find(
+        (row) =>
+          row.projectId === entry.projectId &&
+          sameEntryPath(row.originalPath, entry.originalPath) &&
+          (TRASH_UNRESOLVED_STATES as readonly string[]).includes(row.state),
+      );
+      if (samePath) {
+        throw domainError(ERROR_CODES.ERR_TRASH_STATE_CONFLICT, '该路径已有一条未结束的回收记录');
+      }
+
+      const appended = [...current.trash, entry];
+      // 配置体积护栏：只淘汰**不再占用文件**的终态记录（不损失任何恢复能力）
+      const trimmed = trimTrashHistory(appended);
+      const next: ConfigState = {
+        version: 4,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: current.hidden,
+        trash: trimmed,
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        // 意图没落盘 = 磁盘什么都不该动：向调用方明确"未持久化、可重试"
+        throw Object.assign(new Error('回收意图未能写入工作区配置'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true, replayed: false };
+    },
+
+    async commitTrashState(input) {
+      assertOpen();
+      assertMutationsAllowed();
+      const existing = current.trash.find((row) => row.opId === input.opId);
+      if (!existing) return { changed: false, outcome: 'skipped-missing' as const };
+      if (!(input.expect as readonly string[]).includes(existing.state)) {
+        return { changed: false, outcome: 'skipped-conflict' as const };
+      }
+
+      const record: ConfigTrashEntry = {
+        ...existing,
+        state: input.next,
+        ...(input.identity !== undefined ? { identity: input.identity } : {}),
+        ...(input.size !== undefined ? { size: input.size } : {}),
+        ...(input.restoredAt !== undefined ? { restoredAt: input.restoredAt } : {}),
+        ...(input.restoredTo !== undefined ? { restoredTo: input.restoredTo } : {}),
+      };
+      const next: ConfigState = {
+        version: 4,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: current.hidden,
+        trash: current.trash.map((row) => (row === existing ? record : row)),
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        throw Object.assign(new Error('回收状态未能写入工作区配置'), {
           errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
           cause: err,
         });

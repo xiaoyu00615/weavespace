@@ -20,9 +20,15 @@ export {
   serializeConfig,
   PROJECT_ID_RE,
   MAX_HIDDEN_ENTRIES,
+  MAX_TRASH_RECORDS,
+  MAX_TRASH_UNRESOLVED,
+  TRASH_STATES,
+  TRASH_UNRESOLVED_STATES,
   type ConfigHiddenEntry,
   type ConfigState,
   type ConfigStateInput,
+  type ConfigTrashEntry,
+  type TrashState,
 } from './config.ts';
 export { LOG_HEAD_HASH, readLog, type LogReadResult, type RevocationEntry } from './revocation-log.ts';
 export type {

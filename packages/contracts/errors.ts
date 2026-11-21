@@ -189,6 +189,37 @@ export const ERROR_CODES = {
   ERR_ENTRY_DIR_BUSY: 'ERR_ENTRY_DIR_BUSY',
   /** 结构变更：源不存在、不是普通文件/目录、或是链接 / 重解析点。 */
   ERR_ENTRY_SOURCE_INVALID: 'ERR_ENTRY_SOURCE_INVALID',
+  /**
+   * 请求路径落在工作台**内部保留命名空间**（项目根下的 `.weavespace/`）。
+   *
+   * 该目录归 Host 自己使用（回收区）。它必须对普通接口**不可见也不可达**：
+   * - 展示层：`readDir` / `list` 在根层过滤，文件树与递归清单都看不到；
+   * - 访问层：open / create / rename / move / hide / tree(dir) / resources 一律拒绝。
+   *
+   * 不能靠"路径不在授权范围内"间接拒绝——那会让"放宽普通路径授权"成为打开
+   * 内部目录的旁路（UX-02C-03-P2-01 约束 4）。
+   */
+  ERR_PATH_RESERVED: 'ERR_PATH_RESERVED',
+  /**
+   * 回收区只接受普通文件（UX-02C-03-P2-01）。
+   *
+   * 目录 / 符号链接 / junction / 其他重解析点一律拒绝：本阶段不做目录递归回收，
+   * 也绝不跟随链接（否则删除的可能是链接指向的根外对象）。零磁盘副作用。
+   */
+  ERR_TRASH_KIND_UNSUPPORTED: 'ERR_TRASH_KIND_UNSUPPORTED',
+  /** 回收区不可用：内部目录被用户占用/是链接/标记不符，或无权写入。 */
+  ERR_TRASH_UNAVAILABLE: 'ERR_TRASH_UNAVAILABLE',
+  /** 回收区已达容量上限（未解决记录数），必须先恢复，不静默丢弃旧记录。 */
+  ERR_TRASH_FULL: 'ERR_TRASH_FULL',
+  /** 该 opId 没有回收记录（或已不属于当前项目）。 */
+  ERR_TRASH_RECORD_NOT_FOUND: 'ERR_TRASH_RECORD_NOT_FOUND',
+  /** 记录状态不允许该操作，或对象身份与记录不符（conflicted / missing / 已被外部替换）。 */
+  ERR_TRASH_STATE_CONFLICT: 'ERR_TRASH_STATE_CONFLICT',
+  /**
+   * 意图中记录的对象身份与磁盘上实际对象不一致：用户要删的那一个已经不是
+   * 现在路径上的这一个（外部删除/重建）。拒绝移动，绝不"删掉占着路径的陌生人"。
+   */
+  ERR_ENTRY_SOURCE_CHANGED: 'ERR_ENTRY_SOURCE_CHANGED',
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

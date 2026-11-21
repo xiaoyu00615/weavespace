@@ -24,6 +24,68 @@ export const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
  */
 export const MAX_HIDDEN_ENTRIES = 2000;
 
+/**
+ * 回收区上限（UX-02C-03-P2-01）。
+ *
+ * 两个不同的上限，各自解决一个问题：
+ * - `MAX_TRASH_UNRESOLVED`：**占用回收区文件**的记录（pending/stored/restoring/conflicted）。
+ *   到达上限后拒绝新的删除，而不是悄悄丢掉旧记录——P2 没有永久删除，静默丢弃等于
+ *   让用户失去恢复能力。
+ * - `MAX_TRASH_RECORDS`：配置体积护栏（含已恢复/已中止/已丢失的历史）。超出时按
+ *   时间淘汰**不再占用文件**的终态记录（restored/aborted/missing），不损失恢复能力。
+ */
+export const MAX_TRASH_UNRESOLVED = 500;
+export const MAX_TRASH_RECORDS = 2000;
+
+/** 回收记录状态机（UX-02C-03-P2-01）。 */
+export type TrashState =
+  | 'pending'
+  | 'stored'
+  | 'restoring'
+  | 'restored'
+  | 'aborted'
+  | 'conflicted'
+  | 'missing';
+
+export const TRASH_STATES: readonly TrashState[] = Object.freeze([
+  'pending',
+  'stored',
+  'restoring',
+  'restored',
+  'aborted',
+  'conflicted',
+  'missing',
+]);
+
+/** 仍在占用回收区文件、需要参与容量判定的状态。 */
+export const TRASH_UNRESOLVED_STATES: readonly TrashState[] = Object.freeze([
+  'pending',
+  'stored',
+  'restoring',
+  'conflicted',
+] as TrashState[]);
+
+/**
+ * 一条回收记录（UX-02C-03-P2-01）。
+ *
+ * `identity` 在 **pending 就要有**：它来自"移动前对源对象的 lstat"，是崩溃后判断
+ * "移动到底发生没发生"的唯一凭据。没有它就只能靠文件名/大小猜，那正是本项目一直
+ * 拒绝的做法。
+ */
+export interface ConfigTrashEntry {
+  readonly opId: string;
+  readonly projectId: string;
+  readonly rootToken: string;
+  readonly originalPath: string;
+  readonly entryKind: 'file';
+  readonly identity: string;
+  readonly size: number;
+  readonly deletedAt: string;
+  readonly state: TrashState;
+  readonly restoredAt?: string;
+  readonly restoredTo?: string;
+}
+
 export interface ConfigProject {
   readonly projectId: string;
   readonly name: string;
@@ -66,42 +128,46 @@ export interface ConfigHiddenEntry {
 
 /** 内存形态：`checksum` 不参与（写盘时才算）。 */
 export interface ConfigState {
-  readonly version: 3;
+  readonly version: 4;
   readonly commitSeq: number;
   readonly issuedIds: readonly string[];
   readonly revoked: readonly ConfigRevokedEntry[];
   readonly projects: readonly ConfigProject[];
   readonly hidden: readonly ConfigHiddenEntry[];
+  readonly trash: readonly ConfigTrashEntry[];
 }
 
 /**
  * 允许序列化的输入形态。
  *
- * 保留 `version: 2` 是为了既有夹具与"只读兼容"路径：v2 输入序列化成 v2 文件
- * （校验和也按 v2 计算），不会被悄悄升版。
+ * 保留 `version: 2` / `3` 是为了既有夹具与"只读兼容"路径：低版本输入序列化成
+ * 同版本文件（校验和也按声明版本计算），不会被悄悄升版。
  */
 export interface ConfigStateInput {
-  readonly version: 2 | 3;
+  readonly version: 2 | 3 | 4;
   readonly commitSeq: number;
   readonly issuedIds: readonly string[];
   readonly revoked: readonly ConfigRevokedEntry[];
   readonly projects: readonly ConfigProject[];
   readonly hidden?: readonly ConfigHiddenEntry[];
+  /** 只在 v4 参与序列化与哈希；低版本输入即使带着也会被忽略。 */
+  readonly trash?: readonly ConfigTrashEntry[];
 }
 
 export interface ParsedConfig {
   readonly state: ConfigState;
-  /** 原始文件声明的版本（用于判断是否需要写回 v3）。 */
-  readonly sourceVersion: 1 | 2 | 3;
+  /** 原始文件声明的版本（用于判断是否需要写回）。 */
+  readonly sourceVersion: 1 | 2 | 3 | 4;
 }
 
 export interface ConfigFile {
-  readonly version: 3;
+  readonly version: 4;
   readonly commitSeq: number;
   readonly issuedIds: readonly string[];
   readonly revoked: readonly ConfigRevokedEntry[];
   readonly projects: readonly ConfigProject[];
   readonly hidden: readonly ConfigHiddenEntry[];
+  readonly trash: readonly ConfigTrashEntry[];
   readonly checksum: string;
 }
 
@@ -132,6 +198,25 @@ function canonicalHidden(hidden: readonly ConfigHiddenEntry[]): unknown[] {
     }));
 }
 
+/** 回收记录同样按 `opId` 排序后再哈希（顺序不是语义）。 */
+function canonicalTrash(trash: readonly ConfigTrashEntry[]): unknown[] {
+  return [...trash]
+    .sort((a, b) => (a.opId < b.opId ? -1 : a.opId > b.opId ? 1 : 0))
+    .map((entry) => ({
+      opId: entry.opId,
+      projectId: entry.projectId,
+      rootToken: entry.rootToken,
+      originalPath: entry.originalPath,
+      entryKind: entry.entryKind,
+      identity: entry.identity,
+      size: entry.size,
+      deletedAt: entry.deletedAt,
+      state: entry.state,
+      restoredAt: entry.restoredAt,
+      restoredTo: entry.restoredTo,
+    }));
+}
+
 /**
  * checksum 的输入：**固定字段顺序**的 canonical JSON。
  * 绝不直接对原始文件文本取哈希——那样缩进/键序变化就会误判为损坏。
@@ -159,12 +244,19 @@ export function checksumOf(state: ConfigStateInput): string {
       createdByOp: project.createdByOp,
     })),
     ...(state.version >= 3 ? { hidden: canonicalHidden(state.hidden ?? []) } : {}),
+    // `trash` 只在 v4 起参与哈希：v2/v3 文件的校验和必须继续可复算
+    ...(state.version >= 4 ? { trash: canonicalTrash(state.trash ?? []) } : {}),
   });
   return createHash('sha256').update(canonical).digest('hex');
 }
 
 export function serializeConfig(state: ConfigStateInput): string {
-  const file = { ...state, hidden: state.hidden ?? [], checksum: checksumOf(state) };
+  const file = {
+    ...state,
+    hidden: state.hidden ?? [],
+    ...(state.version >= 4 ? { trash: state.trash ?? [] } : {}),
+    checksum: checksumOf(state),
+  };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
@@ -220,11 +312,48 @@ function parseHidden(raw: unknown): ConfigHiddenEntry | undefined {
   return { projectId, path, rootToken, identity, hiddenAt };
 }
 
+function parseTrash(raw: unknown): ConfigTrashEntry | undefined {
+  if (!isRecord(raw)) return undefined;
+  const { opId, projectId, rootToken, originalPath, entryKind, identity, size, deletedAt, state } = raw;
+  if (typeof opId !== 'string' || !/^[a-z0-9][a-z0-9-]{7,63}$/.test(opId)) return undefined;
+  if (typeof projectId !== 'string' || !PROJECT_ID_RE.test(projectId)) return undefined;
+  if (!isNonEmptyString(rootToken) || !isNonEmptyString(identity)) return undefined;
+  if (typeof originalPath !== 'string') return undefined;
+  const checkedPath = validateEntryPath(originalPath);
+  // 规范化 + 非保留命名空间：回收记录永远指向用户可见的项目内路径
+  if (!checkedPath.ok || checkedPath.value !== originalPath) return undefined;
+  if (checkedPath.value.startsWith('.weavespace')) return undefined;
+  if (entryKind !== 'file') return undefined;
+  if (typeof size !== 'number' || !Number.isInteger(size) || size < 0) return undefined;
+  if (!isNonEmptyString(deletedAt)) return undefined;
+  if (typeof state !== 'string' || !(TRASH_STATES as readonly string[]).includes(state)) return undefined;
+
+  const optionalString = (value: unknown): string | undefined =>
+    typeof value === 'string' && value !== '' ? value : undefined;
+  const restoredAt = optionalString(raw.restoredAt);
+  const restoredTo = optionalString(raw.restoredTo);
+
+  return {
+    opId,
+    projectId,
+    rootToken,
+    originalPath,
+    entryKind: 'file',
+    identity,
+    size,
+    deletedAt,
+    state: state as TrashState,
+    ...(restoredAt ? { restoredAt } : {}),
+    ...(restoredTo ? { restoredTo } : {}),
+  };
+}
+
 /**
  * 解析配置。返回 `undefined` 表示**这份文件不可用**（调用方必须按 fail-closed 处理）。
  *
  * v2 额外要求：`checksum` 复算一致、`projects[].projectId ∈ issuedIds`、序号自洽。
- * v3 在此基础上再把隐藏记录纳入校验和，并要求路径/身份字段完整、无重复条目。
+ * v3 在此基础上再把隐藏记录纳入校验和；v4 再把回收记录纳入。
+ * 校验和一律按**文件声明的版本**复算——否则升级那一刻会把历史配置全判成损坏。
  */
 export function parseConfig(text: string): ParsedConfig | undefined {
   let raw: unknown;
@@ -234,7 +363,7 @@ export function parseConfig(text: string): ParsedConfig | undefined {
     return undefined;
   }
   if (!isRecord(raw)) return undefined;
-  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) return undefined;
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3 && raw.version !== 4) return undefined;
   if (!Array.isArray(raw.projects)) return undefined;
   if (!Array.isArray(raw.revoked ?? [])) return undefined;
 
@@ -250,12 +379,13 @@ export function parseConfig(text: string): ParsedConfig | undefined {
     return {
       sourceVersion: 1,
       state: {
-        version: 3,
+        version: 4,
         commitSeq: 0,
         issuedIds: projects.map((project) => project.projectId),
         revoked: [],
         projects,
         hidden: [],
+        trash: [],
       },
     };
   }
@@ -297,9 +427,9 @@ export function parseConfig(text: string): ParsedConfig | undefined {
     if (!issuedIds.includes(entry.projectId)) return undefined;
   }
 
-  // 隐藏记录只在 v3 存在；v2 文件里的同名字段一律忽略（不参与哈希、不参与判定）
+  // 隐藏记录从 v3 起存在；v2 文件里的同名字段一律忽略（不参与哈希、不参与判定）
   const hidden: ConfigHiddenEntry[] = [];
-  if (raw.version === 3) {
+  if (raw.version === 3 || raw.version === 4) {
     if (!Array.isArray(raw.hidden)) return undefined;
     if (raw.hidden.length > MAX_HIDDEN_ENTRIES) return undefined;
     for (const item of raw.hidden as unknown[]) {
@@ -314,16 +444,38 @@ export function parseConfig(text: string): ParsedConfig | undefined {
     }
   }
 
+  // 回收记录只在 v4 存在；v2/v3 文件里的同名字段一律忽略（不参与哈希、不参与判定）
+  const trash: ConfigTrashEntry[] = [];
+  if (raw.version === 4) {
+    if (!Array.isArray(raw.trash)) return undefined;
+    if (raw.trash.length > MAX_TRASH_RECORDS) return undefined;
+    for (const item of raw.trash as unknown[]) {
+      const entry = parseTrash(item);
+      if (!entry) return undefined;
+      // opId 是事务身份：不得重复（同一编号不能代表两次删除）
+      if (trash.some((existing) => existing.opId === entry.opId)) return undefined;
+      // 已签发过的项目才可能有回收记录（撤销后 id 仍永久保留，记录因此不会被判损坏）
+      if (!issuedIds.includes(entry.projectId)) return undefined;
+      trash.push(entry);
+    }
+  }
+
   const state: ConfigState = {
-    version: 3,
+    version: 4,
     commitSeq: raw.commitSeq,
     issuedIds,
     revoked,
     projects,
     hidden,
+    trash,
   };
-  // 校验和按**文件声明的版本**计算：v2 文件不含隐藏字段
-  const declared = raw.version === 3 ? checksumOf(state) : checksumOf({ ...state, version: 2, hidden: [] });
+  // 校验和按**文件声明的版本**计算：v2 不含隐藏字段，v3 不含回收字段
+  const declared =
+    raw.version === 4
+      ? checksumOf(state)
+      : raw.version === 3
+        ? checksumOf({ ...state, version: 3, trash: [] })
+        : checksumOf({ ...state, version: 2, hidden: [], trash: [] });
   if (declared !== raw.checksum) return undefined;
   return { sourceVersion: raw.version, state };
 }
