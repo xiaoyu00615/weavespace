@@ -48,7 +48,8 @@ export type ParseTrashResult<T> =
   | { ok: true; request: T }
   | { ok: false; errorCode: ErrorCode; message: string };
 
-const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** 项目 id 形状（与 create-entry/hidden 的判定一致）。 */
+export const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 /** opId 会成为目录名：只允许小写字母/数字/连字符，长度受限（与 Provider 同一规则）。 */
 export const TRASH_OP_ID_RE = /^[a-z0-9][a-z0-9-]{7,63}$/;
 
@@ -103,22 +104,29 @@ export function parseTrashRestoreBody(body: Record<string, unknown>): ParseTrash
 /* ================================================================== */
 
 /**
+ * 一个位置的**探测结论**（UX-02C-03-P2-01-R1 / P1-04）。
+ *
+ * 四态而不是 `string | null`：`missing` 必须是"经可靠探测确认不存在"，
+ * 而"看不清"（`failed`）和"存在但不可信"（`unsafe`：链接 / 目录 / 重解析点 /
+ * 父链被替换）都必须能和"不存在"区分开。混同的后果是把回收区里明明还在的文件
+ * 标成 `missing`，用户以为文件丢了。
+ */
+export type TrashProbe =
+  | { readonly state: 'present'; readonly identity: string }
+  | { readonly state: 'missing' }
+  | { readonly state: 'unsafe' }
+  | { readonly state: 'failed' };
+
+/**
  * 一次对账看到的**磁盘事实**。
  *
- * 三个"探针失败"字段是刻意的：`null` 表示"这个位置没有对象"，`probeFailed` 表示
- * "我没能看清"。把两者混成一个 `null` 会把"读不出来"误判成"不存在"，
- * 于是回收区里明明有文件却被标成 `missing`——用户会以为文件丢了。
+ * `source` = 原路径；`payload` = 回收区对象；`target` = 恢复目标（仅 `restoring` 有意义，
+ * 当前实现里它就是原路径，但保持独立字段以便将来目标可变）。
  */
 export interface TrashEvidence {
-  /** 原路径上是否还有对象；`null` = 没有。 */
-  readonly sourceIdentity: string | null;
-  readonly sourceProbeFailed: boolean;
-  /** 回收区 payload 的对象身份；`null` = 没有。 */
-  readonly payloadIdentity: string | null;
-  readonly payloadProbeFailed: boolean;
-  /** 恢复目标路径上的对象身份；`null` = 没有（仅 `restoring` 有意义）。 */
-  readonly targetIdentity?: string | null;
-  readonly targetProbeFailed?: boolean;
+  readonly source: TrashProbe;
+  readonly payload: TrashProbe;
+  readonly target: TrashProbe;
 }
 
 export type ReconcileAction =
@@ -142,10 +150,11 @@ const TERMINAL: readonly TrashState[] = ['restored', 'aborted', 'conflicted', 'm
 /**
  * 单条记录的对账判定（纯函数，表驱动）。
  *
- * 核心纪律（任务书 §二.2）：
- * - **身份不匹配一律 `conflicted`**，绝不当成 `missing`；
- * - 探针失败一律 `conflicted`（看不清不等于没有）；
+ * 核心纪律（任务书 §4）：
+ * - **身份不匹配、类型异常、探测失败一律 `conflicted`**，绝不当成 `missing`；
  * - 只有"回收区里确实是记录里的那个对象"才允许进入 `stored`；
+ * - `restoring` 下必须**先比对 payload 身份**：只有匹配才允许回退 `stored`
+ *   （旧实现只判"payload 非空"，会把被替换的对象当成"恢复未发生"）；
  * - `restoring` 下"payload 消失 + 目标身份匹配"才允许 `restored`。
  */
 export function reconcileTrash(record: ConfigTrashEntry, evidence: TrashEvidence): ReconcileResult {
@@ -153,47 +162,104 @@ export function reconcileTrash(record: ConfigTrashEntry, evidence: TrashEvidence
     return { state: record.state, action: 'none', reason: '终态不再判定' };
   }
 
-  const payload = evidence.payloadIdentity;
-  const source = evidence.sourceIdentity;
+  const payload = evidence.payload;
+  const source = evidence.source;
 
   if (record.state === 'pending') {
-    if (evidence.payloadProbeFailed) return { state: 'conflicted', action: 'conflict', reason: '回收区无法核验' };
-    if (payload !== null) {
-      return payload === record.identity
+    if (payload.state === 'failed' || payload.state === 'unsafe') {
+      return { state: 'conflicted', action: 'conflict', reason: '回收区无法核验或类型异常' };
+    }
+    if (payload.state === 'present') {
+      return payload.identity === record.identity
         ? { state: 'stored', action: 'promote-stored', reason: '移动已完成，补记状态' }
         : { state: 'conflicted', action: 'conflict', reason: '回收区对象身份与记录不符' };
     }
-    if (evidence.sourceProbeFailed) return { state: 'conflicted', action: 'conflict', reason: '原位置无法核验' };
-    if (source === record.identity) return { state: 'aborted', action: 'abort', reason: '移动未发生，文件仍在原处' };
-    if (source !== null) return { state: 'conflicted', action: 'conflict', reason: '原位置对象身份与记录不符' };
+    if (source.state === 'failed' || source.state === 'unsafe') {
+      return { state: 'conflicted', action: 'conflict', reason: '原位置无法核验或类型异常' };
+    }
+    if (source.state === 'present') {
+      return source.identity === record.identity
+        ? { state: 'aborted', action: 'abort', reason: '移动未发生，文件仍在原处' }
+        : { state: 'conflicted', action: 'conflict', reason: '原位置对象身份与记录不符' };
+    }
     return { state: 'missing', action: 'mark-missing', reason: '源与回收区都没有该对象' };
   }
 
   if (record.state === 'stored') {
-    if (evidence.payloadProbeFailed) return { state: 'conflicted', action: 'conflict', reason: '回收区无法核验' };
-    if (payload === record.identity) return { state: 'stored', action: 'none', reason: '正常' };
-    if (payload !== null) return { state: 'conflicted', action: 'conflict', reason: '回收区对象被替换' };
-    if (evidence.sourceProbeFailed) return { state: 'conflicted', action: 'conflict', reason: '原位置无法核验' };
-    if (source === record.identity) {
-      // 同一个对象又回到了原路径（rename 保留 inode）：说明恢复其实已经发生
-      return { state: 'restored', action: 'promote-restored', reason: '对象已回到原路径，补记恢复' };
+    if (payload.state === 'failed' || payload.state === 'unsafe') {
+      return { state: 'conflicted', action: 'conflict', reason: '回收区无法核验或类型异常' };
     }
-    if (source !== null) return { state: 'conflicted', action: 'conflict', reason: '原位置出现另一个对象' };
+    if (payload.state === 'present') {
+      return payload.identity === record.identity
+        ? { state: 'stored', action: 'none', reason: '正常' }
+        : { state: 'conflicted', action: 'conflict', reason: '回收区对象被替换' };
+    }
+    if (source.state === 'failed' || source.state === 'unsafe') {
+      return { state: 'conflicted', action: 'conflict', reason: '原位置无法核验或类型异常' };
+    }
+    if (source.state === 'present') {
+      // 同一个对象又回到了原路径（rename 保留 inode）：说明恢复其实已经发生
+      return source.identity === record.identity
+        ? { state: 'restored', action: 'promote-restored', reason: '对象已回到原路径，补记恢复' }
+        : { state: 'conflicted', action: 'conflict', reason: '原位置出现另一个对象' };
+    }
     return { state: 'missing', action: 'mark-missing', reason: '回收区对象已不存在' };
   }
 
   // restoring
-  if (evidence.payloadProbeFailed || evidence.targetProbeFailed) {
-    return { state: 'conflicted', action: 'conflict', reason: '恢复两端无法核验' };
+  if (
+    evidence.payload.state === 'failed' ||
+    evidence.payload.state === 'unsafe' ||
+    evidence.target.state === 'failed' ||
+    evidence.target.state === 'unsafe'
+  ) {
+    return { state: 'conflicted', action: 'conflict', reason: '恢复两端无法核验或类型异常' };
   }
-  const target = evidence.targetIdentity ?? null;
-  if (payload !== null) {
-    if (target === null) return { state: 'stored', action: 'revert-stored', reason: '恢复未发生，可重试' };
+  if (payload.state === 'present') {
+    // 必须先比对身份：payload 还在原处且仍是同一个对象才叫"恢复未发生"
+    if (payload.identity !== record.identity) {
+      return { state: 'conflicted', action: 'conflict', reason: '回收区对象身份与记录不符' };
+    }
+    if (evidence.target.state === 'missing') {
+      return { state: 'stored', action: 'revert-stored', reason: '恢复未发生，可重试' };
+    }
     return { state: 'conflicted', action: 'conflict', reason: '回收区与原位置同时存在对象' };
   }
-  if (target === record.identity) return { state: 'restored', action: 'promote-restored', reason: '对象已回到原路径' };
-  if (target !== null) return { state: 'conflicted', action: 'conflict', reason: '原位置对象身份与记录不符' };
+  if (evidence.target.state === 'present') {
+    return evidence.target.identity === record.identity
+      ? { state: 'restored', action: 'promote-restored', reason: '对象已回到原路径' }
+      : { state: 'conflicted', action: 'conflict', reason: '原位置对象身份与记录不符' };
+  }
   return { state: 'missing', action: 'mark-missing', reason: '回收区与目标位置都没有该对象' };
+}
+
+/** `/api/trash/op` 与回收重放共用的状态映射（P2-03 / P2-04）。 */
+export type TrashOutcome = 'trashed' | 'restored' | 'aborted' | 'conflicted' | 'missing' | 'unknown' | 'none';
+
+/**
+ * 记录状态 → 对外操作结论。
+ *
+ * `pending` / `restoring` **不是**成功：它们表示"磁盘可能已经变了，但结果尚未确认"，
+ * 必须映射成 `unknown`，让调用方去核对而不是当成已完成。
+ */
+export function trashOutcomeOf(state: TrashState | null): TrashOutcome {
+  switch (state) {
+    case 'stored':
+      return 'trashed';
+    case 'restored':
+      return 'restored';
+    case 'aborted':
+      return 'aborted';
+    case 'conflicted':
+      return 'conflicted';
+    case 'missing':
+      return 'missing';
+    case 'pending':
+    case 'restoring':
+      return 'unknown';
+    default:
+      return 'none';
+  }
 }
 
 /* ================================================================== */

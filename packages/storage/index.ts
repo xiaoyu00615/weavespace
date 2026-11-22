@@ -22,6 +22,7 @@ export {
   type EntryFactKind,
   type TrashOpResult,
   type TrashOpStatus,
+  type TrashPayloadProbe,
 } from './local-provider.ts';
 export {
   resolveInsideRoot,

@@ -19,7 +19,7 @@
  *
  * 本模块不负责编辑会话、冲突呈现或权限判定，那些属于 document / permission。
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
@@ -139,10 +139,11 @@ export interface StorageFaultHooks {
    */
   reserveFault?: (stage: 'beforeStat' | 'beforeClose', attempt: 1 | 2) => void;
   /**
-   * 排他占位**已建立并记录文件身份**、`rename` 尚未执行时调用（UX-02C-02-R1）。
+   * 排他占位**已建立并记录文件身份**、最终归属复核 / `rename` 尚未执行时调用
+   * （UX-02C-02-R1；UX-02C-03-P2-01-R1 起同时用于回收与恢复）。
    *
-   * 用途：确定性模拟"占位被外部进程删除并换成同名 0 字节文件"。旧实现用
-   * `isFile() && size===0` 判断占位归属，会把外部文件当成自己的占位并删除；
+   * 用途：确定性模拟"占位被外部进程删除并换成同名对象"。旧实现用
+   * `isFile() && size===0` 判断占位归属，会把外部文件当成自己的占位并删除/覆盖；
    * 有了 dev+ino 身份核对，这里必须以 ERR_ENTRY_EXISTS 拒绝且不碰外部文件。
    */
   afterMoveReserve?: () => void;
@@ -314,8 +315,13 @@ export interface StorageProvider {
    * 否则拒绝（说明回收区里的东西已经不是当初移入的那一个）。
    */
   restoreEntry?(opId: string, targetPath: string, expectedIdentity: string): Promise<TrashOpResult>;
-  /** 回收区对象身份；不存在返回 `null`（只读，供对账使用）。 */
-  trashIdentity?(opId: string): Promise<string | null>;
+  /**
+   * 回收区 payload 的**判别式**探测（UX-02C-03-P2-01-R1 / P1-04）。
+   *
+   * 只读、无副作用。父链逐级核验：任何一级是链接/重解析点/非目录，都返回
+   * `unsafe` —— 绝不沿链接把根外对象当成"回收区里的那个文件"。
+   */
+  trashPayloadFacts?(opId: string): Promise<TrashPayloadProbe>;
 }
 
 export function contentVersionOf(content: string | Buffer): string {
@@ -399,6 +405,24 @@ export interface TrashOpResult {
   size?: number;
 }
 
+/**
+ * 回收区 payload 的探测结果（UX-02C-03-P2-01-R1 / P1-04）。
+ *
+ * 为什么不能再用 `string | null`：`null` 同时表示"真的不存在"和"看不清/类型不对"，
+ * 于是"payload 被换成符号链接"会被对账判成 `missing` —— 用户以为文件丢了，
+ * 而实际上它只是被外部改成了不可信形态。三种状态必须分开：
+ * - `present`：普通文件，返回真实 `dev:ino`；
+ * - `missing`：父链与末段都经可靠探测确认不存在；
+ * - `unsafe`：存在但不是可核验的对象（链接 / 重解析点 / 目录 / 父链被替换）。
+ *
+ * 探测本身失败（IO 异常、根不连续）不返回 `missing`，而是**抛出**，由调用方
+ * 记作"看不清"（`conflicted`），绝不能伪装成"不存在"。
+ */
+export type TrashPayloadProbe =
+  | { readonly status: 'present'; readonly identity: string; readonly size: number }
+  | { readonly status: 'missing' }
+  | { readonly status: 'unsafe'; readonly errorCode: ErrorCode };
+
 function trashDirOf(opId: string): string {
   return `${TRASH_ROOT_DIR}/${opId}`;
 }
@@ -407,17 +431,320 @@ function trashPayloadOf(opId: string): string {
   return `${TRASH_ROOT_DIR}/${opId}/${TRASH_PAYLOAD_NAME}`;
 }
 
+/**
+ * 内部替换用的临时文件名（只出现在 `.weavespace/` 内）。
+ *
+ * 为什么必须"临时文件 + rename"，而不是直接 `writeFile(marker)`：
+ * `writeFile` 会**跟随符号链接**。标记被换成指向项目根外文件的链接时，一次
+ * "更新标记"就等于把 Host 的写入引到根外（P1-02）。`rename` 只替换目录项，
+ * 永远不会写穿链接，也不会改动硬链接指向的外部 inode 内容。
+ */
+const TRASH_TMP_PREFIX = '.ws-tmp-';
+const TRASH_TMP_RE = /^\.ws-tmp-[0-9]+\.[0-9a-f]{8}$/;
+
+function trashTmpName(): string {
+  return `${TRASH_TMP_PREFIX}${process.pid}.${randomUUID().slice(0, 8)}`;
+}
+
+type OwnWrite = { ok: true } | { ok: false; errorCode: ErrorCode };
+
+/** 只清理"确实是我们刚建的那个临时文件"，外部对象一律不碰。 */
+async function discardTmpFile(tmpAbs: string, identity: EntryIdentity | null): Promise<void> {
+  if (identity === null) return;
+  try {
+    const info = await lstat(tmpAbs);
+    if (!sameEntryIdentity(identityOfStats(info), identity)) return;
+    await unlink(tmpAbs);
+  } catch {
+    // 清不掉不影响结论：调用方本来就要报失败
+  }
+}
+
+/**
+ * 在**自己拥有的目录**里安全写入一个内部文件（替换语义）。
+ *
+ * 顺序（不可交换）：
+ * 1. `open(tmp, 'wx')` 排他创建临时文件并写入内容；
+ * 2. 关闭前记下临时文件身份；
+ * 3. `rename` 之前核验目标：`expectCurrent === null` 要求目标不存在，
+ *    否则要求目标仍是调用方此前核验过的同一个对象；
+ * 4. 只有核验通过才 `rename`；任何一步失败都清理自己的临时文件。
+ *
+ * 这一步核验消不掉"核验与 rename 之间"的竞争窗口（与 `moveEntry` 同类），
+ * 但 `rename` 本身不会写穿符号链接，因此窗口内被换上的链接只会被替换掉目录项，
+ * 根外目标文件的内容不会改变。
+ */
+async function writeOwnFileAtomically(
+  dirAbs: string,
+  name: string,
+  content: string,
+  expectCurrent: EntryIdentity | null,
+): Promise<OwnWrite> {
+  const targetAbs = join(dirAbs, name);
+  const tmpAbs = join(dirAbs, trashTmpName());
+
+  let tmpIdentity: EntryIdentity | null = null;
+  let handle: FileHandle | null = null;
+  try {
+    handle = await open(tmpAbs, 'wx');
+    tmpIdentity = identityOfStats(await handle.stat());
+    await handle.writeFile(content, { encoding: 'utf8' });
+    await handle.close();
+    handle = null;
+  } catch (err) {
+    if (handle) await handle.close().catch(() => undefined);
+    await discardTmpFile(tmpAbs, tmpIdentity);
+    return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+
+  let current: EntryIdentity | null = null;
+  try {
+    const info = await lstat(targetAbs);
+    // 目标若是链接/重解析点，说明它已经不是我们写过的那个普通文件
+    if (info.isSymbolicLink() || isUntrustedResolution(targetAbs)) {
+      await discardTmpFile(tmpAbs, tmpIdentity);
+      return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+    }
+    current = identityOfStats(info);
+  } catch (err) {
+    if (!isMissing(err)) {
+      await discardTmpFile(tmpAbs, tmpIdentity);
+      return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+    }
+  }
+
+  const consistent = expectCurrent === null
+    ? current === null
+    : sameEntryIdentity(current, expectCurrent);
+  if (!consistent) {
+    await discardTmpFile(tmpAbs, tmpIdentity);
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+
+  try {
+    await rename(tmpAbs, targetAbs);
+  } catch (err) {
+    await discardTmpFile(tmpAbs, tmpIdentity);
+    return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+  return { ok: true };
+}
+
+type MarkerRead =
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'ok'; readonly raw: string; readonly identity: EntryIdentity }
+  | { readonly kind: 'unsafe'; readonly errorCode: ErrorCode };
+
+/**
+ * 读取内部所有权标记（P1-02）。
+ *
+ * 拒绝条件全部在**读内容之前**判定：符号链接 / 重解析点 / 非普通文件 /
+ * 硬链接（nlink > 1，说明 inode 被根外共享）。读取通过已打开句柄完成，
+ * 并与 `lstat` 记下的身份比对——`lstat` 与 `open` 之间被替换时身份必然不同。
+ */
+async function readMarkerSafely(ownerAbs: string): Promise<MarkerRead> {
+  const markerAbs = join(ownerAbs, TRASH_OWNER_MARKER);
+  let before;
+  try {
+    before = await lstat(markerAbs);
+  } catch (err) {
+    return isMissing(err)
+      ? { kind: 'missing' }
+      : { kind: 'unsafe', errorCode: mapStorageError(err) as ErrorCode };
+  }
+  if (before.isSymbolicLink() || isUntrustedResolution(markerAbs) || !before.isFile()) {
+    return { kind: 'unsafe', errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  if (Number(before.nlink) !== 1) {
+    // 硬链接：内容可能完全合法，但 inode 不是我们独占的 → 不可信
+    return { kind: 'unsafe', errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  const expected = identityOfStats(before);
+
+  let handle: FileHandle;
+  try {
+    handle = await open(markerAbs, 'r');
+  } catch (err) {
+    return isMissing(err)
+      ? { kind: 'missing' }
+      : { kind: 'unsafe', errorCode: mapStorageError(err) as ErrorCode };
+  }
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile() || Number(stats.nlink) !== 1 || !sameEntryIdentity(identityOfStats(stats), expected)) {
+      return { kind: 'unsafe', errorCode: 'ERR_TRASH_UNAVAILABLE' };
+    }
+    const raw = await handle.readFile({ encoding: 'utf8' });
+    return { kind: 'ok', raw, identity: expected };
+  } catch (err) {
+    return { kind: 'unsafe', errorCode: mapStorageError(err) as ErrorCode };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+function markerContentOf(identity: EntryIdentity): string {
+  return `${JSON.stringify(
+    { magic: TRASH_OWNER_MAGIC, identity: `${identity.dev}:${identity.ino}`, createdAt: new Date().toISOString() },
+    null,
+    2,
+  )}\n`;
+}
+
+/**
+ * `.gitignore` 每次初始化都核验/补写（P2-06）。
+ *
+ * 只在"标记首次创建"时写一次是不够的：崩在"标记已写、`.gitignore` 未写"之间，
+ * 之后每次初始化都会跳过，回收区从此可能被提交进用户仓库。
+ */
+async function ensureGitignore(ownerAbs: string): Promise<OwnWrite> {
+  const abs = join(ownerAbs, '.gitignore');
+  let info;
+  try {
+    info = await lstat(abs);
+  } catch (err) {
+    if (!isMissing(err)) return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+    return writeOwnFileAtomically(ownerAbs, '.gitignore', '*\n', null);
+  }
+  // 链接 / 重解析点 / 目录：不跟随、不覆盖，直接判定回收区不可用
+  if (info.isSymbolicLink() || isUntrustedResolution(abs) || !info.isFile()) {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  let raw: string;
+  try {
+    raw = await readFile(abs, 'utf8');
+  } catch (err) {
+    return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+  if (raw === '*\n') return { ok: true };
+  // 内容是错的（被外部改过）：用同一套安全替换纠正
+  return writeOwnFileAtomically(ownerAbs, '.gitignore', '*\n', identityOfStats(info));
+}
+
+/**
+ * opId 目录内部对象核验（P2-05）。
+ *
+ * 只允许两种名字：`payload`（普通文件）与 `manifest.json`（内容自洽的清单）。
+ * 出现陌生文件时不覆盖、不删除、不纳入本次事务——因为"回收区里多出来的东西"
+ * 要么是用户放进去的，要么是别的进程的，没有一种可以当成自己的。
+ */
+async function validateOpDir(opDirAbs: string, opId: string): Promise<OwnWrite> {
+  let entries;
+  try {
+    entries = await readdir(opDirAbs, { withFileTypes: true });
+  } catch (err) {
+    return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+
+  for (const entry of entries) {
+    const abs = join(opDirAbs, entry.name);
+    let info;
+    try {
+      info = await lstat(abs);
+    } catch (err) {
+      return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+    }
+    const plainFile = !info.isSymbolicLink() && !isUntrustedResolution(abs) && info.isFile();
+    if (!plainFile) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+
+    if (entry.name === TRASH_PAYLOAD_NAME) continue;
+
+    if (entry.name === TRASH_MANIFEST_NAME) {
+      let raw: string;
+      try {
+        raw = await readFile(abs, 'utf8');
+      } catch (err) {
+        return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+      }
+      let manifest: unknown;
+      try {
+        manifest = JSON.parse(raw);
+      } catch {
+        return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+      }
+      if (typeof manifest !== 'object' || manifest === null) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+      const row = manifest as Record<string, unknown>;
+      if (row.magic !== TRASH_OWNER_MAGIC) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+      if (row.opId !== opId) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+      if (typeof row.identity !== 'string' || row.identity === '') return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+      continue;
+    }
+
+    // 陌生名字（含我们自己的临时文件残骸）：一律拒绝
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  return { ok: true };
+}
+
+
+/**
+ * 只读核验回收区归属（用于恢复路径）。
+ *
+ * 恢复不向 `.weavespace` 写任何东西，因此不需要初始化；但"标记不可信"必须让
+ * 整个回收区不可用（P1-02 第 8 条）：否则一个被替换成链接的标记只会拦住删除，
+ * 恢复仍会照常从可疑位置搬走对象。
+ *
+ * 这里**不**比较标记里记录的目录身份：项目被整体复制/移动后身份必然变化，
+ * 那是合法场景（文件也一起搬了）。真正的防伪在 payload 的对象身份上。
+ */
+async function verifyTrashOwnerReadOnly(
+  boundary: RootBoundary,
+  token: string | null,
+): Promise<OwnWrite> {
+  const rootAbs = boundary.canonicalRoot;
+  const ownerAbs = resolvePath(rootAbs, TRASH_OWNER_DIR);
+  if (!isPathInsideRoot(rootAbs, ownerAbs)) return { ok: false, errorCode: 'ERR_PATH_OUTSIDE_ROOT' };
+
+  let info;
+  try {
+    info = await lstat(ownerAbs);
+  } catch (err) {
+    return isMissing(err)
+      ? { ok: false, errorCode: 'ERR_TRASH_RECORD_NOT_FOUND' }
+      : { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+  if (info.isSymbolicLink() || isUntrustedResolution(ownerAbs) || !info.isDirectory()) {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+
+  const marker = await readMarkerSafely(ownerAbs);
+  if (marker.kind === 'missing') return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  if (marker.kind === 'unsafe') return { ok: false, errorCode: marker.errorCode };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(marker.raw);
+  } catch {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  if (typeof parsed !== 'object' || parsed === null) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  const row = parsed as Record<string, unknown>;
+  if (row.magic !== TRASH_OWNER_MAGIC) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  if (typeof row.identity !== 'string' || row.identity === '') {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  try {
+    assertRootContinuity(boundary, token);
+  } catch (err) {
+    return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+  return { ok: true };
+}
+
 type TrashSetup = { ok: true; ownerAbs: string; opDirAbs: string } | { ok: false; errorCode: ErrorCode };
 
 /**
- * 建立/核验内部回收区目录（UX-02C-03-P2-01 §二.3）。
+ * 建立/核验内部回收区目录（UX-02C-03-P2-01 §二.3；R1 加固 P1-02 / P2-05 / P2-06）。
  *
  * 规则（顺序不可交换）：
  * 1. `.weavespace` 不存在 → 建；存在 → 必须是**真目录**且不是符号链接/junction；
- * 2. 必须带我们的所有权标记；**没有标记就绝不接管**（用户已有同名目录/文件一律拒绝）；
- *    唯一例外：目录为空（上一次在 mkdir 与写标记之间崩溃），此时没有可覆盖的内容；
- * 3. 顺手写 `.gitignore`（内容 `*`），避免把回收区提交进用户仓库；
- * 4. `trash/<opId>` 必须是真目录，不是链接。
+ * 2. 必须带我们的所有权标记；**没有标记就绝不接管**（用户已有同名目录/文件一律拒绝）。
+ *    唯一例外：目录里只有 `.gitignore` 与我们自己的临时文件残骸（上一次崩在写标记之前），
+ *    此时没有可覆盖的用户内容；
+ * 3. 标记本身必须是**普通文件、非链接、nlink === 1**；建立/更新只走"临时文件 + rename"，
+ *    因此即使标记被换成指向根外的链接，也不会把写入引到根外；
+ * 4. `.gitignore` 每次都要核验/补写（崩在"标记已写、忽略文件未写"之间时可自愈）；
+ * 5. `trash/<opId>` 必须是真目录，且内部只允许 `payload` 与自洽的 `manifest.json`。
  *
  * 目录身份（dev:ino）也会记进标记：项目被整体复制后目录身份必然变化，
  * 这是**合法的**（文件也一起被复制了），因此身份变化只更新标记，不作为拒绝理由；
@@ -453,62 +780,54 @@ async function prepareTrashRoot(
   if (ownerStats.isSymbolicLink() || isUntrustedResolution(ownerAbs)) return fail('ERR_TRASH_UNAVAILABLE');
   if (!ownerStats.isDirectory()) return fail('ERR_TRASH_UNAVAILABLE');
 
-  const identity = `${ownerStats.dev}:${ownerStats.ino}`;
-  const markerAbs = join(ownerAbs, TRASH_OWNER_MARKER);
-  let markerRaw: string | null = null;
-  try {
-    markerRaw = await readFile(markerAbs, 'utf8');
-  } catch (err) {
-    if (!isMissing(err)) return fail(mapStorageError(err));
-  }
+  const identity = identityOfStats(ownerStats);
 
-  if (markerRaw === null) {
-    // 没有标记：只接受"空目录"（我们自己刚建、或上次崩在写标记之前）
+  // 1) 所有权标记：读时绝不跟随链接，写时只走"临时文件 + rename"（P1-02）
+  const marker = await readMarkerSafely(ownerAbs);
+  if (marker.kind === 'unsafe') return fail(marker.errorCode);
+
+  if (marker.kind === 'missing') {
+    /**
+     * 没有标记：只接受"看起来还是我们的空目录"（自己刚建、或上次崩在写标记之前）。
+     * 允许 `.gitignore` 与自己的临时文件残骸——它们都是崩溃恢复的产物，不含用户内容。
+     */
     let entries: string[];
     try {
       entries = await readdir(ownerAbs);
     } catch (err) {
       return fail(mapStorageError(err));
     }
-    if (entries.length > 0) return fail('ERR_TRASH_UNAVAILABLE');
+    const foreign = entries.filter((name) => name !== '.gitignore' && !TRASH_TMP_RE.test(name));
+    if (foreign.length > 0) return fail('ERR_TRASH_UNAVAILABLE');
+    const wrote = await writeOwnFileAtomically(ownerAbs, TRASH_OWNER_MARKER, markerContentOf(identity), null);
+    if (!wrote.ok) return fail(wrote.errorCode);
+  } else {
+    let parsed: unknown;
     try {
-      await writeFile(
-        markerAbs,
-        `${JSON.stringify({ magic: TRASH_OWNER_MAGIC, identity, createdAt: new Date().toISOString() }, null, 2)}\n`,
-        { encoding: 'utf8', flag: 'wx' },
-      );
-      await writeFile(join(ownerAbs, '.gitignore'), '*\n', { encoding: 'utf8', flag: 'wx' });
-    } catch (err) {
-      // 并发/EEXIST：交给下面的复核；其它错误直接失败
-      if (codeOf(err) !== 'EEXIST') return fail(mapStorageError(err));
+      parsed = JSON.parse(marker.raw);
+    } catch {
+      return fail('ERR_TRASH_UNAVAILABLE');
     }
-    try {
-      markerRaw = await readFile(markerAbs, 'utf8');
-    } catch (err) {
-      return fail(mapStorageError(err));
+    if (typeof parsed !== 'object' || parsed === null) return fail('ERR_TRASH_UNAVAILABLE');
+    const row = parsed as Record<string, unknown>;
+    if (row.magic !== TRASH_OWNER_MAGIC) return fail('ERR_TRASH_UNAVAILABLE');
+    if (typeof row.identity !== 'string' || row.identity === '') return fail('ERR_TRASH_UNAVAILABLE');
+    if (row.identity !== `${identity.dev}:${identity.ino}`) {
+      // 目录身份变化 = 项目被复制/移动过（文件也一起搬了）。更新标记，但不放弃防伪：
+      // 真正被依赖的是 payload 的 dev:ino。
+      const updated = await writeOwnFileAtomically(
+        ownerAbs,
+        TRASH_OWNER_MARKER,
+        markerContentOf(identity),
+        marker.identity,
+      );
+      if (!updated.ok) return fail(updated.errorCode);
     }
   }
 
-  let marker: { magic?: unknown; identity?: unknown };
-  try {
-    marker = JSON.parse(markerRaw) as { magic?: unknown; identity?: unknown };
-  } catch {
-    return fail('ERR_TRASH_UNAVAILABLE');
-  }
-  if (marker.magic !== TRASH_OWNER_MAGIC) return fail('ERR_TRASH_UNAVAILABLE');
-  if (typeof marker.identity === 'string' && marker.identity !== identity) {
-    // 目录身份变化 = 项目被复制/移动过（文件也一起搬了）。更新标记，但不放弃防伪：
-    // 真正被依赖的是 payload 的 dev:ino。
-    try {
-      await writeFile(
-        markerAbs,
-        `${JSON.stringify({ magic: TRASH_OWNER_MAGIC, identity, createdAt: new Date().toISOString() }, null, 2)}\n`,
-        'utf8',
-      );
-    } catch (err) {
-      return fail(mapStorageError(err));
-    }
-  }
+  // 2) `.gitignore` 每次都要核验/补写（崩在两者之间时不会永久缺失）
+  const ignore = await ensureGitignore(ownerAbs);
+  if (!ignore.ok) return fail(ignore.errorCode);
 
   const trashRootAbs = resolvePath(rootAbs, TRASH_ROOT_DIR);
   try {
@@ -541,6 +860,9 @@ async function prepareTrashRoot(
   } catch (err) {
     return fail(mapStorageError(err));
   }
+  // 3) opId 目录内部只允许我们的两种对象（P2-05）：陌生文件一律拒绝
+  const scanned = await validateOpDir(opDirAbs, opId);
+  if (!scanned.ok) return fail(scanned.errorCode);
   // 每一次进入都要确认根仍然连续（C1 由调用方在 rename 前再核一次）
   try {
     assertRootContinuity(boundary, token);
@@ -571,6 +893,87 @@ async function releaseReservation(absPath: string, reservation: EntryIdentity | 
     // 清理失败不影响结论：调用方本来就要报 REJECTED/UNKNOWN
   }
 }
+
+type ReservationProbe =
+  | { readonly status: 'owned' }
+  | { readonly status: 'missing' }
+  | { readonly status: 'foreign' }
+  | { readonly status: 'failed'; readonly errorCode: ErrorCode };
+
+/**
+ * 占位归属探测（P1-01）。
+ *
+ * 只认 `dev:ino`：同名 0 字节文件与我们的占位在**外观上完全一样**，
+ * 唯有对象身份能区分。`failed` 与 `missing` 必须分开——探测异常不能伪装成
+ * "什么都没发生"，否则调用方会再写一次。
+ */
+async function probeReservation(absPath: string, reservation: EntryIdentity | null): Promise<ReservationProbe> {
+  if (reservation === null) return { status: 'missing' };
+  let info;
+  try {
+    info = await lstat(absPath);
+  } catch (err) {
+    return isMissing(err) ? { status: 'missing' } : { status: 'failed', errorCode: mapStorageError(err) as ErrorCode };
+  }
+  if (info.isSymbolicLink() || isUntrustedResolution(absPath)) return { status: 'foreign' };
+  return sameEntryIdentity(identityOfStats(info), reservation) ? { status: 'owned' } : { status: 'foreign' };
+}
+
+type ReservationGuard =
+  | { readonly ok: true; readonly identity: EntryIdentity }
+  | { readonly ok: false; readonly status: 'REJECTED'; readonly errorCode: ErrorCode }
+  | { readonly ok: false; readonly status: 'UNKNOWN' };
+
+/**
+ * `rename` 之前确认目标位置仍然是**本次操作自己**建立的占位（P1-01）。
+ *
+ * - `owned` → 继续；
+ * - `missing`（占位被外部删掉、名字空出来了）→ 重新排他占位**一次**，再核验；
+ * - `foreign`（同名位置上是别的对象，哪怕也是 0 字节）→ 拒绝，绝不覆盖；
+ * - 探测/占位过程本身失败 → UNKNOWN（磁盘上可能已有别人的对象，不能宣称零变更）。
+ *
+ * Windows 的 `rename` 会覆盖已存在目标，所以这一步不是"保险"，而是唯一的
+ * 覆盖防线。它消不掉"核验与 rename 之间"的窗口（见 `beforeMoveRename` 的说明），
+ * 但把"整段缺失复核"变成了"只有微秒级窗口"。
+ */
+async function ensureReservationOwned(
+  absPath: string,
+  reservation: EntryIdentity | null,
+): Promise<ReservationGuard> {
+  const first = await probeReservation(absPath, reservation);
+  if (first.status === 'failed') return { ok: false, status: 'UNKNOWN' };
+  if (first.status === 'owned') return { ok: true, identity: reservation as EntryIdentity };
+  if (first.status === 'foreign') return { ok: false, status: 'REJECTED', errorCode: 'ERR_ENTRY_EXISTS' };
+
+  // missing：名字空着，允许重新排他占位一次
+  let handle: FileHandle;
+  try {
+    handle = await open(absPath, 'wx');
+  } catch (err) {
+    if (codeOf(err) === 'EEXIST') return { ok: false, status: 'REJECTED', errorCode: 'ERR_ENTRY_EXISTS' };
+    return { ok: false, status: 'REJECTED', errorCode: mapStorageError(err) as ErrorCode };
+  }
+  let identity: EntryIdentity;
+  try {
+    identity = identityOfStats(await handle.stat());
+  } catch {
+    await handle.close().catch(() => undefined);
+    return { ok: false, status: 'UNKNOWN' };
+  }
+  try {
+    await handle.close();
+  } catch {
+    await handle.close().catch(() => undefined);
+    return { ok: false, status: 'UNKNOWN' };
+  }
+
+  const again = await probeReservation(absPath, identity);
+  if (again.status === 'owned') return { ok: true, identity };
+  if (again.status === 'foreign') return { ok: false, status: 'REJECTED', errorCode: 'ERR_ENTRY_EXISTS' };
+  // missing（刚建的占位又没了）/ failed：无法证明归属 → 只能 UNKNOWN
+  return { ok: false, status: 'UNKNOWN' };
+}
+
 
 
 
@@ -1750,6 +2153,8 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
         return reject(moveErrorOf(err, false));
       }
+      // 仅测试注入：占位已建立、最终归属复核尚未执行
+      faults.afterMoveReserve?.();
 
       // 回收区自描述清单（配置丢失时仍能看出这是哪个文件的什么对象）
       const manifestAbs = join(setup.opDirAbs, TRASH_MANIFEST_NAME);
@@ -1787,6 +2192,20 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         await releaseReservation(payloadAbs, reservation);
         return reject(isMissing(err) ? 'ERR_RESOURCE_NOT_FOUND' : (mapStorageError(err) as ErrorCode));
       }
+
+      // P1-01：目标占位归属复核。Windows 的 rename 会覆盖已存在目标，
+      // 因此必须确认"占着 payload 这个名字的仍是我刚建的占位"。
+      const guard = await ensureReservationOwned(payloadAbs, reservation);
+      if (!guard.ok) {
+        if (guard.status === 'REJECTED') {
+          // 只在确实仍属于自己时清理；foreign 时 releaseReservation 会自行跳过
+          await releaseReservation(payloadAbs, reservation);
+          return reject(guard.errorCode);
+        }
+        // UNKNOWN：磁盘上可能是别人的对象，绝不删除、也绝不宣称零变更
+        return unknown();
+      }
+      reservation = guard.identity;
 
       try {
         faults.atCheckpoint?.('C1');
@@ -1866,6 +2285,10 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       const payloadAbs = resolvePath(boundary.canonicalRoot, normalize(trashPayloadOf(opId)));
       if (!isPathInsideRoot(boundary.canonicalRoot, payloadAbs)) return reject('ERR_PATH_OUTSIDE_ROOT');
 
+      // 回收区归属不可信 → 整体不可用（标记被换 / 父目录是链接等）
+      const owner = await verifyTrashOwnerReadOnly(boundary, establishedToken);
+      if (!owner.ok) return reject(owner.errorCode);
+
       let payloadStats;
       try {
         payloadStats = await lstat(payloadAbs);
@@ -1919,12 +2342,25 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
         return reject(moveErrorOf(err, false));
       }
+      // 仅测试注入：目标占位已建立、最终归属复核尚未执行
+      faults.afterMoveReserve?.();
 
       // 占位建立后再核一次：回收区里的对象可能在这期间被外部替换
       if (!(await objectMatchesIdentity(payloadAbs, expectedIdentity))) {
         await releaseReservation(targetAbs, reservation);
         return reject('ERR_TRASH_STATE_CONFLICT');
       }
+
+      // P1-01：目标占位归属复核（与 trashEntry 同一套语义）
+      const guard = await ensureReservationOwned(targetAbs, reservation);
+      if (!guard.ok) {
+        if (guard.status === 'REJECTED') {
+          await releaseReservation(targetAbs, reservation);
+          return reject(guard.errorCode);
+        }
+        return unknown();
+      }
+      reservation = guard.identity;
 
       try {
         faults.atCheckpoint?.('C1');
@@ -1965,23 +2401,53 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       return { status: 'MOVED', identity: expectedIdentity, size: payloadStats.size };
     },
 
-    /** 回收区对象身份（只读，供 Host 对账）。不存在 → `null`。 */
-    async trashIdentity(opId: string): Promise<string | null> {
+    /**
+     * 回收区 payload 的判别式探测（只读，供对账使用）。
+     *
+     * `missing` 只表示"父链与末段都经可靠探测确认不存在"；类型异常（链接 /
+     * 目录 / 重解析点 / 父链被替换）一律 `unsafe`，绝不与 `missing` 混同。
+     * 探测本身失败（IO 异常、根不连续）直接抛出，由调用方记作"看不清"。
+     */
+    async trashPayloadFacts(opId: string): Promise<TrashPayloadProbe> {
       if (!TRASH_OP_ID_RE.test(opId)) {
         throw Object.assign(new Error('非法的 opId'), { errorCode: 'ERR_COMMAND_INVALID' });
       }
-      const payloadAbs = resolvePath(boundary.canonicalRoot, normalize(trashPayloadOf(opId)));
-      if (!isPathInsideRoot(boundary.canonicalRoot, payloadAbs)) {
+      const rootAbs = boundary.canonicalRoot;
+      const payloadAbs = resolvePath(rootAbs, normalize(trashPayloadOf(opId)));
+      if (!isPathInsideRoot(rootAbs, payloadAbs)) {
         throw Object.assign(new Error('路径不在允许范围内'), { errorCode: 'ERR_PATH_OUTSIDE_ROOT' });
       }
+      assertRootContinuity(boundary, establishedToken);
+
+      // 父链逐级核验：任何一级是链接/重解析点/非目录都不可信（绝不沿链接读根外）
+      for (const relative of [TRASH_OWNER_DIR, TRASH_ROOT_DIR, trashDirOf(opId)]) {
+        const dirAbs = resolvePath(rootAbs, normalize(relative));
+        if (!isPathInsideRoot(rootAbs, dirAbs)) {
+          throw Object.assign(new Error('路径不在允许范围内'), { errorCode: 'ERR_PATH_OUTSIDE_ROOT' });
+        }
+        let info;
+        try {
+          info = await lstat(dirAbs);
+        } catch (err) {
+          if (isMissing(err)) return { status: 'missing' };
+          throw toStorageError(err);
+        }
+        if (info.isSymbolicLink() || isUntrustedResolution(dirAbs) || !info.isDirectory()) {
+          return { status: 'unsafe', errorCode: 'ERR_TRASH_UNAVAILABLE' };
+        }
+      }
+
+      let info;
       try {
-        const info = await lstat(payloadAbs);
-        if (info.isSymbolicLink() || isUntrustedResolution(payloadAbs) || !info.isFile()) return null;
-        return `${info.dev}:${info.ino}`;
+        info = await lstat(payloadAbs);
       } catch (err) {
-        if (isMissing(err)) return null;
+        if (isMissing(err)) return { status: 'missing' };
         throw toStorageError(err);
       }
+      if (info.isSymbolicLink() || isUntrustedResolution(payloadAbs) || !info.isFile()) {
+        return { status: 'unsafe', errorCode: 'ERR_TRASH_STATE_CONFLICT' };
+      }
+      return { status: 'present', identity: `${info.dev}:${info.ino}`, size: info.size };
     },
   };
 }

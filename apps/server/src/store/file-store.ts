@@ -145,18 +145,34 @@ export interface FileProjectStore {
    * 写入一条 **pending 意图**（UX-02C-03-P2-01）。
    *
    * 必须在磁盘移动**之前**提交：这是"移动成功但状态没提交"能被对账收敛的唯一依据。
-   * 同一 opId 已存在 → `replayed: true` 且零写入（幂等重放由调用方决定如何回应）。
-   * 未解决记录到达上限 → 抛 `ERR_TRASH_FULL`，不静默淘汰任何仍占用文件的记录。
-   */
-  beginTrash(entry: ConfigTrashEntry): Promise<{ changed: boolean; replayed: boolean }>;
-  /**
-   * 回收记录状态迁移（CAS）：只有当前状态 ∈ `expect` 时才写。
    *
-   * 用一个通用迁移而不是五个专用方法，是为了让"哪些状态允许到哪些状态"只有一处
-   * 定义（`apps/server/src/trash.ts` 的判定表），存储层只负责条件提交与原子落盘。
+   * `opId` 是**全局**事务身份（不同项目共用一张表），因此重放必须核对完整归属：
+   * `opId + projectId + rootToken + originalPath + identity` 全部相同才算同一次事务。
+   * 任一项不符 → 抛 `ERR_OP_ID_CONFLICT`（绝不能"重放"成别人的那一次，
+   * 否则 A 项目的记录会被 B 项目的移动结果覆盖）。
+   *
+   * 返回值必须带 `record`：调用方只有拿到已有记录才能核对归属，也才能按真实状态
+   * 回应重试（pending ≠ 已回收）。
+   */
+  beginTrash(entry: ConfigTrashEntry): Promise<{
+    changed: boolean;
+    replayed: boolean;
+    record: ConfigTrashEntry;
+  }>;
+  /**
+   * 回收记录状态迁移（CAS）：只有**完整身份**匹配且当前状态 ∈ `expect` 时才写。
+   *
+   * 单凭 `opId` 更新是不够的：`opId` 在全局唯一但记录可能属于另一个项目、
+   * 另一个根令牌或另一次同名文件操作。四条条件缺一不可，任一不符 → `skipped-conflict`
+   * 且零写入（绝不"顺手"改掉别人的记录）。
    */
   commitTrashState(input: {
     opId: string;
+    projectId: string;
+    rootToken: string;
+    originalPath: string;
+    /** 记录当前应有的对象身份；用于拦住"读到旧身份、写回新对象"的错配。 */
+    expectIdentity: string;
     expect: readonly TrashState[];
     next: TrashState;
     identity?: string;
@@ -1060,8 +1076,21 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
       const existing = current.trash.find((row) => row.opId === entry.opId);
       if (existing) {
-        // 幂等重放：编号已被占用就不再写盘（调用方按"已存在"回应，而不是再删一次）
-        return { changed: false, replayed: true };
+        // 幂等重放：必须核对**完整归属**。同一个 opId 被两个项目同时使用时，
+        // 先到的项目写下记录，后到的项目绝不能"重放"成别人的事务。
+        const sameDeed =
+          existing.projectId === entry.projectId &&
+          existing.rootToken === entry.rootToken &&
+          sameEntryPath(existing.originalPath, entry.originalPath) &&
+          existing.identity === entry.identity;
+        if (!sameDeed) {
+          throw domainError(
+            ERROR_CODES.ERR_OP_ID_CONFLICT,
+            '该操作编号已用于另一次回收事务（项目/路径/身份不一致），请重新发起',
+          );
+        }
+        // 编号已被占用就不再写盘（调用方按"已存在"回应，而不是再删一次）
+        return { changed: false, replayed: true, record: existing };
       }
 
       const unresolved = current.trash.filter((row) =>
@@ -1108,7 +1137,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       }
       applyConfig(next);
       state = { ...state, commitSeq: next.commitSeq };
-      return { changed: true, replayed: false };
+      return { changed: true, replayed: false, record: next.trash.find((row) => row.opId === entry.opId) ?? entry };
     },
 
     async commitTrashState(input) {
@@ -1116,6 +1145,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       assertMutationsAllowed();
       const existing = current.trash.find((row) => row.opId === input.opId);
       if (!existing) return { changed: false, outcome: 'skipped-missing' as const };
+
+      // 完整身份核对：opId 只是索引，不能当成"这条记录就是你要改的那一条"
+      const sameDeed =
+        existing.projectId === input.projectId &&
+        existing.rootToken === input.rootToken &&
+        sameEntryPath(existing.originalPath, input.originalPath) &&
+        existing.identity === input.expectIdentity;
+      if (!sameDeed) return { changed: false, outcome: 'skipped-conflict' as const };
       if (!(input.expect as readonly string[]).includes(existing.state)) {
         return { changed: false, outcome: 'skipped-conflict' as const };
       }

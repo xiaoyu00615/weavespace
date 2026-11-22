@@ -219,7 +219,7 @@ test('P2-01a 普通文件回收：源消失、payload 就位、记录 stored、�
     assert.equal(list.body.entries[0].state, 'stored');
     assert.equal(list.body.entries[0].canRestore, true);
 
-    const op = await h.api.get(`/api/trash/op?opId=${OP}`);
+    const op = await h.api.get(`/api/trash/op?opId=${OP}&projectId=${PROJ}`);
     assert.equal(op.body.outcome, 'trashed');
     assert.equal(op.body.state, 'stored');
   });

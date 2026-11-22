@@ -82,8 +82,11 @@ import {
   parseTrashRestoreBody,
   reconcileTrash,
   toTrashEntryDto,
+  trashOutcomeOf,
   TRASH_ORPHAN_NOTICE,
   type TrashEvidence,
+  type TrashProbe,
+  PROJECT_ID_RE,
 } from './trash.ts';
 import type { ConfigHiddenEntry, ConfigTrashEntry } from './store/index.ts';
 
@@ -145,6 +148,13 @@ export interface ShellServerOptions {
   maxBodyBytes?: number;
   /** 仅测试注入：透传给 StorageProvider 的故障钩子（用于制造 UNKNOWN）。 */
   providerFaults?: StorageFaultHooks;
+  /**
+   * 仅测试注入：托管模式下每个项目 Provider 的故障钩子。
+   *
+   * 用途：在真实 Host + 真实 HTTP 上确定性地制造"排他占位建立之后被外部替换"，
+   * 验证回收/恢复不会覆盖外部对象（P1-01）。生产不传。
+   */
+  managedProviderFaults?: StorageFaultHooks;
   /**
    * 托管模式（UX-02B-01）：由调用方提供运行期工厂，Host 不再持有静态 Registry。
    *
@@ -571,6 +581,54 @@ function sendJson(res: ServerResponse, statusCode: number, body: unknown): void 
   res.end(payload);
 }
 
+/**
+ * 以**已有回收记录的真实状态**回应一次重放（P2-04）。
+ *
+ * 旧实现无条件返回 `200 APPLIED`，等于把 `pending`（结果未确认）与 `conflicted`
+ * （需要人工核对）都谎报成"已经回收成功"。这里按状态分流：
+ * - `stored` → 200 APPLIED（确实已回收）；
+ * - `pending` / `restoring` → 202 UNKNOWN（不得声称成功，也不再碰磁盘）；
+ * - `aborted` / `conflicted` / `missing` → 409，明确指出这次删除没有成功。
+ */
+function sendTrashReplay(res: ServerResponse, record: ConfigTrashEntry): void {
+  const entry = toTrashEntryDto(record);
+  const outcome = trashOutcomeOf(record.state);
+  if (outcome === 'trashed') {
+    sendJson(res, 200, {
+      status: 'APPLIED',
+      projectId: record.projectId,
+      opId: record.opId,
+      replayed: true,
+      entry,
+    });
+    return;
+  }
+  if (outcome === 'unknown') {
+    sendJson(res, 202, {
+      status: 'UNKNOWN',
+      errorCode: 'ERR_OUTCOME_UNKNOWN',
+      message: '回收结果未确认：请稍后在回收区核对（不会自动重发磁盘操作）',
+      projectId: record.projectId,
+      opId: record.opId,
+      replayed: true,
+      entry,
+    });
+    return;
+  }
+  sendJson(res, 409, {
+    status: 'REJECTED',
+    errorCode: 'ERR_TRASH_STATE_CONFLICT',
+    message:
+      outcome === 'missing'
+        ? '该回收记录已失效（回收区里已找不到文件），不会再次移动'
+        : '该操作编号对应的删除没有成功，请重新发起',
+    projectId: record.projectId,
+    opId: record.opId,
+    replayed: true,
+    entry,
+  });
+}
+
 async function readJsonBody(
   req: IncomingMessage,
   maxBodyBytes: number,
@@ -856,6 +914,18 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         document,
         permission,
         store,
+        // 仅测试注入：把同一套故障钩子交给托管模式的每个项目 Provider。
+        // 生产不传 → 与默认构造完全一致。
+        ...(options.managedProviderFaults
+          ? {
+              providerFactory: (input: { providerId: string; rootDir: string }) =>
+                createLocalProvider({
+                  rootDir: input.rootDir,
+                  providerId: input.providerId,
+                  faults: options.managedProviderFaults,
+                }),
+            }
+          : {}),
         // 刻意**不**在构造期声明 'os-dialog'：授权来源必须逐次来自选择器成功结果。
       });
     } catch (err) {
@@ -1149,44 +1219,50 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
    * 恢复目标在 P2 恒等于原路径（不接受客户端指定目标），因此 `restoring` 的
    * 目标探针复用原路径探针。
    */
+  /**
+   * 采集一条记录的三处磁盘事实（P1-04）。
+   *
+   * 关键：**不能**用 `identityOf` 的 `null/non-null` 代表全部事实。
+   * - 源位置用 `entryFacts`：只有普通文件才是可核验的对象，目录/链接/重解析点
+   *   一律记作 `unsafe`（"看不清"），绝不与"不存在"混同；
+   * - 回收区用 `trashPayloadFacts`：`unsafe` / 抛出分别对应类型异常与探测失败；
+   * - 恢复目标当前就是原路径，因此复用同一份源事实。
+   */
   async function gatherTrashEvidence(
     record: ConfigTrashEntry,
     handle: ProjectHandle,
   ): Promise<TrashEvidence> {
     const provider = handle.provider;
-    let sourceIdentity: string | null = null;
-    let sourceProbeFailed = false;
-    if (typeof provider.identityOf === 'function') {
-      try {
-        sourceIdentity = await withDiskOp(record.projectId, () => provider.identityOf!(record.originalPath));
-      } catch {
-        sourceProbeFailed = true;
-      }
-    } else {
-      sourceProbeFailed = true;
-    }
 
-    let payloadIdentity: string | null = null;
-    let payloadProbeFailed = false;
-    if (typeof provider.trashIdentity === 'function') {
+    const probeSource = async (): Promise<TrashProbe> => {
+      if (typeof provider.entryFacts !== 'function') return { state: 'failed' };
       try {
-        payloadIdentity = await withDiskOp(record.projectId, () => provider.trashIdentity!(record.opId));
-      } catch {
-        payloadProbeFailed = true;
+        const facts = await withDiskOp(record.projectId, () => provider.entryFacts!(record.originalPath));
+        if (facts.untrusted || facts.kind !== 'file' || facts.identity === null) return { state: 'unsafe' };
+        return { state: 'present', identity: facts.identity };
+      } catch (err) {
+        // 明确"不存在"才算 missing；其余（IO、路径不可信、根变化）都是看不清
+        return (err as { errorCode?: string }).errorCode === 'ERR_RESOURCE_NOT_FOUND'
+          ? { state: 'missing' }
+          : { state: 'failed' };
       }
-    } else {
-      payloadProbeFailed = true;
-    }
-
-    return {
-      sourceIdentity,
-      sourceProbeFailed,
-      payloadIdentity,
-      payloadProbeFailed,
-      // P2：恢复目标 = 原路径
-      targetIdentity: sourceIdentity,
-      targetProbeFailed: sourceProbeFailed,
     };
+
+    const probePayload = async (): Promise<TrashProbe> => {
+      if (typeof provider.trashPayloadFacts !== 'function') return { state: 'failed' };
+      try {
+        const probe = await withDiskOp(record.projectId, () => provider.trashPayloadFacts!(record.opId));
+        if (probe.status === 'present') return { state: 'present', identity: probe.identity };
+        if (probe.status === 'missing') return { state: 'missing' };
+        return { state: 'unsafe' };
+      } catch {
+        return { state: 'failed' };
+      }
+    };
+
+    const source = await probeSource();
+    const payload = await probePayload();
+    return { source, payload, target: source };
   }
 
   /**
@@ -1216,6 +1292,10 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       if (!options.commit) return { state: 'conflicted', changed: false };
       const applied = await managedFileStore.commitTrashState({
         opId: record.opId,
+        projectId: record.projectId,
+        rootToken: record.rootToken,
+        originalPath: record.originalPath,
+        expectIdentity: record.identity,
         expect: [record.state],
         next: 'conflicted',
       });
@@ -1231,6 +1311,10 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
 
     const applied = await managedFileStore.commitTrashState({
       opId: record.opId,
+      projectId: record.projectId,
+      rootToken: record.rootToken,
+      originalPath: record.originalPath,
+      expectIdentity: record.identity,
       expect: [record.state],
       next: verdict.state,
       ...(verdict.action === 'promote-restored'
@@ -1682,24 +1766,60 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
       requireSessionToken(req);
       const opId = (url.searchParams.get('opId') ?? '').trim();
       if (opId === '' || opId.length > 64) throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少或非法的 opId');
+      /**
+       * 查询范围必须由调用方声明（P2-02）。
+       *
+       * `opId` 是全局唯一的，但回收记录属于**某个项目**：少了这一维，
+       * 任何持有会话令牌的调用方都能按 opId 枚举别项目的路径与状态。
+       */
+      const projectId = (url.searchParams.get('projectId') ?? '').trim();
+      if (projectId === '') throw new HttpError(400, 'ERR_PROJECT_REQUIRED', '必须声明 projectId');
+      if (!PROJECT_ID_RE.test(projectId)) throw new HttpError(400, 'ERR_COMMAND_INVALID', '缺少或非法的 projectId');
+
       const record = managedFileStore.trashByOp(opId);
       if (!record) {
+        // 空结果不含任何归属信息：调用方只学到"这个 opId 没有记录"
         sendJson(res, 200, { status: 'APPLIED', opId, outcome: 'none', projectId: null, state: null });
         return;
       }
-      const outcome =
-        record.state === 'restored'
-          ? 'restored'
-          : record.state === 'stored' || record.state === 'restoring' || record.state === 'pending'
-            ? 'trashed'
-            : record.state;
-      sendJson(res, 200, {
-        status: 'APPLIED',
+      if (record.projectId !== projectId) {
+        // 不确认"这个 opId 在别处存在"：跨项目查询一律按"没有记录"处理
+        throw new HttpError(404, 'ERR_TRASH_RECORD_NOT_FOUND', '回收记录不存在');
+      }
+
+      // 与 `/api/trash` 一致的读授权；项目不可用时不给任何记录细节
+      let handle: ProjectHandle;
+      try {
+        handle = requireProjectHandle(projectId);
+      } catch {
+        throw new HttpError(403, 'ERR_PERMISSION_DENIED', '该项目当前不可用，无法查询回收事务');
+      }
+      const decision = permission.authorize({
+        actorId,
+        action: 'read',
+        resourcePath: '',
+        providerId: handle.providerId,
+      });
+      if (!decision.allowed) {
+        throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+      }
+
+      /**
+       * `pending` / `restoring` 不是成功：磁盘可能已经变了，但结果尚未确认。
+       * 这里用 202 + `UNKNOWN` 表达，绝不映射成"已回收"（P2-03）。
+       */
+      const outcome = trashOutcomeOf(record.state);
+      const unconfirmed = outcome === 'unknown';
+      sendJson(res, unconfirmed ? 202 : 200, {
+        status: unconfirmed ? 'UNKNOWN' : 'APPLIED',
         opId,
         outcome,
         projectId: record.projectId,
         state: record.state,
         path: record.originalPath,
+        ...(unconfirmed
+          ? { message: '结果未确认：文件可能已变动，请稍后在回收区核对（不会自动重发磁盘操作）' }
+          : {}),
       });
       return;
     }
@@ -2353,19 +2473,14 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           if (replay.projectId !== request.projectId || !sameEntryPath(replay.originalPath, request.path)) {
             throw new HttpError(409, 'ERR_OP_ID_CONFLICT', '该操作编号已用于另一次回收，请重新发起');
           }
-          sendJson(res, 200, {
-            status: 'APPLIED',
-            projectId: request.projectId,
-            opId: request.opId,
-            replayed: true,
-            entry: toTrashEntryDto(replay),
-          });
+          sendTrashReplay(res, replay);
           return;
         }
 
         type TrashAttempt =
           | { kind: 'APPLIED'; entry: ReturnType<typeof toTrashEntryDto> }
           | { kind: 'UNKNOWN' }
+          | { kind: 'REPLAY'; record: ConfigTrashEntry }
           | { kind: 'REJECTED'; errorCode: ErrorCode; blockedBy?: readonly string[] };
 
         let attempt: TrashAttempt;
@@ -2393,8 +2508,12 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             /**
              * 意图必须在移动**之前**落盘：它是"移动成功但状态没提交"唯一的对账依据。
              * 这一步失败 → 直接拒绝，磁盘上什么都没发生。
+             *
+             * `beginTrash` 自己核对完整归属（项目/根令牌/路径/身份）：另一个项目
+             * 用同一个 opId 并发进来时，这里会抛 `ERR_OP_ID_CONFLICT`，绝不"重放"
+             * 成别人的事务（P1-03）。
              */
-            await managedFileStore!.beginTrash({
+            const begun = await managedFileStore!.beginTrash({
               opId: request.opId,
               projectId: request.projectId,
               rootToken: handle.rootToken,
@@ -2406,6 +2525,12 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
               state: 'pending',
             });
 
+            if (begun.replayed) {
+              // 屏障外的快速检查与这里之间可能有人先登记：一切以 Store 的结论为准，
+              // 且**绝不**在这种情况下再动一次磁盘（P2-04）。
+              return { kind: 'REPLAY' as const, record: begun.record };
+            }
+
             const moved = await runtime.withStructureDiskOp(capability, () =>
               provider.trashEntry!(request.opId, request.path, facts.identity!),
             );
@@ -2413,7 +2538,15 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             if (moved.status === 'REJECTED') {
               // 记录已经写了，但磁盘没动：把它收敛成 aborted（失败也不抛，交给对账兜底）
               await managedFileStore!
-                .commitTrashState({ opId: request.opId, expect: ['pending'], next: 'aborted' })
+                .commitTrashState({
+                  opId: request.opId,
+                  projectId: request.projectId,
+                  rootToken: handle.rootToken,
+                  originalPath: request.path,
+                  expectIdentity: facts.identity!,
+                  expect: ['pending'],
+                  next: 'aborted',
+                })
                 .catch(() => undefined);
               return { kind: 'REJECTED' as const, errorCode: moved.errorCode ?? 'ERR_STORAGE_IO' };
             }
@@ -2425,6 +2558,10 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             try {
               await managedFileStore!.commitTrashState({
                 opId: request.opId,
+                projectId: request.projectId,
+                rootToken: handle.rootToken,
+                originalPath: request.path,
+                expectIdentity: facts.identity!,
                 expect: ['pending'],
                 next: 'stored',
                 ...(moved.identity ? { identity: moved.identity } : {}),
@@ -2441,7 +2578,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
               : { kind: 'UNKNOWN' as const };
           });
         } catch (err) {
-          // 屏障准入失败（busy / quiescing / unavailable）：零磁盘副作用，可安全重试
+          // 屏障准入失败（busy / quiescing / unavailable）或 opId 归属冲突：零磁盘副作用
           const code = (err as { errorCode?: string }).errorCode;
           throw new HttpError(
             httpStatusOfTrashError(code),
@@ -2450,6 +2587,10 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           );
         }
 
+        if (attempt.kind === 'REPLAY') {
+          sendTrashReplay(res, attempt.record);
+          return;
+        }
         if (attempt.kind === 'UNKNOWN') {
           sendJson(res, 202, {
             status: 'UNKNOWN',
@@ -2568,6 +2709,10 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             // 恢复意图先落盘：崩溃后"已经移回但状态没写"才能被对账识别
             const begun = await managedFileStore!.commitTrashState({
               opId: request.opId,
+              projectId: fresh.projectId,
+              rootToken: fresh.rootToken,
+              originalPath: fresh.originalPath,
+              expectIdentity: fresh.identity,
               expect: ['stored'],
               next: 'restoring',
             });
@@ -2582,7 +2727,15 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
 
             if (moved.status === 'REJECTED') {
               await managedFileStore!
-                .commitTrashState({ opId: request.opId, expect: ['restoring'], next: 'stored' })
+                .commitTrashState({
+                  opId: request.opId,
+                  projectId: fresh.projectId,
+                  rootToken: fresh.rootToken,
+                  originalPath: fresh.originalPath,
+                  expectIdentity: fresh.identity,
+                  expect: ['restoring'],
+                  next: 'stored',
+                })
                 .catch(() => undefined);
               return { kind: 'REJECTED' as const, errorCode: moved.errorCode ?? 'ERR_STORAGE_IO' };
             }
@@ -2591,6 +2744,10 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             try {
               await managedFileStore!.commitTrashState({
                 opId: request.opId,
+                projectId: fresh.projectId,
+                rootToken: fresh.rootToken,
+                originalPath: fresh.originalPath,
+                expectIdentity: fresh.identity,
                 expect: ['restoring'],
                 next: 'restored',
                 restoredAt: new Date().toISOString(),
