@@ -29,7 +29,12 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { parseConfig, serializeConfig } from '../../apps/server/src/store/config.ts';
-import { createLocalProvider, type StorageFaultHooks, type StorageProvider } from '../../packages/storage/index.ts';
+import {
+  createLocalProvider,
+  type RootCheckpoint,
+  type StorageFaultHooks,
+  type StorageProvider,
+} from '../../packages/storage/index.ts';
 import { MAX_TRASH_BYTES, isTrashSizeSupported } from '../../packages/storage/trash-size.ts';
 
 const OP = 'op-r2-prov-0001';
@@ -50,6 +55,8 @@ interface Ctx {
   onBeforeOwnWriteRename(fn: ((paths: { tmpAbs: string; targetAbs: string }) => Promise<void> | void) | null): void;
   /** 占位已建立、最终归属/最终内容复核尚未执行时执行一次（R1-01 的注入点）。 */
   onAfterReserve(fn: (() => void) | null): void;
+  /** 根连续性检查点之前的注入点（R2-02：用于在**最终位置**制造竞争）。 */
+  onCheckpoint(fn: ((checkpoint: RootCheckpoint) => void) | null): void;
   payloadPath(opId?: string): string;
   opDir(opId?: string): string;
   manifestPath(opId?: string): string;
@@ -68,6 +75,7 @@ async function withProvider(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
   let reserveHook: ((stage: ReserveStage, attempt: 1 | 2) => void) | null = null;
   let ownWriteHook: ((paths: { tmpAbs: string; targetAbs: string }) => Promise<void> | void) | null = null;
   let afterReserveHook: (() => void) | null = null;
+  let checkpointHook: ((checkpoint: RootCheckpoint) => void) | null = null;
   const faults: StorageFaultHooks = {
     reserveFault: (stage, attempt) => reserveHook?.(stage, attempt),
     beforeOwnWriteRename: async (paths) => {
@@ -76,6 +84,7 @@ async function withProvider(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
     afterMoveReserve: () => {
       afterReserveHook?.();
     },
+    atCheckpoint: (checkpoint) => checkpointHook?.(checkpoint),
   };
   const provider = createLocalProvider({ rootDir: root, providerId: 'local:r2', faults });
 
@@ -92,6 +101,9 @@ async function withProvider(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
     },
     onAfterReserve(next) {
       afterReserveHook = next;
+    },
+    onCheckpoint(next) {
+      checkpointHook = next;
     },
     payloadPath: (opId = OP) => join(root, TRASH_DIR, 'trash', opId, 'payload'),
     opDir: (opId = OP) => join(root, TRASH_DIR, 'trash', opId),
@@ -660,12 +672,29 @@ test('R1-01c 不注入改动时正常恢复仍然成功（最终复核不误伤�
 });
 
 test('R1-02a 长度判定：只接受非负安全整数', () => {
+  /**
+   * 三个边界必须是**三个不同的数**（R2-Supplement-R2 / R2-03）。
+   *
+   * 旧写法把 `MAX_TRASH_BYTES + 1` 与 `Number.MAX_SAFE_INTEGER + 2` 混着写：
+   * 后者其实是 2^53+1，不是 2^53+2，于是"覆盖三个值"只停留在注释里。
+   * 这里改用显式算式，并在断言前先证明它们确实是 2^53-1 / 2^53 / 2^53+2。
+   */
+  const SAFE_MAX = 2 ** 53 - 1; // 9007199254740991
+  const FIRST_UNSAFE = 2 ** 53; // 9007199254740992
+  const SECOND_UNSAFE = 2 ** 53 + 2; // 9007199254740994
+
+  assert.equal(SAFE_MAX, MAX_TRASH_BYTES, '2^53-1 必须等于 MAX_SAFE_INTEGER');
+  assert.equal(FIRST_UNSAFE, MAX_TRASH_BYTES + 1, '2^53 就是"第一个不安全整数"');
+  assert.equal(SECOND_UNSAFE, MAX_TRASH_BYTES + 3, '2^53+2 比安全上限大 3');
+  assert.notEqual(FIRST_UNSAFE, SECOND_UNSAFE);
+
   // 边界值来自同一个纯函数：Provider 写入侧与 Store 读配置侧共用它
   assert.equal(isTrashSizeSupported(0), true);
   assert.equal(isTrashSizeSupported(SOURCE_SIZE), true);
-  assert.equal(isTrashSizeSupported(MAX_TRASH_BYTES), true, '2^53-1 必须被接受');
-  assert.equal(isTrashSizeSupported(MAX_TRASH_BYTES + 1), false, '2^53 必须被拒绝');
-  assert.equal(isTrashSizeSupported(Number.MAX_SAFE_INTEGER + 2), false);
+  assert.equal(isTrashSizeSupported(SAFE_MAX), true, '2^53-1 必须被接受');
+  assert.equal(isTrashSizeSupported(SAFE_MAX - 1), true, '2^53-2 必须被接受');
+  assert.equal(isTrashSizeSupported(FIRST_UNSAFE), false, '2^53 必须被拒绝');
+  assert.equal(isTrashSizeSupported(SECOND_UNSAFE), false, '2^53+2 必须被拒绝');
   assert.equal(isTrashSizeSupported(-1), false);
   assert.equal(isTrashSizeSupported(1.5), false);
   assert.equal(isTrashSizeSupported(Number.NaN), false);
@@ -718,5 +747,84 @@ test('R1-02c 恢复时传入非法 expectedSize → 直接拒绝（ERR_COMMAND_I
     // 全程零副作用：payload 还在，目标位置没有任何东西
     assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\n');
     assert.equal(exists(join(h.root, 'a.md')), false);
+  });
+});
+
+/* ================================================================== */
+/* R2-Supplement-R2：最终位置（C1）的竞争测试                            */
+/* ================================================================== */
+
+/**
+ * 回收一个文件后，在 **C1 检查点**改动 payload，然后尝试恢复。
+ *
+ * C1 位于 `ensureReservationOwned` 之后、最终 `payloadStillMatches` 之前。
+ * 修复前的顺序是"先核字节数，再做占位归属复核与 C1"，所以在这里改动 payload
+ * 检测不到——`rename` 会把被改过的对象搬出回收区。
+ */
+async function restoreWithCheckpointTamper(
+  h: Ctx,
+  tamper: (payloadAbs: string) => void,
+): Promise<{ result: Awaited<ReturnType<NonNullable<StorageProvider['restoreEntry']>>>; fired: number }> {
+  const identity = await h.identityOf('a.md');
+  assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
+
+  // 钩子只在这之后才装上：回收自己也会经过检查点，不能让它触发注入
+  let fired = 0;
+  h.onCheckpoint((checkpoint) => {
+    if (checkpoint !== 'C1') return;
+    fired += 1;
+    tamper(h.payloadPath());
+  });
+  const result = await h.provider.restoreEntry!(OP, 'a.md', identity, SOURCE_SIZE);
+  h.onCheckpoint(null);
+  return { result, fired };
+}
+
+test('R2-02a C1（占位归属复核之后）追加 payload 字节 → 拒绝恢复', async () => {
+  await withProvider(async (h) => {
+    const { result, fired } = await restoreWithCheckpointTamper(h, (payloadAbs) => {
+      appendFileSync(payloadAbs, 'x');
+    });
+
+    assert.equal(fired, 1, 'C1 注入点必须真的执行到（否则测的不是最终位置）');
+    assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+    assert.equal(result.errorCode, 'ERR_TRASH_STATE_CONFLICT');
+    // payload 保留在回收区，内容与注入结果一致——我们不改它、也不搬它
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\nx');
+    // 原目标位置不得出现任何文件（占位也必须被释放）
+    assert.equal(exists(join(h.root, 'a.md')), false, '原目标位置不得出现文件');
+  });
+});
+
+test('R2-02b C1（占位归属复核之后）截断 payload → 拒绝恢复', async () => {
+  await withProvider(async (h) => {
+    const { result, fired } = await restoreWithCheckpointTamper(h, (payloadAbs) => {
+      truncateSync(payloadAbs, 3);
+    });
+
+    assert.equal(fired, 1, 'C1 注入点必须真的执行到');
+    assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+    assert.equal(result.errorCode, 'ERR_TRASH_STATE_CONFLICT');
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a');
+    assert.equal(exists(join(h.root, 'a.md')), false, '原目标位置不得出现文件');
+  });
+});
+
+test('R2-02c 只在 C1 记录而不改动时正常恢复仍然成功（调整顺序不误伤）', async () => {
+  await withProvider(async (h) => {
+    const identity = await h.identityOf('a.md');
+    assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
+
+    const seen: RootCheckpoint[] = [];
+    h.onCheckpoint((checkpoint) => {
+      seen.push(checkpoint);
+    });
+    const result = await h.provider.restoreEntry!(OP, 'a.md', identity, SOURCE_SIZE);
+    h.onCheckpoint(null);
+
+    assert.ok(seen.includes('C1'), `C1 必须被执行到：${JSON.stringify(seen)}`);
+    assert.equal(result.status, 'MOVED', JSON.stringify(result));
+    assert.equal(readFileSync(join(h.root, 'a.md'), 'utf8'), '# a.md\n');
+    assert.equal(exists(h.payloadPath()), false);
   });
 });

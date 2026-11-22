@@ -1,0 +1,8 @@
+not ok 32 - R2-02a C1（占位归属复核之后）追加 payload 字节 → 拒绝恢复
+  error: |-
+  expected: 'REJECTED'
+  actual: 'MOVED'
+not ok 33 - R2-02b C1（占位归属复核之后）截断 payload → 拒绝恢复
+  error: |-
+  expected: 'REJECTED'
+  actual: 'MOVED'

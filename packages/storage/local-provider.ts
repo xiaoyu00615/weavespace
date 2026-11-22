@@ -2653,20 +2653,6 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       // 仅测试注入：目标占位已建立、最终归属复核尚未执行
       faults.afterMoveReserve?.();
 
-      /**
-       * 占位建立后的最终复核（R1-01）：类型 + 身份 + **字节数**。
-       *
-       * 先前那次 size 核对发生在占位之前；从那时到这里，payload 可以被追加或截断，
-       * 而 `dev:ino` 完全不变——只核身份会把"长度已变的对象"当成原对象搬到用户目录。
-       * 复核失败时只释放**可证明属于自己**的占位：payload 不动、目标不被写、记录不改。
-       *
-       * 这一步**没有**消除"这次 lstat 与 rename 之间"的竞争窗口（见上面注释）。
-       */
-      if (!(await payloadStillMatches(payloadAbs, expectedIdentity, expectedSize, source.manifestSize))) {
-        await releaseReservation(targetAbs, reservation);
-        return reject('ERR_TRASH_STATE_CONFLICT');
-      }
-
       // P1-01：目标占位归属复核（与 trashEntry 同一套语义）
       const guard = await ensureReservationOwned(faults, targetAbs, reservation);
       if (!guard.ok) {
@@ -2684,6 +2670,23 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       } catch (err) {
         await releaseReservation(targetAbs, reservation);
         return reject(mapStorageError(err) as ErrorCode);
+      }
+
+      /**
+       * 最终复核（R1-01 / R2-Supplement-R2 调整位置）：类型 + 身份 + **字节数**。
+       *
+       * 位置刻意为"离 `rename` 最近"：占位归属复核（`ensureReservationOwned`）会做
+       * `lstat` 与一次可能的重新占位，C1 也会读写文件系统。若把本复核放在它们之前，
+       * 这段异步窗口里 payload 被追加/截断（`dev:ino` 不变）就会一路走到 `rename`。
+       * 现在前面只剩一次 `try { rename }`，窗口从"整个占位阶段"收到最小。
+       *
+       * 复核失败只释放**可证明属于自己**的占位：payload 不动、目标不被写、记录不改。
+       * 仍然**不宣称**消除"这次 lstat 与 rename 之间"的竞争窗口——那需要
+       * `RENAME_NOREPLACE` 之类本层拿不到的原子原语（见证据文档 §TOCTOU）。
+       */
+      if (!(await payloadStillMatches(payloadAbs, expectedIdentity, expectedSize, source.manifestSize))) {
+        await releaseReservation(targetAbs, reservation);
+        return reject('ERR_TRASH_STATE_CONFLICT');
       }
 
       try {
