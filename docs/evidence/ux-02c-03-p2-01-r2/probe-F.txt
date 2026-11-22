@@ -1,0 +1,10 @@
+# 探针 F：移除并发测试屏障（R2-06）
+# mutated: server.ts
+
+--- tests/suites/91-s11ux02c03p2r1-trash-concurrency.test.ts
+# pass 14 | # fail 1
+not ok 2 - R2-06 屏障保证两个并发请求都已越过重放检查，再同时进入 Store 提交
+
+# 期望咬住：R2-06
+# 实际咬住：R2-06
+# 结论：BITTEN

@@ -1,0 +1,18 @@
+ok 1 - R1-03a 两个项目同时提交同一 opId：只有一个成功，另一个在磁盘移动之前被拒绝
+not ok 2 - R2-06 屏障保证两个并发请求都已越过重放检查，再同时进入 Store 提交
+ok 3 - R1-03b GET /api/trash/op 跨项目查询不泄露路径，同项目查询正常返回
+ok 4 - R1-03c 不存在的 opId 仍返回空结果（不泄露任何信息）
+ok 5 - R1-03d 项目已撤销：查询回收事务不得泄露记录详情
+ok 6 - R1-03e beginTrash 重放：同项目同路径同身份才重放；任一不符一律 ERR_OP_ID_CONFLICT
+ok 7 - R1-03f commitTrashState 必须同时匹配项目、根令牌、路径与身份，否则 skipped-conflict
+ok 8 - R1-03g commitTrashState 找不到 opId 时不得"顺手"更新别人的记录
+ok 9 - R1-04a trashOutcomeOf 状态映射表：pending/restoring 一律 unknown，绝不报 trashed
+ok 10 - R1-04b 回收结果未确认（pending）时用同一 opId 重试：202 UNKNOWN，不再移动一次
+ok 11 - R1-04c aborted / conflicted / missing 记录重放：一律 409，不虚报回收成功
+ok 12 - R1-04d 已回收（stored）记录重放：200 APPLIED，不产生第二次移动
+ok 13 - R1-04e GET /api/trash/op 按真实状态返回（pending 不得报 trashed）
+ok 14 - R1-01e Host 恢复：目标占位被同名 0 字节外部文件替换 → 409，外部文件与 payload 都完好
+ok 15 - R1-01f Host 回收：payload 占位被外部对象替换 → 409，外部对象不被覆盖、源文件留在原处
+# tests 15
+# pass 14
+# fail 1

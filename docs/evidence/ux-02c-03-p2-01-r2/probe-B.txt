@@ -1,0 +1,16 @@
+# 探针 B：把占位 close 失败改回普通 REJECTED（R2-02）
+# mutated: local-provider.ts
+
+--- tests/suites/93-s11ux02c03p2r2-trash-provider-hardening.test.ts
+# pass 15 | # fail 2
+not ok 1 - R2-02a 回收：占位 close 失败 → UNKNOWN，不 rename、不谎报零变更
+not ok 2 - R2-02b 恢复：占位 close 失败 → UNKNOWN，回收区对象不被移动
+
+--- tests/suites/94-s11ux02c03p2r2-trash-host-replay.test.ts
+# pass 2 | # fail 2
+not ok 3 - R2-02c 回收占位 close 失败：202 UNKNOWN，记录不得变成 stored
+not ok 4 - R2-02d 恢复占位 close 失败：202 UNKNOWN，记录不得被回退成 stored
+
+# 期望咬住：R2-02a, R2-02b, R2-02c, R2-02d
+# 实际咬住：R2-02a, R2-02b, R2-02c, R2-02d
+# 结论：BITTEN

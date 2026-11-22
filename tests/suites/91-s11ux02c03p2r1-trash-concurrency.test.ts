@@ -88,6 +88,8 @@ async function withTwoProjects(
     seed?: (rootA: string, rootB: string, storeDir: string) => Promise<void>;
     /** 仅测试注入：托管模式的 Provider 故障钩子（真实磁盘，不是 mock）。 */
     faults?: StorageFaultHooks;
+    /** 仅测试注入：`beginTrash` 之前的同步屏障（R2-06）。 */
+    barrier?: (info: { projectId: string; opId: string }) => Promise<void> | void;
   } = {},
 ): Promise<void> {
   const base = await mkdtemp(join(tmpdir(), 'ws-p2r1-two-'));
@@ -128,6 +130,7 @@ async function withTwoProjects(
     port: 0,
     managedStore: { dir: storeDir, picker: createFakePicker([]), storeIo: io },
     ...(options.faults ? { managedProviderFaults: options.faults } : {}),
+    ...(options.barrier ? { managedTrashBarrier: options.barrier } : {}),
   });
   const token = ((await (await fetch(`${server.url}/api/session-token`)).json()) as { token?: string }).token ?? '';
 
@@ -227,6 +230,66 @@ test('R1-03a 两个项目同时提交同一 opId：只有一个成功，另一�
     const winnerRoot = winner!.projectId === PROJ_A ? h.rootA : h.rootB;
     assert.equal(exists(join(winnerRoot, winner!.projectId === PROJ_A ? 'a.md' : 'b.md')), true);
   });
+});
+
+test('R2-06 屏障保证两个并发请求都已越过重放检查，再同时进入 Store 提交', async () => {
+  let arrivals = 0;
+  const waiting: (() => void)[] = [];
+  const barrier = (): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      arrivals += 1;
+      if (arrivals >= 2) {
+        // 两个请求都到了提交前：同时放行，让真实 Store 面对真实并发
+        for (const release of waiting) release();
+        waiting.length = 0;
+        resolve();
+        return;
+      }
+      // 若另一个请求始终没到（例如屏障被移除），不能无限挂起，直接失败
+      const timer = setTimeout(() => reject(new Error('屏障超时：另一个请求没有到达提交前位置')), 5000);
+      waiting.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+  await withTwoProjects(
+    async (h) => {
+      const [resA, resB] = await Promise.all([h.api.trash(PROJ_A, 'a.md'), h.api.trash(PROJ_B, 'b.md')]);
+      const rows = [
+        { projectId: PROJ_A, path: 'a.md', body: '# A a\n', res: resA },
+        { projectId: PROJ_B, path: 'b.md', body: '# B b\n', res: resB },
+      ];
+      const winners = rows.filter((row) => row.res.status === 200);
+      const losers = rows.filter((row) => row.res.status !== 200);
+
+      assert.equal(winners.length, 1, `必须恰好一个成功：${JSON.stringify([resA.body, resB.body])}`);
+      assert.equal(losers.length, 1, '另一个必须被拒绝');
+      const loser = losers[0];
+      assert.equal(loser.res.status, 409, JSON.stringify(loser.res.body));
+      assert.equal(loser.res.body.errorCode, 'ERR_OP_ID_CONFLICT');
+      assert.notEqual(loser.res.body.replayed, true, '失败方不得被当成"成功重放"');
+      assert.notEqual(loser.res.body.status, 'APPLIED');
+
+      // 失败方：源文件逐字节正确、没有 payload、没有回收区目录
+      const loserRoot = loser.projectId === PROJ_A ? h.rootA : h.rootB;
+      assert.equal(readFileSync(join(loserRoot, loser.path), 'utf8'), loser.body);
+      assert.equal(exists(join(loserRoot, '.weavespace')), false, '失败方不得留下回收区');
+
+      // 胜方：恰好一条记录、payload 内容逐字节正确
+      const winner = winners[0];
+      const config = await h.config();
+      assert.equal(config.trash.length, 1, '同一 opId 只能有一条记录');
+      assert.equal(config.trash[0].projectId, winner.projectId);
+      const winnerRoot = winner.projectId === PROJ_A ? h.rootA : h.rootB;
+      assert.equal(exists(join(winnerRoot, '.weavespace', 'trash', OP, 'payload')), true);
+      assert.equal(readFileSync(join(winnerRoot, '.weavespace', 'trash', OP, 'payload'), 'utf8'), winner.body);
+      assert.equal(exists(join(winnerRoot, winner.path)), false);
+    },
+    { barrier },
+  );
+
+  assert.equal(arrivals, 2, '两个请求都必须真的到达提交前屏障（否则并发窗口没有被证明重叠）');
 });
 
 test('R1-03b GET /api/trash/op 跨项目查询不泄露路径，同项目查询正常返回', async () => {

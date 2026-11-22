@@ -1,0 +1,12 @@
+# 探针 E：删除临时文件 dev:ino 复核（R2-04）
+# mutated: local-provider.ts
+
+--- tests/suites/93-s11ux02c03p2r2-trash-provider-hardening.test.ts
+# pass 14 | # fail 3
+not ok 13 - R2-04a 临时文件被换成另一个普通文件 → 不写标记、不搬源文件
+not ok 14 - R2-04b 临时文件被换成符号链接 → 不写标记、外部 sentinel 不变
+not ok 15 - R2-04c 临时文件被换成硬链接（nlink > 1）→ 不写标记
+
+# 期望咬住：R2-04a, R2-04b, R2-04c
+# 实际咬住：R2-04a, R2-04b, R2-04c
+# 结论：BITTEN

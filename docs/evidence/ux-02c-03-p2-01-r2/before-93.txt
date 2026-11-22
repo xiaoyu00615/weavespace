@@ -1,0 +1,20 @@
+not ok 1 - R2-02a 回收：占位 close 失败 → UNKNOWN，不 rename、不谎报零变更
+not ok 2 - R2-02b 恢复：占位 close 失败 → UNKNOWN，回收区对象不被移动
+ok 3 - R2-03z 正常回收后恢复仍然成功（安全校验没有破坏原有功能）
+not ok 4 - R2-03a opId 目录被塞入陌生文件 → 拒绝恢复且不删除陌生对象
+not ok 5 - R2-03b 清单 identity 被篡改 → 拒绝恢复
+not ok 6 - R2-03c 清单 originalPath 被篡改 → 拒绝恢复
+not ok 7 - R2-03d 清单 opId 被篡改 → 拒绝恢复
+not ok 8 - R2-03e 清单缺失 → 拒绝恢复
+ok 9 - R2-03f payload 被替换为符号链接 → 拒绝恢复，外部 sentinel 字节不变
+not ok 10 - R2-03g 清单被替换为符号链接 → 拒绝恢复，外部 sentinel 字节不变
+not ok 11 - R2-03h opId 目录里出现陌生目录或遗留临时文件 → 拒绝恢复
+not ok 12 - R2-03i opId 目录里出现陌生子目录 → 拒绝恢复
+not ok 13 - R2-04a 临时文件被换成另一个普通文件 → 不写标记、不搬源文件
+not ok 14 - R2-04b 临时文件被换成符号链接 → 不写标记、外部 sentinel 不变
+not ok 15 - R2-04c 临时文件被换成硬链接（nlink > 1）→ 不写标记
+not ok 16 - R2-04d 临时文件被删除 → 不写标记、不抛异常
+not ok 17 - R2-04e 临时文件未被替换时标记正常写入（复核不误伤正常路径）
+# tests 17
+# pass 2
+# fail 15

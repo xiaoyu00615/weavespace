@@ -1,0 +1,16 @@
+not ok 1 - R2-01a 记录属于旧的 rootToken：快速重放必须 409，不得返回 APPLIED
+  error: |-
+  expected: 'ERR_OP_ID_CONFLICT'
+  actual: 'ERR_TRASH_STATE_CONFLICT'
+ok 2 - R2-01b 归属完全一致的重放：仍然幂等，不重复移动磁盘对象
+not ok 3 - R2-02c 回收占位 close 失败：202 UNKNOWN，记录不得变成 stored
+  error: |-
+  expected: 1
+  actual: 0
+not ok 4 - R2-02d 恢复占位 close 失败：202 UNKNOWN，记录不得被回退成 stored
+  error: |-
+  expected: 1
+  actual: 0
+# tests 4
+# pass 1
+# fail 3

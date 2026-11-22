@@ -1,0 +1,11 @@
+
+> weavespace@0.0.0-p0 typecheck:apps
+> npm --prefix apps/shell run typecheck && npm --prefix apps/server run typecheck
+
+
+> weavespace-shell@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+
+> weavespace-server@0.0.0-s9b typecheck
+> tsc -p tsconfig.json

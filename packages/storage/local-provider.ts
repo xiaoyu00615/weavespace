@@ -159,6 +159,15 @@ export interface StorageFaultHooks {
    * 并保证"复核之后才动手"这个顺序本身可被测试验证。
    */
   beforeMoveRename?: () => void;
+  /**
+   * 内部文件（`.ws-internal` / `.gitignore`）的临时文件**已写入并关闭**、
+   * `rename` 尚未执行时调用（UX-02C-03-P2-01-R2 / R2-04）。
+   *
+   * 用途：确定性注入"临时文件在句柄关闭之后被外部进程替换"。没有这一步复核，
+   * 程序会把一个未经核验的对象 `rename` 到标记路径上——而标记是回收区归属的
+   * 唯一凭据。钩子可抛错，抛错即视为该次写入失败。
+   */
+  beforeOwnWriteRename?: (paths: { readonly tmpAbs: string; readonly targetAbs: string }) => Promise<void> | void;
 }
 
 export type CreateEntryKind = 'file' | 'directory';
@@ -461,6 +470,26 @@ async function discardTmpFile(tmpAbs: string, identity: EntryIdentity | null): P
 }
 
 /**
+ * `rename` 之前复核临时文件仍是我们刚写的那个对象（R2-04）。
+ *
+ * 四个条件缺一不可：存在、是普通文件、不是链接/重解析点、`dev:ino` 一致、
+ * 且 `nlink === 1`（硬链接说明 inode 可能被根外共享，内容不再由我们独占）。
+ * 任何一项读不出来都算"无法证明归属"，由调用方 fail-closed。
+ */
+async function tmpFileStillOwned(absPath: string, expected: EntryIdentity): Promise<boolean> {
+  let info;
+  try {
+    info = await lstat(absPath);
+  } catch {
+    return false;
+  }
+  if (info.isSymbolicLink() || isUntrustedResolution(absPath)) return false;
+  if (!info.isFile()) return false;
+  if (Number(info.nlink) !== 1) return false;
+  return sameEntryIdentity(identityOfStats(info), expected);
+}
+
+/**
  * 在**自己拥有的目录**里安全写入一个内部文件（替换语义）。
  *
  * 顺序（不可交换）：
@@ -468,13 +497,16 @@ async function discardTmpFile(tmpAbs: string, identity: EntryIdentity | null): P
  * 2. 关闭前记下临时文件身份；
  * 3. `rename` 之前核验目标：`expectCurrent === null` 要求目标不存在，
  *    否则要求目标仍是调用方此前核验过的同一个对象；
- * 4. 只有核验通过才 `rename`；任何一步失败都清理自己的临时文件。
+ * 4. `rename` 之前**再核验临时文件本身**（R2-04）：名字在句柄关闭后可能被替换，
+ *    而 `rename` 会把"这个名字上现在的东西"装到标记路径上；
+ * 5. 只有两步核验都通过才 `rename`；任何一步失败都只清理自己的临时文件。
  *
  * 这一步核验消不掉"核验与 rename 之间"的竞争窗口（与 `moveEntry` 同类），
  * 但 `rename` 本身不会写穿符号链接，因此窗口内被换上的链接只会被替换掉目录项，
  * 根外目标文件的内容不会改变。
  */
 async function writeOwnFileAtomically(
+  faults: StorageFaultHooks,
   dirAbs: string,
   name: string,
   content: string,
@@ -495,6 +527,10 @@ async function writeOwnFileAtomically(
     if (handle) await handle.close().catch(() => undefined);
     await discardTmpFile(tmpAbs, tmpIdentity);
     return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+  if (tmpIdentity === null) {
+    await discardTmpFile(tmpAbs, null);
+    return { ok: false, errorCode: 'ERR_STORAGE_IO' };
   }
 
   let current: EntryIdentity | null = null;
@@ -521,6 +557,24 @@ async function writeOwnFileAtomically(
     return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
   }
 
+  /**
+   * R2-04：`rename` 之前重新确认"临时路径上现在还是我刚写的那个对象"。
+   *
+   * 句柄关闭到 `rename` 之间，外部进程可以把这个名字换成任意东西；而标记文件是
+   * 回收区归属的唯一凭据，绝不能让未核验的对象顶替它。核验失败时的处理是
+   * fail-closed：不 rename、不覆盖目标、只清理**能证明是自己**的临时文件。
+   */
+  try {
+    await faults.beforeOwnWriteRename?.({ tmpAbs, targetAbs });
+  } catch {
+    await discardTmpFile(tmpAbs, tmpIdentity);
+    return { ok: false, errorCode: 'ERR_STORAGE_IO' };
+  }
+  if (!(await tmpFileStillOwned(tmpAbs, tmpIdentity))) {
+    await discardTmpFile(tmpAbs, tmpIdentity);
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+
   try {
     await rename(tmpAbs, targetAbs);
   } catch (err) {
@@ -536,23 +590,23 @@ type MarkerRead =
   | { readonly kind: 'unsafe'; readonly errorCode: ErrorCode };
 
 /**
- * 读取内部所有权标记（P1-02）。
+ * 安全读取我们**自己写入**的内部普通文件（P1-02；R2-03 起同时用于 `manifest.json`）。
  *
  * 拒绝条件全部在**读内容之前**判定：符号链接 / 重解析点 / 非普通文件 /
  * 硬链接（nlink > 1，说明 inode 被根外共享）。读取通过已打开句柄完成，
  * 并与 `lstat` 记下的身份比对——`lstat` 与 `open` 之间被替换时身份必然不同。
+ * 不用 `readFile(路径)`：那会跟随后打开时的解析结果，等于放弃了这次比对。
  */
-async function readMarkerSafely(ownerAbs: string): Promise<MarkerRead> {
-  const markerAbs = join(ownerAbs, TRASH_OWNER_MARKER);
+async function readPlainFileSafely(absPath: string): Promise<MarkerRead> {
   let before;
   try {
-    before = await lstat(markerAbs);
+    before = await lstat(absPath);
   } catch (err) {
     return isMissing(err)
       ? { kind: 'missing' }
       : { kind: 'unsafe', errorCode: mapStorageError(err) as ErrorCode };
   }
-  if (before.isSymbolicLink() || isUntrustedResolution(markerAbs) || !before.isFile()) {
+  if (before.isSymbolicLink() || isUntrustedResolution(absPath) || !before.isFile()) {
     return { kind: 'unsafe', errorCode: 'ERR_TRASH_UNAVAILABLE' };
   }
   if (Number(before.nlink) !== 1) {
@@ -563,7 +617,7 @@ async function readMarkerSafely(ownerAbs: string): Promise<MarkerRead> {
 
   let handle: FileHandle;
   try {
-    handle = await open(markerAbs, 'r');
+    handle = await open(absPath, 'r');
   } catch (err) {
     return isMissing(err)
       ? { kind: 'missing' }
@@ -583,6 +637,16 @@ async function readMarkerSafely(ownerAbs: string): Promise<MarkerRead> {
   }
 }
 
+/**
+ * 读取内部所有权标记（`.ws-internal`）。
+ *
+ * 与 `readPlainFileSafely` 同一套判定，只是固定了文件名——两者的拒绝条件
+ * **必须**完全一致，否则"标记可信、清单不可信"这种组合会悄悄放行。
+ */
+async function readMarkerSafely(ownerAbs: string): Promise<MarkerRead> {
+  return readPlainFileSafely(join(ownerAbs, TRASH_OWNER_MARKER));
+}
+
 function markerContentOf(identity: EntryIdentity): string {
   return `${JSON.stringify(
     { magic: TRASH_OWNER_MAGIC, identity: `${identity.dev}:${identity.ino}`, createdAt: new Date().toISOString() },
@@ -597,14 +661,14 @@ function markerContentOf(identity: EntryIdentity): string {
  * 只在"标记首次创建"时写一次是不够的：崩在"标记已写、`.gitignore` 未写"之间，
  * 之后每次初始化都会跳过，回收区从此可能被提交进用户仓库。
  */
-async function ensureGitignore(ownerAbs: string): Promise<OwnWrite> {
+async function ensureGitignore(faults: StorageFaultHooks, ownerAbs: string): Promise<OwnWrite> {
   const abs = join(ownerAbs, '.gitignore');
   let info;
   try {
     info = await lstat(abs);
   } catch (err) {
     if (!isMissing(err)) return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
-    return writeOwnFileAtomically(ownerAbs, '.gitignore', '*\n', null);
+    return writeOwnFileAtomically(faults, ownerAbs, '.gitignore', '*\n', null);
   }
   // 链接 / 重解析点 / 目录：不跟随、不覆盖，直接判定回收区不可用
   if (info.isSymbolicLink() || isUntrustedResolution(abs) || !info.isFile()) {
@@ -618,7 +682,7 @@ async function ensureGitignore(ownerAbs: string): Promise<OwnWrite> {
   }
   if (raw === '*\n') return { ok: true };
   // 内容是错的（被外部改过）：用同一套安全替换纠正
-  return writeOwnFileAtomically(ownerAbs, '.gitignore', '*\n', identityOfStats(info));
+  return writeOwnFileAtomically(faults, ownerAbs, '.gitignore', '*\n', identityOfStats(info));
 }
 
 /**
@@ -734,6 +798,104 @@ async function verifyTrashOwnerReadOnly(
 type TrashSetup = { ok: true; ownerAbs: string; opDirAbs: string } | { ok: false; errorCode: ErrorCode };
 
 /**
+ * 恢复前的**只读**完整核验（R2-03）。
+ *
+ * 为什么恢复也必须核验目录内容：回收成功后，外部进程可以往 `trash/<opId>/`
+ * 里塞东西。若不检查就继续，恢复等于"把陌生对象也纳入这次事务"，或者把一份
+ * 被改过的清单当成事实。这与回收前 `prepareTrashRoot` 的检查**必须同强度**，
+ * 但绝不能复用初始化流程——那会创建目录、补写 `.gitignore`、重写标记，
+ * 等于对不可信对象擅自"修复并接管"。
+ *
+ * 检查顺序（全部只读）：
+ * 1. `.weavespace` / `trash` / `trash/<opId>` 逐级：根内、真目录、非链接/重解析点；
+ * 2. opId 目录**白名单**：只允许 `payload` 与 `manifest.json`，陌生名字（含我们自己的
+ *    临时文件残骸）一律拒绝；
+ * 3. `payload` 必须存在（缺失 = 记录已失效）；
+ * 4. `manifest.json` 必须存在、是安全的普通文件（经句柄读取并核验身份），
+ *    且 magic / opId / originalPath / entryKind / identity / size / deletedAt 全部自洽。
+ */
+async function verifyRestoreSourceReadOnly(
+  boundary: RootBoundary,
+  token: string | null,
+  opId: string,
+  expectedPath: string,
+  expectedIdentity: string,
+): Promise<OwnWrite> {
+  const rootAbs = boundary.canonicalRoot;
+
+  // 1) 父链逐级核验：任何一级是链接/重解析点/非目录都不可信
+  for (const relative of [TRASH_OWNER_DIR, TRASH_ROOT_DIR, trashDirOf(opId)]) {
+    const dirAbs = resolvePath(rootAbs, normalize(relative));
+    if (!isPathInsideRoot(rootAbs, dirAbs)) return { ok: false, errorCode: 'ERR_PATH_OUTSIDE_ROOT' };
+    let info;
+    try {
+      info = await lstat(dirAbs);
+    } catch (err) {
+      if (isMissing(err)) return { ok: false, errorCode: 'ERR_TRASH_RECORD_NOT_FOUND' };
+      return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+    }
+    if (info.isSymbolicLink() || isUntrustedResolution(dirAbs) || !info.isDirectory()) {
+      return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+    }
+  }
+
+  const opDirAbs = resolvePath(rootAbs, normalize(trashDirOf(opId)));
+
+  // 2) 目录白名单：默认拒绝，只有明确认识的两个名字才放行
+  let names: string[];
+  try {
+    names = await readdir(opDirAbs);
+  } catch (err) {
+    if (isMissing(err)) return { ok: false, errorCode: 'ERR_TRASH_RECORD_NOT_FOUND' };
+    return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+  if (names.some((name) => name !== TRASH_PAYLOAD_NAME && name !== TRASH_MANIFEST_NAME)) {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  if (!names.includes(TRASH_PAYLOAD_NAME)) return { ok: false, errorCode: 'ERR_TRASH_RECORD_NOT_FOUND' };
+  if (!names.includes(TRASH_MANIFEST_NAME)) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+
+  // 3) 清单必须能被安全读取（不跟随链接、核验打开对象身份）
+  const manifestRead = await readPlainFileSafely(join(opDirAbs, TRASH_MANIFEST_NAME));
+  if (manifestRead.kind === 'missing') return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  if (manifestRead.kind === 'unsafe') return { ok: false, errorCode: manifestRead.errorCode };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifestRead.raw);
+  } catch {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  if (typeof parsed !== 'object' || parsed === null) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  const row = parsed as Record<string, unknown>;
+
+  // 4) 清单与**本次恢复事务**逐字段对照：任何一项不符都说明这不是同一次回收
+  if (row.magic !== TRASH_OWNER_MAGIC) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  if (row.opId !== opId) return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  if (typeof row.originalPath !== 'string' || !sameEntryPath(row.originalPath, expectedPath)) {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  // 本阶段只回收普通文件；目录回收是明确未实现的功能，不在恢复路径上偷偷放行
+  if (row.entryKind !== 'file') return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  if (typeof row.identity !== 'string' || row.identity !== expectedIdentity) {
+    return { ok: false, errorCode: 'ERR_TRASH_STATE_CONFLICT' };
+  }
+  if (typeof row.size !== 'number' || !Number.isFinite(row.size) || row.size < 0) {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  if (typeof row.deletedAt !== 'string' || Number.isNaN(Date.parse(row.deletedAt))) {
+    return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+
+  try {
+    assertRootContinuity(boundary, token);
+  } catch (err) {
+    return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
+  }
+  return { ok: true };
+}
+
+/**
  * 建立/核验内部回收区目录（UX-02C-03-P2-01 §二.3；R1 加固 P1-02 / P2-05 / P2-06）。
  *
  * 规则（顺序不可交换）：
@@ -751,6 +913,7 @@ type TrashSetup = { ok: true; ownerAbs: string; opDirAbs: string } | { ok: false
  * 真正的防伪仍在每个 payload 的对象身份上。
  */
 async function prepareTrashRoot(
+  faults: StorageFaultHooks,
   boundary: RootBoundary,
   token: string | null,
   opId: string | null,
@@ -799,7 +962,13 @@ async function prepareTrashRoot(
     }
     const foreign = entries.filter((name) => name !== '.gitignore' && !TRASH_TMP_RE.test(name));
     if (foreign.length > 0) return fail('ERR_TRASH_UNAVAILABLE');
-    const wrote = await writeOwnFileAtomically(ownerAbs, TRASH_OWNER_MARKER, markerContentOf(identity), null);
+    const wrote = await writeOwnFileAtomically(
+      faults,
+      ownerAbs,
+      TRASH_OWNER_MARKER,
+      markerContentOf(identity),
+      null,
+    );
     if (!wrote.ok) return fail(wrote.errorCode);
   } else {
     let parsed: unknown;
@@ -816,6 +985,7 @@ async function prepareTrashRoot(
       // 目录身份变化 = 项目被复制/移动过（文件也一起搬了）。更新标记，但不放弃防伪：
       // 真正被依赖的是 payload 的 dev:ino。
       const updated = await writeOwnFileAtomically(
+        faults,
         ownerAbs,
         TRASH_OWNER_MARKER,
         markerContentOf(identity),
@@ -826,7 +996,7 @@ async function prepareTrashRoot(
   }
 
   // 2) `.gitignore` 每次都要核验/补写（崩在两者之间时不会永久缺失）
-  const ignore = await ensureGitignore(ownerAbs);
+  const ignore = await ensureGitignore(faults, ownerAbs);
   if (!ignore.ok) return fail(ignore.errorCode);
 
   const trashRootAbs = resolvePath(rootAbs, TRASH_ROOT_DIR);
@@ -919,6 +1089,68 @@ async function probeReservation(absPath: string, reservation: EntryIdentity | nu
   return sameEntryIdentity(identityOfStats(info), reservation) ? { status: 'owned' } : { status: 'foreign' };
 }
 
+type PlaceholderReservation =
+  | { readonly status: 'RESERVED'; readonly identity: EntryIdentity }
+  | { readonly status: 'REJECTED'; readonly errorCode: ErrorCode }
+  | { readonly status: 'UNKNOWN' };
+
+/**
+ * 排他占位（`trashEntry` / `restoreEntry` / 复原占位三处**同一段**实现，R2-02）。
+ *
+ * 为什么三处必须共用：`open(..., 'wx')` 一旦成功，磁盘上就已经有本次操作的
+ * 副作用（一个 0 字节占位）。此后"拿不准"只能报 UNKNOWN —— 既不能用普通拒绝
+ * 谎称"什么都没发生"，也不能因为第二次 `close` 成功就把不确定结果改报成功。
+ *
+ * 判定表（与任务书 R2-02 一致）：
+ * | 情况 | 结果 |
+ * |---|---|
+ * | `open` 遇到 EEXIST | REJECTED `ERR_ENTRY_EXISTS` |
+ * | `open` 失败（确认没建出占位） | REJECTED（映射后的错误码） |
+ * | `stat` 拿不到身份 | UNKNOWN |
+ * | `close` 失败 | UNKNOWN（重试关闭只是尽力而为） |
+ * | 占位归属无法证明 | UNKNOWN |
+ * | 身份确认成功 | RESERVED |
+ */
+async function reservePlaceholderOwned(
+  faults: StorageFaultHooks,
+  absPath: string,
+  attempt: 1 | 2,
+): Promise<PlaceholderReservation> {
+  let handle: FileHandle;
+  try {
+    handle = await open(absPath, 'wx');
+  } catch (err) {
+    if (codeOf(err) === 'EEXIST') return { status: 'REJECTED', errorCode: 'ERR_ENTRY_EXISTS' };
+    return { status: 'REJECTED', errorCode: moveErrorOf(err, false) };
+  }
+
+  let identity: EntryIdentity;
+  try {
+    faults.reserveFault?.('beforeStat', attempt);
+    identity = identityOfStats(await handle.stat());
+  } catch {
+    await handle.close().catch(() => undefined);
+    return { status: 'UNKNOWN' };
+  }
+
+  try {
+    faults.reserveFault?.('beforeClose', attempt);
+    await handle.close();
+  } catch {
+    // 句柄状态未知：再尽力关一次；成功与否都不改变"结果不确定"这个结论
+    await handle.close().catch(() => undefined);
+    // 只清理能证明是自己（dev:ino 一致）的占位；外部对象一律不碰
+    const probe = await probeReservation(absPath, identity);
+    if (probe.status === 'owned') await releaseReservation(absPath, identity);
+    return { status: 'UNKNOWN' };
+  }
+
+  // 关闭之后名字上可能已经不是我们的对象：继续之前必须能证明归属
+  const probe = await probeReservation(absPath, identity);
+  if (probe.status !== 'owned') return { status: 'UNKNOWN' };
+  return { status: 'RESERVED', identity };
+}
+
 type ReservationGuard =
   | { readonly ok: true; readonly identity: EntryIdentity }
   | { readonly ok: false; readonly status: 'REJECTED'; readonly errorCode: ErrorCode }
@@ -937,6 +1169,7 @@ type ReservationGuard =
  * 但把"整段缺失复核"变成了"只有微秒级窗口"。
  */
 async function ensureReservationOwned(
+  faults: StorageFaultHooks,
   absPath: string,
   reservation: EntryIdentity | null,
 ): Promise<ReservationGuard> {
@@ -945,30 +1178,15 @@ async function ensureReservationOwned(
   if (first.status === 'owned') return { ok: true, identity: reservation as EntryIdentity };
   if (first.status === 'foreign') return { ok: false, status: 'REJECTED', errorCode: 'ERR_ENTRY_EXISTS' };
 
-  // missing：名字空着，允许重新排他占位一次
-  let handle: FileHandle;
-  try {
-    handle = await open(absPath, 'wx');
-  } catch (err) {
-    if (codeOf(err) === 'EEXIST') return { ok: false, status: 'REJECTED', errorCode: 'ERR_ENTRY_EXISTS' };
-    return { ok: false, status: 'REJECTED', errorCode: mapStorageError(err) as ErrorCode };
-  }
-  let identity: EntryIdentity;
-  try {
-    identity = identityOfStats(await handle.stat());
-  } catch {
-    await handle.close().catch(() => undefined);
-    return { ok: false, status: 'UNKNOWN' };
-  }
-  try {
-    await handle.close();
-  } catch {
-    await handle.close().catch(() => undefined);
-    return { ok: false, status: 'UNKNOWN' };
+  // missing：名字空着，允许重新排他占位一次（与初次占位同一段实现、同一套失败语义）
+  const reserved = await reservePlaceholderOwned(faults, absPath, 2);
+  if (reserved.status === 'UNKNOWN') return { ok: false, status: 'UNKNOWN' };
+  if (reserved.status === 'REJECTED') {
+    return { ok: false, status: 'REJECTED', errorCode: reserved.errorCode };
   }
 
-  const again = await probeReservation(absPath, identity);
-  if (again.status === 'owned') return { ok: true, identity };
+  const again = await probeReservation(absPath, reserved.identity);
+  if (again.status === 'owned') return { ok: true, identity: reserved.identity };
   if (again.status === 'foreign') return { ok: false, status: 'REJECTED', errorCode: 'ERR_ENTRY_EXISTS' };
   // missing（刚建的占位又没了）/ failed：无法证明归属 → 只能 UNKNOWN
   return { ok: false, status: 'UNKNOWN' };
@@ -2124,7 +2342,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       const sourceIdentity = `${sourceStats.dev}:${sourceStats.ino}`;
       if (sourceIdentity !== expectedIdentity) return reject('ERR_ENTRY_SOURCE_CHANGED');
 
-      const setup = await prepareTrashRoot(boundary, establishedToken, opId);
+      const setup = await prepareTrashRoot(faults, boundary, establishedToken, opId);
       if (!setup.ok) return reject(setup.errorCode);
 
       const payloadAbs = resolvePath(boundary.canonicalRoot, normalize(trashPayloadOf(opId)));
@@ -2138,21 +2356,13 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         if (!isMissing(err)) return reject(mapStorageError(err) as ErrorCode);
       }
 
-      // 排他占位：谁先创建谁拥有这个名字（外部同名对象会 EEXIST）
+      // 排他占位：谁先创建谁拥有这个名字（外部同名对象会 EEXIST）。
+      // 占位一旦建立，磁盘上就有副作用：`close`/身份核验拿不准时只能 UNKNOWN（R2-02）。
       let reservation: EntryIdentity | null = null;
-      try {
-        const handle = await open(payloadAbs, 'wx');
-        try {
-          reservation = identityOfStats(await handle.stat());
-        } catch {
-          await handle.close().catch(() => undefined);
-          return unknown();
-        }
-        await handle.close();
-      } catch (err) {
-        if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
-        return reject(moveErrorOf(err, false));
-      }
+      const reserved = await reservePlaceholderOwned(faults, payloadAbs, 1);
+      if (reserved.status === 'UNKNOWN') return unknown();
+      if (reserved.status === 'REJECTED') return reject(reserved.errorCode);
+      reservation = reserved.identity;
       // 仅测试注入：占位已建立、最终归属复核尚未执行
       faults.afterMoveReserve?.();
 
@@ -2195,7 +2405,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
 
       // P1-01：目标占位归属复核。Windows 的 rename 会覆盖已存在目标，
       // 因此必须确认"占着 payload 这个名字的仍是我刚建的占位"。
-      const guard = await ensureReservationOwned(payloadAbs, reservation);
+      const guard = await ensureReservationOwned(faults, payloadAbs, reservation);
       if (!guard.ok) {
         if (guard.status === 'REJECTED') {
           // 只在确实仍属于自己时清理；foreign 时 releaseReservation 会自行跳过
@@ -2289,6 +2499,17 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       const owner = await verifyTrashOwnerReadOnly(boundary, establishedToken);
       if (!owner.ok) return reject(owner.errorCode);
 
+      // 只读完整性核验（R2-03）：目录白名单 + 清单与本次事务逐字段对照。
+      // 绝不在这里调用初始化流程——那会创建目录/补写忽略文件/重写标记。
+      const source = await verifyRestoreSourceReadOnly(
+        boundary,
+        establishedToken,
+        opId,
+        target,
+        expectedIdentity,
+      );
+      if (!source.ok) return reject(source.errorCode);
+
       let payloadStats;
       try {
         payloadStats = await lstat(payloadAbs);
@@ -2328,20 +2549,12 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         if (!isMissing(err)) return reject(mapStorageError(err) as ErrorCode);
       }
 
+      // 目标占位：与回收路径共用同一段实现与同一套失败语义（R2-02）
       let reservation: EntryIdentity | null = null;
-      try {
-        const handle = await open(targetAbs, 'wx');
-        try {
-          reservation = identityOfStats(await handle.stat());
-        } catch {
-          await handle.close().catch(() => undefined);
-          return unknown();
-        }
-        await handle.close();
-      } catch (err) {
-        if (codeOf(err) === 'EEXIST') return reject('ERR_ENTRY_EXISTS');
-        return reject(moveErrorOf(err, false));
-      }
+      const reserved = await reservePlaceholderOwned(faults, targetAbs, 1);
+      if (reserved.status === 'UNKNOWN') return unknown();
+      if (reserved.status === 'REJECTED') return reject(reserved.errorCode);
+      reservation = reserved.identity;
       // 仅测试注入：目标占位已建立、最终归属复核尚未执行
       faults.afterMoveReserve?.();
 
@@ -2352,7 +2565,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       }
 
       // P1-01：目标占位归属复核（与 trashEntry 同一套语义）
-      const guard = await ensureReservationOwned(targetAbs, reservation);
+      const guard = await ensureReservationOwned(faults, targetAbs, reservation);
       if (!guard.ok) {
         if (guard.status === 'REJECTED') {
           await releaseReservation(targetAbs, reservation);

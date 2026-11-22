@@ -156,6 +156,17 @@ export interface ShellServerOptions {
    */
   managedProviderFaults?: StorageFaultHooks;
   /**
+   * 仅测试注入：`/api/trash/entry` 通过快速重放检查、**尚未提交 `beginTrash`** 时调用（R2-06）。
+   *
+   * 用途：让两个项目的并发请求确定性地同时到达"提交前置"这一行，再由测试同时放行。
+   * 只靠 `Promise.all` 无法保证两边都已越过重放检查，因此不能证明并发窗口真的重叠。
+   * 生产不传。
+   */
+  managedTrashBarrier?: (info: {
+    readonly projectId: string;
+    readonly opId: string;
+  }) => Promise<void> | void;
+  /**
    * 托管模式（UX-02B-01）：由调用方提供运行期工厂，Host 不再持有静态 Registry。
    *
    * **仅用于测试与内部接线**：CLI 不提供该入口，因此生产进程无法进入托管模式，
@@ -2467,10 +2478,17 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           throw new HttpError(501, 'ERR_COMMAND_UNSUPPORTED', '该项目的存储实现不提供回收区能力');
         }
 
-        // 幂等重放：同一 opId 已经代表一次回收，绝不因为重试再删一次
+        // 幂等重放：同一 opId 已经代表一次回收，绝不因为重试再删一次。
+        // 归属必须**完整**核对（R2-01）：opId 只是索引，项目被重新授权后
+        // `rootToken` 会变，此时旧记录指向的对象已无法核验，绝不能当成
+        // 当前项目的有效重放结果返回 APPLIED。
         const replay = managedFileStore.trashByOp(request.opId);
         if (replay) {
-          if (replay.projectId !== request.projectId || !sameEntryPath(replay.originalPath, request.path)) {
+          if (
+            replay.projectId !== request.projectId ||
+            replay.rootToken !== handle.rootToken ||
+            !sameEntryPath(replay.originalPath, request.path)
+          ) {
             throw new HttpError(409, 'ERR_OP_ID_CONFLICT', '该操作编号已用于另一次回收，请重新发起');
           }
           sendTrashReplay(res, replay);
@@ -2504,6 +2522,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             if (facts.identity === null) {
               return { kind: 'REJECTED' as const, errorCode: 'ERR_RESOURCE_NOT_FOUND' as const };
             }
+
+            // 仅测试注入：并发用例在这里汇合，确保两边都已越过重放检查（R2-06）
+            await options.managedTrashBarrier?.({ projectId: request.projectId, opId: request.opId });
 
             /**
              * 意图必须在移动**之前**落盘：它是"移动成功但状态没提交"唯一的对账依据。

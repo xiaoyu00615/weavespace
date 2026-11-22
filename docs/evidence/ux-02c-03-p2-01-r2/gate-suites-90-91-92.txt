@@ -1,0 +1,15 @@
+== tests/suites/90-s11ux02c03p2r1-trash-provider-safety.test.ts
+# tests 17
+# pass 17
+# fail 0
+# skipped 0
+== tests/suites/91-s11ux02c03p2r1-trash-concurrency.test.ts
+# tests 15
+# pass 15
+# fail 0
+# skipped 0
+== tests/suites/92-s11ux02c03p2r1-trash-reconcile.test.ts
+# tests 12
+# pass 12
+# fail 0
+# skipped 0

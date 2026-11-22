@@ -1,0 +1,17 @@
+# 探针 C：删除 restoreEntry 的目录完整性检查（R2-03 主体）
+# mutated: local-provider.ts
+
+--- tests/suites/93-s11ux02c03p2r2-trash-provider-hardening.test.ts
+# pass 9 | # fail 8
+not ok 4 - R2-03a opId 目录被塞入陌生文件 → 拒绝恢复且不删除陌生对象
+not ok 5 - R2-03b 清单 identity 被篡改 → 拒绝恢复
+not ok 6 - R2-03c 清单 originalPath 被篡改 → 拒绝恢复
+not ok 7 - R2-03d 清单 opId 被篡改 → 拒绝恢复
+not ok 8 - R2-03e 清单缺失 → 拒绝恢复
+not ok 10 - R2-03g 清单被替换为符号链接 → 拒绝恢复，外部 sentinel 字节不变
+not ok 11 - R2-03h opId 目录里出现陌生目录或遗留临时文件 → 拒绝恢复
+not ok 12 - R2-03i opId 目录里出现陌生子目录 → 拒绝恢复
+
+# 期望咬住：R2-03a, R2-03c, R2-03d, R2-03e, R2-03g, R2-03h, R2-03i
+# 实际咬住：R2-03a, R2-03c, R2-03d, R2-03e, R2-03g, R2-03h, R2-03i
+# 结论：BITTEN
