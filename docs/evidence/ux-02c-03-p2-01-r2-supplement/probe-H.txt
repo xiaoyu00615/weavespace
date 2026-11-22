@@ -1,0 +1,10 @@
+# 探针 H：把严格 ISO 校验退回 Date.parse（A2）
+# mutated: local-provider.ts
+
+# pass 23 | # fail 2
+not ok 17 - R2-03n 清单 deletedAt 为非法日期 → 拒绝恢复
+not ok 18 - R2-03o 清单 deletedAt 能被 Date.parse 解析但不是约定格式 → 拒绝恢复
+
+# 期望咬住：R2-03n, R2-03o
+# 实际咬住：R2-03n, R2-03o
+# 结论：BITTEN

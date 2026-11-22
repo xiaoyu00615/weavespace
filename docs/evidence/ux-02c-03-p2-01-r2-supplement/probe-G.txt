@@ -1,0 +1,10 @@
+# 探针 G：删除"清单 size 与 payload 实际大小"的比较（A1 / 磁盘侧）
+# mutated: local-provider.ts
+
+# pass 23 | # fail 2
+not ok 13 - R2-03j payload 被追加字节（清单 size 小于实际大小）→ 拒绝恢复
+not ok 14 - R2-03k payload 被截断（清单 size 大于实际大小）→ 拒绝恢复
+
+# 期望咬住：R2-03j, R2-03k
+# 实际咬住：R2-03j, R2-03k
+# 结论：BITTEN

@@ -1,0 +1,9 @@
+# 探针 G2：删除"清单 size 与配置记录 size"的比较（A1 / 记录侧）
+# mutated: local-provider.ts
+
+# pass 24 | # fail 1
+not ok 19 - R2-03q 记录里的 size 与清单不一致 → 拒绝恢复（清单不能自证）
+
+# 期望咬住：R2-03q
+# 实际咬住：R2-03q
+# 结论：BITTEN

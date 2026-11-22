@@ -2743,7 +2743,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             }
 
             const moved = await runtime.withStructureDiskOp(capability, () =>
-              provider.restoreEntry!(request.opId, fresh.originalPath, fresh.identity),
+              provider.restoreEntry!(request.opId, fresh.originalPath, fresh.identity, fresh.size),
             );
 
             if (moved.status === 'REJECTED') {

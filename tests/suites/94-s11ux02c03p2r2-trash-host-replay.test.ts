@@ -160,6 +160,25 @@ async function withHost(
 /* R2-01：快速重放必须核对 rootToken                                    */
 /* ================================================================== */
 
+/**
+ * 为什么"重放前必须核对 rootToken"而不是依赖别的子系统兜住：
+ *
+ * 1. 归属是重放的前提。`opId` 只是索引，记录属于**某一次根授权**；根换了，记录
+ *    指向的对象就无从核验，这个判断不该由"启动对账是否恰好先跑过"来决定。
+ * 2. 对账不是重放路径的一部分（`/api/trash/entry` 的重放分支在屏障之前、也不做
+ *    对账），它的结论可能因为项目当时不可用、或提交被跳过而不存在。
+ * 3. 重放会回传该记录的 `entry`（原路径、字节数、状态）：等于用"当前根"的名义
+ *    替另一份授权背书。
+ * 4. Store 的 `beginTrash` / `commitTrashState` 已经把归属定义为
+ *    `opId + projectId + rootToken + originalPath + identity`；重放路径用更少的字段，
+ *    就是同一件事两套判定。
+ *
+ * 证据口径（不得夸大）：修复前实测结果是 409 + `ERR_TRASH_STATE_CONFLICT`，
+ * 见 `docs/evidence/ux-02c-03-p2-01-r2/before-94.txt`。**没有**复现出 200 APPLIED：
+ * 启动对账会先把"旧根令牌"的记录收敛成 `conflicted`，重放只是照状态回话。
+ * 所以本用例判别的是"把旧记录当成自己的事务"（状态冲突）与"承认它不是自己的事务"
+ * （`ERR_OP_ID_CONFLICT`）之间的差别。
+ */
 test('R2-01a 记录属于旧的 rootToken：快速重放必须 409，不得返回 APPLIED', async () => {
   await withHost(
     async (h) => {
@@ -174,7 +193,9 @@ test('R2-01a 记录属于旧的 rootToken：快速重放必须 409，不得返�
       const payloadBytes = readFileSync(h.payloadPath(), 'utf8');
 
       const res = await h.api.trash('a.md');
-      // 修复前：这条旧记录被当成当前项目的有效重放 → 200 APPLIED（谎报"已经删过了"）
+      // 修复前（实测）：仍走重放分支，回 409 + `ERR_TRASH_STATE_CONFLICT`
+      //（"这笔删除没有成功"）——旧记录被当成**本项目的**事务来回答。
+      // 修复后要求的结论是另一种：这个 opId 属于别的事务，因此必须是 ERR_OP_ID_CONFLICT。
       assert.equal(res.status, 409, `必须拒绝：${JSON.stringify(res.body)}`);
       assert.equal(res.body.errorCode, 'ERR_OP_ID_CONFLICT');
       assert.notEqual(res.body.status, 'APPLIED');

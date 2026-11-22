@@ -28,7 +28,7 @@
 
 | 用例 | 修复前 | 修复后 |
 |---|---|---|
-| R2-01a 旧 rootToken 重放 | FAIL：409 但错误码为 `ERR_TRASH_STATE_CONFLICT` —— 旧记录被当成**本项目**的有效重放 | PASS：409 `ERR_OP_ID_CONFLICT`，记录/提交序号/源文件/payload 全部不变 |
+| R2-01a 旧 rootToken 重放 | FAIL：409 但错误码为 `ERR_TRASH_STATE_CONFLICT` —— 旧记录被当成**本项目**的有效重放（未复现 200 APPLIED，见 §2.1） | PASS：409 `ERR_OP_ID_CONFLICT`，记录/提交序号/源文件/payload 全部不变 |
 | R2-01b 同归属重放 | PASS（既有幂等） | PASS（保持幂等，不重复移动） |
 | R2-02a 回收占位 close 失败 | FAIL：注入点 `fired` 期望 1 实际 0（不存在该语义），返回 MOVED | PASS：UNKNOWN，源文件未动、无清单、占位仅 0 字节 |
 | R2-02b 恢复占位 close 失败 | FAIL：同上 | PASS：UNKNOWN，payload 字节与身份不变 |
@@ -55,6 +55,28 @@
 真删真建，sentinel 用真字节比对；没有 mock、没有 patch 全局 `fs`。
 未覆盖分支：`size`/`deletedAt` 类型非法两条分支未单独立用例（由 R2-03b 同一段代码路径覆盖到
 "逐字段拒绝"的形态，但未独立断言错误码），如实记录。
+
+### 2.1 R2-01 证据口径修正（R2-Supplement / 任务 C）
+
+初版 `notes.md` 与套件 94 的注释里出现过"修复前会返回 200 APPLIED"的说法。**那是不准确的**，
+本轮更正，`before-94.txt` 作为历史输出保持原样、不改写。
+
+- 修复前**实测**行为：`/api/trash/entry` 仍然进入快速重放分支（只比 `projectId + originalPath`），
+  于是把这条旧记录当成本项目的有效重放；由于启动对账已经把"根令牌不一致"的记录收敛成
+  `conflicted`，重放按状态回 `409 + ERR_TRASH_STATE_CONFLICT`（"这笔删除没有成功，请重新发起"）。
+- 修复后的行为：`409 + ERR_OP_ID_CONFLICT`（"该操作编号已用于另一次回收"），零磁盘副作用。
+- **200 APPLIED 没有被复现**：要让重放回 200，记录必须是 `stored`；而只要 `rootToken` 与当前句柄
+  不一致，启动对账就会先把它改成 `conflicted`（`reconcileTrashRecord` 的根令牌分支）。
+  因此这条路径在真实 Host 里不可达，本文件不把它写成已证实的事实。
+
+为什么加了 `rootToken` 比较**仍然有必要**：
+
+1. 归属判定不应该依赖"另一个子系统是否恰好先跑过"。重放分支在结构变更屏障之前，本身不做对账；
+   对账的结论可能不存在（项目在启动时不可用 → 该轮不改状态；提交被跳过 → 状态不变）。
+2. 重放会回传该记录的 `entry`（原路径、字节数、状态），等于以"当前根"的名义替另一份授权背书。
+3. Store 侧 `beginTrash` / `commitTrashState` 已把归属定义为
+   `opId + projectId + rootToken + originalPath + identity`；重放路径少比一个字段，就是同一件事两套判定。
+4. 该判定让错误语义正确：调用方需要知道"这个 opId 不是我的事务"，而不是"我的事务失败了"。
 
 ## 3. 变异探针（`run-probes.py`，逐条自动还原）
 

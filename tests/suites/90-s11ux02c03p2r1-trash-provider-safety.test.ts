@@ -29,6 +29,8 @@ import { test } from 'node:test';
 import { createLocalProvider, type StorageFaultHooks, type StorageProvider } from '../../packages/storage/index.ts';
 
 const OP = 'op-r1-prov-0001';
+/** 夹具文件 `a.md` 的字节数：恢复时必须与清单/记录三方一致（R2-Supplement / A1）。 */
+const SOURCE_SIZE = Buffer.byteLength('# a.md\n');
 const MARKER = '.ws-internal';
 const TRASH_DIR = '.weavespace';
 const OWNER_MAGIC = 'weavespace-internal-trash-v1';
@@ -154,7 +156,7 @@ test('R1-01c 恢复：目标占位被同名 0 字节外部文件替换 → 拒�
       writeFileSync(join(h.root, 'a.md'), '', 'utf8');
     });
 
-    const res = await h.provider.restoreEntry!(OP, 'a.md', payloadIdentity);
+    const res = await h.provider.restoreEntry!(OP, 'a.md', payloadIdentity, SOURCE_SIZE);
     h.onAfterReserve(null);
 
     assert.equal(res.status, 'REJECTED', `必须拒绝：${JSON.stringify(res)}`);
@@ -174,7 +176,7 @@ test('R1-01d 恢复：目标占位被删除 → 重新占位并成功恢复', as
       unlinkSync(join(h.root, 'a.md'));
     });
 
-    const res = await h.provider.restoreEntry!(OP, 'a.md', payloadIdentity);
+    const res = await h.provider.restoreEntry!(OP, 'a.md', payloadIdentity, SOURCE_SIZE);
     h.onAfterReserve(null);
 
     assert.equal(res.status, 'MOVED', JSON.stringify(res));
@@ -428,7 +430,7 @@ test('R1-02g 标记被链接替换后，恢复同样必须拒绝（回收区整�
     unlinkSync(h.markerPath());
     await symlink(sentinel, h.markerPath(), 'file');
 
-    const res = await h.provider.restoreEntry!(OP, 'a.md', sourceIdentity);
+    const res = await h.provider.restoreEntry!(OP, 'a.md', sourceIdentity, SOURCE_SIZE);
     assert.equal(res.status, 'REJECTED', JSON.stringify(res));
     assert.equal(res.errorCode, 'ERR_TRASH_UNAVAILABLE');
     assert.equal(readFileSync(sentinel, 'utf8'), sentinelBytes, '外部 sentinel 必须一字节不变');

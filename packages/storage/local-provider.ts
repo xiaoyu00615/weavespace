@@ -322,8 +322,16 @@ export interface StorageProvider {
    *
    * 目标已存在一律拒绝（绝不覆盖）；`expectedIdentity` 必须与回收区对象身份一致，
    * 否则拒绝（说明回收区里的东西已经不是当初移入的那一个）。
+   *
+   * `expectedSize` 是**配置记录**里记下的字节数（R2-Supplement / A1）：清单、记录、
+   * 磁盘三方必须一致。少了这一维，"清单被改成另一个长度"就只能靠清单自己作证。
    */
-  restoreEntry?(opId: string, targetPath: string, expectedIdentity: string): Promise<TrashOpResult>;
+  restoreEntry?(
+    opId: string,
+    targetPath: string,
+    expectedIdentity: string,
+    expectedSize: number,
+  ): Promise<TrashOpResult>;
   /**
    * 回收区 payload 的**判别式**探测（UX-02C-03-P2-01-R1 / P1-04）。
    *
@@ -798,6 +806,28 @@ async function verifyTrashOwnerReadOnly(
 type TrashSetup = { ok: true; ownerAbs: string; opDirAbs: string } | { ok: false; errorCode: ErrorCode };
 
 /**
+ * 系统写入清单时间戳的**唯一**格式（R2-Supplement / A2）。
+ *
+ * 清单里的 `deletedAt` 只由 `new Date().toISOString()` 生成：UTC、毫秒固定 3 位、
+ * `Z` 结尾。所以这里**不**接受任何"也能被 `Date.parse` 解析、但不是这个写法"的字符串：
+ * `+00:00` 偏移、省略毫秒、省略 `Z`、`November 22, 2026` 之类的自然语言，一律不可信。
+ * 清单是不可信输入，宽松解析只会把"格式被改过"读成"格式没问题"。
+ */
+const ISO_UTC_MILLIS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+function isSystemIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string' || !ISO_UTC_MILLIS_RE.test(value)) return false;
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return false;
+  // 往返一致：拒绝"能解析但不存在"的日期（如 2 月 31 日），以及任何规范化后会变形的写法
+  return new Date(ms).toISOString() === value;
+}
+
+type RestoreSourceCheck =
+  | { readonly ok: true; readonly manifestSize: number }
+  | { readonly ok: false; readonly errorCode: ErrorCode };
+
+/**
  * 恢复前的**只读**完整核验（R2-03）。
  *
  * 为什么恢复也必须核验目录内容：回收成功后，外部进程可以往 `trash/<opId>/`
@@ -812,7 +842,10 @@ type TrashSetup = { ok: true; ownerAbs: string; opDirAbs: string } | { ok: false
  *    临时文件残骸）一律拒绝；
  * 3. `payload` 必须存在（缺失 = 记录已失效）；
  * 4. `manifest.json` 必须存在、是安全的普通文件（经句柄读取并核验身份），
- *    且 magic / opId / originalPath / entryKind / identity / size / deletedAt 全部自洽。
+ *    且 magic / opId / originalPath / entryKind / identity / size / deletedAt 全部自洽；
+ * 5. `size` 必须与**配置记录**一致；磁盘上的真实大小由调用方拿到 `manifestSize` 后再比
+ *    （两处各比一项，见 `restoreEntry`），`deletedAt` 必须是系统唯一的 ISO 写法
+ *    （`toISOString()` 往返一致）。
  */
 async function verifyRestoreSourceReadOnly(
   boundary: RootBoundary,
@@ -820,7 +853,8 @@ async function verifyRestoreSourceReadOnly(
   opId: string,
   expectedPath: string,
   expectedIdentity: string,
-): Promise<OwnWrite> {
+  expectedSize: number,
+): Promise<RestoreSourceCheck> {
   const rootAbs = boundary.canonicalRoot;
 
   // 1) 父链逐级核验：任何一级是链接/重解析点/非目录都不可信
@@ -880,11 +914,16 @@ async function verifyRestoreSourceReadOnly(
   if (typeof row.identity !== 'string' || row.identity !== expectedIdentity) {
     return { ok: false, errorCode: 'ERR_TRASH_STATE_CONFLICT' };
   }
-  if (typeof row.size !== 'number' || !Number.isFinite(row.size) || row.size < 0) {
+  // 形状先于事实：类型/取值不合契约就是"清单不可信"，不与"和磁盘不一致"混同
+  if (typeof row.size !== 'number' || !Number.isSafeInteger(row.size) || row.size < 0) {
     return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
   }
-  if (typeof row.deletedAt !== 'string' || Number.isNaN(Date.parse(row.deletedAt))) {
+  if (!isSystemIsoTimestamp(row.deletedAt)) {
     return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
+  }
+  // 与**配置记录**对照：记录是本次事务的另一种证据，两者不符说明有一方被改过
+  if (row.size !== expectedSize) {
+    return { ok: false, errorCode: 'ERR_TRASH_STATE_CONFLICT' };
   }
 
   try {
@@ -892,7 +931,7 @@ async function verifyRestoreSourceReadOnly(
   } catch (err) {
     return { ok: false, errorCode: mapStorageError(err) as ErrorCode };
   }
-  return { ok: true };
+  return { ok: true, manifestSize: row.size };
 }
 
 /**
@@ -2461,15 +2500,18 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
     /**
      * 从回收区恢复到指定路径（UX-02C-03-P2-01）。
      *
-     * 三条硬约束：
+     * 四条硬约束：
      * - 目标已存在 → `ERR_ENTRY_EXISTS`，绝不覆盖（产品规则 7）；
      * - 回收区对象身份必须等于记录身份，否则 `ERR_TRASH_STATE_CONFLICT`；
+     * - 清单、记录、磁盘的字节数必须三方一致（R2-Supplement / A1），
+     *   否则 `ERR_TRASH_STATE_CONFLICT`——只比其中两方等于让被改过的一方自证；
      * - 仍然用"排他占位 + 只覆盖自己的占位"来兜 Windows 的覆盖语义。
      */
     async restoreEntry(
       opId: string,
       targetPath: string,
       expectedIdentity: string,
+      expectedSize: number,
     ): Promise<TrashOpResult> {
       const reject = (errorCode: ErrorCode): TrashOpResult => ({ status: 'REJECTED', errorCode });
       const unknown = (identity?: string): TrashOpResult => ({
@@ -2480,6 +2522,9 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
 
       if (!TRASH_OP_ID_RE.test(opId)) return reject('ERR_COMMAND_INVALID');
       if (typeof expectedIdentity !== 'string' || expectedIdentity === '') return reject('ERR_COMMAND_INVALID');
+      if (typeof expectedSize !== 'number' || !Number.isSafeInteger(expectedSize) || expectedSize < 0) {
+        return reject('ERR_COMMAND_INVALID');
+      }
       const targetShape = validateEntryPath(targetPath);
       if (!targetShape.ok) return reject(targetShape.errorCode);
       const target = targetShape.value;
@@ -2507,6 +2552,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         opId,
         target,
         expectedIdentity,
+        expectedSize,
       );
       if (!source.ok) return reject(source.errorCode);
 
@@ -2521,6 +2567,18 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         return reject('ERR_TRASH_STATE_CONFLICT');
       }
       if (`${payloadStats.dev}:${payloadStats.ino}` !== expectedIdentity) {
+        return reject('ERR_TRASH_STATE_CONFLICT');
+      }
+      /**
+       * 字节数三方一致（R2-Supplement / A1）。这里只做**清单 vs 磁盘**：
+       * "清单 vs 记录"已在 `verifyRestoreSourceReadOnly` 里比过（两者都在那个函数手里），
+       * 每项比较只放一处，避免一处被改坏时另一处"顺手"兜住、让测试失去判别力。
+       *
+       * 为什么两方都要比：清单与记录都是可以一起被改写的文件；只有**真实磁盘大小**
+       * 是不可伪造的证据。反过来只比磁盘也不行：截断/追加不改 `dev:ino`，
+       * 而记录里的原始长度仍能指出"这个对象已经不是当初那个长度"。
+       */
+      if (source.manifestSize !== payloadStats.size) {
         return reject('ERR_TRASH_STATE_CONFLICT');
       }
 

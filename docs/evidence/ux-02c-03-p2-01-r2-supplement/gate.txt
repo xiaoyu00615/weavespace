@@ -1,0 +1,22 @@
+== npm run test:p0
+# tests 1067
+# pass 1065
+# fail 0
+# cancelled 0
+# skipped 2
+
+== npm run typecheck
+> tsc -p tsconfig.json
+
+
+== npm run typecheck:apps
+> tsc -p tsconfig.json
+> tsc -p tsconfig.json
+
+== npm run build:shell
+dist/assets/index-BEcFcgPQ.js   409.91 kB │ gzip: 125.37 kB
+
+[32m✓ built in 1.14s[39m
+
+== git diff --check
+clean

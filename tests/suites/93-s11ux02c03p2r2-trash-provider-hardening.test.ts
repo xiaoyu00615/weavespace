@@ -11,7 +11,18 @@
  * - R2-04：`rename` 之前没有复核临时文件身份（可被换成任意对象顶替标记）。
  */
 import assert from 'node:assert/strict';
-import { linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  truncateSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +31,8 @@ import { test } from 'node:test';
 import { createLocalProvider, type StorageFaultHooks, type StorageProvider } from '../../packages/storage/index.ts';
 
 const OP = 'op-r2-prov-0001';
+/** 夹具文件 `a.md` 的字节数（恢复时三方一致校验的基准）。 */
+const SOURCE_SIZE = Buffer.byteLength('# a.md\n');
 const MARKER = '.ws-internal';
 const TRASH_DIR = '.weavespace';
 
@@ -153,7 +166,7 @@ test('R2-02b 恢复：占位 close 失败 → UNKNOWN，回收区对象不被移
       throw new Error('注入：目标占位关闭失败');
     });
 
-    const res = await h.provider.restoreEntry!(OP, 'a.md', payloadIdentity);
+    const res = await h.provider.restoreEntry!(OP, 'a.md', payloadIdentity, SOURCE_SIZE);
     h.onReserveFault(null);
 
     assert.equal(fired, 1);
@@ -180,7 +193,7 @@ async function trashTamperRestore(
   const identity = await h.identityOf('a.md');
   assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
   await tamper(h);
-  const result = await h.provider.restoreEntry!(OP, 'a.md', identity);
+  const result = await h.provider.restoreEntry!(OP, 'a.md', identity, SOURCE_SIZE);
   return { result, identity };
 }
 
@@ -196,7 +209,7 @@ test('R2-03z 正常回收后恢复仍然成功（安全校验没有破坏原有�
   await withProvider(async (h) => {
     const identity = await h.identityOf('a.md');
     assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
-    const res = await h.provider.restoreEntry!(OP, 'a.md', identity);
+    const res = await h.provider.restoreEntry!(OP, 'a.md', identity, SOURCE_SIZE);
     assert.equal(res.status, 'MOVED', JSON.stringify(res));
     assert.equal(readFileSync(join(h.root, 'a.md'), 'utf8'), '# a.md\n');
     assert.equal(exists(h.payloadPath()), false);
@@ -327,17 +340,153 @@ test('R2-03i opId 目录里出现陌生子目录 → 拒绝恢复', async () => 
 });
 
 /* ================================================================== */
+/* R2-Supplement A1/A2：清单的字节数与时间戳必须与磁盘、记录一致          */
+/* ================================================================== */
+
+test('R2-03j payload 被追加字节（清单 size 小于实际大小）→ 拒绝恢复', async () => {
+  await withProvider(async (h) => {
+    const { result } = await trashTamperRestore(h, (ctx) => {
+      // 只改磁盘，清单与记录都还是原始长度：只有"真实大小"能揭穿
+      appendFileSync(ctx.payloadPath(), 'x');
+    });
+    assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+    assert.equal(result.errorCode, 'ERR_TRASH_STATE_CONFLICT');
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\nx', '被改动过的 payload 不得被搬走');
+    assert.equal(exists(join(h.root, 'a.md')), false, '目标位置不得出现文件');
+  });
+});
+
+test('R2-03k payload 被截断（清单 size 大于实际大小）→ 拒绝恢复', async () => {
+  await withProvider(async (h) => {
+    const { result } = await trashTamperRestore(h, (ctx) => {
+      truncateSync(ctx.payloadPath(), 3);
+    });
+    assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+    assert.equal(result.errorCode, 'ERR_TRASH_STATE_CONFLICT');
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a');
+    assert.equal(exists(join(h.root, 'a.md')), false);
+  });
+});
+
+test('R2-03l 清单 size 为负数 → 拒绝恢复（形状不可信）', async () => {
+  await withProvider(async (h) => {
+    const { result } = await trashTamperRestore(h, (ctx) => {
+      writeManifest(ctx, { ...manifestOf(ctx), size: -1 });
+    });
+    assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+    assert.equal(result.errorCode, 'ERR_TRASH_UNAVAILABLE');
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\n');
+    assert.equal(exists(join(h.root, 'a.md')), false);
+  });
+});
+
+test('R2-03m 清单 size 为非整数或非法类型 → 拒绝恢复（形状不可信）', async () => {
+  // 每个变体用独立的临时项目：一次拒绝不会恢复文件，同一个项目无法重复利用
+  for (const bad of [1.5, '7', null, true]) {
+    await withProvider(async (h) => {
+      const { result } = await trashTamperRestore(h, (ctx) => {
+        writeManifest(ctx, { ...manifestOf(ctx), size: bad });
+      });
+      assert.equal(result.status, 'REJECTED', `size=${JSON.stringify(bad)} 必须拒绝：${JSON.stringify(result)}`);
+      assert.equal(result.errorCode, 'ERR_TRASH_UNAVAILABLE');
+      assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\n');
+      assert.equal(exists(join(h.root, 'a.md')), false);
+    });
+  }
+});
+
+test('R2-03n 清单 deletedAt 为非法日期 → 拒绝恢复', async () => {
+  for (const bad of ['2026-13-45T99:99:99.999Z', '2026-02-31T00:00:00.000Z', '不是时间', '']) {
+    await withProvider(async (h) => {
+      const { result } = await trashTamperRestore(h, (ctx) => {
+        writeManifest(ctx, { ...manifestOf(ctx), deletedAt: bad });
+      });
+      assert.equal(result.status, 'REJECTED', `deletedAt=${JSON.stringify(bad)} 必须拒绝：${JSON.stringify(result)}`);
+      assert.equal(result.errorCode, 'ERR_TRASH_UNAVAILABLE');
+      assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\n');
+      assert.equal(exists(join(h.root, 'a.md')), false);
+    });
+  }
+});
+
+test('R2-03o 清单 deletedAt 能被 Date.parse 解析但不是约定格式 → 拒绝恢复', async () => {
+  const parseable = [
+    // 下面每一条 `Date.parse` 都能解析，但不是 `toISOString()` 的写法
+    '2026-11-22T00:00:00Z',
+    '2026-11-22T00:00:00.000+00:00',
+    'November 22, 2026 00:00:00 UTC',
+    '2026-11-22',
+  ];
+  for (const bad of parseable) {
+    assert.equal(Number.isNaN(Date.parse(bad)), false, `夹具必须可被 Date.parse 解析：${bad}`);
+    await withProvider(async (h) => {
+      const { result } = await trashTamperRestore(h, (ctx) => {
+        writeManifest(ctx, { ...manifestOf(ctx), deletedAt: bad });
+      });
+      assert.equal(result.status, 'REJECTED', `deletedAt=${JSON.stringify(bad)} 必须拒绝：${JSON.stringify(result)}`);
+      assert.equal(result.errorCode, 'ERR_TRASH_UNAVAILABLE');
+      assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\n');
+      assert.equal(exists(join(h.root, 'a.md')), false);
+    });
+  }
+});
+
+test('R2-03q 记录里的 size 与清单不一致 → 拒绝恢复（清单不能自证）', async () => {
+  await withProvider(async (h) => {
+    const identity = await h.identityOf('a.md');
+    assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
+
+    // 清单与磁盘都还是 7 字节，但"记录"（调用方传入）说是 107：只有记录这一维能发现
+    const res = await h.provider.restoreEntry!(OP, 'a.md', identity, SOURCE_SIZE + 100);
+    assert.equal(res.status, 'REJECTED', JSON.stringify(res));
+    assert.equal(res.errorCode, 'ERR_TRASH_STATE_CONFLICT');
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\n', '回收区对象不得被搬走');
+    assert.equal(exists(join(h.root, 'a.md')), false, '目标位置不得出现文件');
+  });
+});
+
+test('R2-03p 系统生成的时间戳与正确 size 可以正常恢复（格式校验不误伤）', async () => {
+  await withProvider(async (h) => {
+    const identity = await h.identityOf('a.md');
+    assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
+
+    const manifest = manifestOf(h);
+    assert.equal(typeof manifest.deletedAt, 'string');
+    const stamp = manifest.deletedAt as string;
+    // 系统唯一写法：UTC + 毫秒 3 位 + Z，且往返一致
+    assert.match(stamp, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.equal(new Date(stamp).toISOString(), stamp);
+    assert.equal(manifest.size, SOURCE_SIZE, '清单里的 size 必须等于真实字节数');
+
+    const res = await h.provider.restoreEntry!(OP, 'a.md', identity, SOURCE_SIZE);
+    assert.equal(res.status, 'MOVED', JSON.stringify(res));
+    assert.equal(readFileSync(join(h.root, 'a.md'), 'utf8'), '# a.md\n');
+    assert.equal(exists(h.payloadPath()), false);
+  });
+});
+
+/* ================================================================== */
 /* R2-04：内部写盘临时文件的 rename 前身份复核                            */
 /* ================================================================== */
 
 test('R2-04a 临时文件被换成另一个普通文件 → 不写标记、不搬源文件', async () => {
   await withProvider(async (h) => {
+    /**
+     * 替换对象必须是一个**身份确定不同**的对象：用 `rename` 把一个事先建好的文件
+     * 覆盖到临时文件的名字上。若改成"先删再建"，理论上可能复用刚释放的 inode，
+     * 那样测的就不是"另一个对象"，而是"同一个 inode"——那是夹具退化，不是保护失效。
+     */
+    const forged = join(h.outside, 'forged-marker.json');
+    writeFileSync(forged, '伪造标记', 'utf8');
     let fired = 0;
+    let tmpInode = '';
+    let forgedInode = '';
     h.onBeforeOwnWriteRename(({ tmpAbs, targetAbs }) => {
       if (targetAbs !== h.markerPath()) return;
       fired += 1;
-      unlinkSync(tmpAbs);
-      writeFileSync(tmpAbs, '伪造标记', 'utf8');
+      tmpInode = `${lstatSync(tmpAbs).dev}:${lstatSync(tmpAbs).ino}`;
+      renameSync(forged, tmpAbs);
+      forgedInode = `${lstatSync(tmpAbs).dev}:${lstatSync(tmpAbs).ino}`;
     });
 
     const identity = await h.identityOf('a.md');
@@ -345,6 +494,7 @@ test('R2-04a 临时文件被换成另一个普通文件 → 不写标记、不�
     h.onBeforeOwnWriteRename(null);
 
     assert.equal(fired, 1);
+    assert.notEqual(forgedInode, tmpInode, '夹具前提：替换对象必须是另一个身份');
     assert.equal(res.status, 'REJECTED', JSON.stringify(res));
     assert.equal(res.errorCode, 'ERR_TRASH_UNAVAILABLE');
     assert.equal(exists(h.markerPath()), false, '标记绝不能被未核验的对象顶替');

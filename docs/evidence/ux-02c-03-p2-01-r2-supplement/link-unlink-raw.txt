@@ -1,0 +1,31 @@
+1.src.before: dev=2398801474 ino=45598946228364910 nlink=1 size=5
+1.src.after: dev=2398801474 ino=45598946228364910 nlink=2 size=5
+1.dst.after: dev=2398801474 ino=45598946228364910 nlink=2 size=5
+2.link.onto-exist: EEXIST: EEXIST: file already exists, link 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work\src.bin' -> 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work\occupied.bin'
+2.occupied.content: "occupied"
+3.src.after-unlink: ENOENT: ENOENT: no such file or directory, lstat 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work\src.bin'
+3.dst.after-unlink: dev=2398801474 ino=45598946228364910 nlink=1 size=5
+3.dst.content: "hello"
+4.unlink-with-open-handle: SUCCESS
+4.rename-while-other-handle-open: SUCCESS
+5.link-onto-open-file: EEXIST: EEXIST: file already exists, link 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work\moved.bin' -> 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work\target2.bin'
+6.link-directory: EPERM: EPERM: operation not permitted, link 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work' -> 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work\dirlink'
+7.link-cross-volume: EXDEV: EXDEV: cross-device link not permitted, link 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work\moved.bin' -> 'D:\Workspace\projects\weavespace\.link-probe-tmp\cross.bin'
+8.rename-overwrite.target: dev=2398801474 ino=36310271996913270 nlink=1 size=1
+8.rename-overwrite.sameAsA: true
+8.rename-overwrite.content: "A"
+9.after-link-only.src: dev=2398801474 ino=42221246507837050 nlink=2 size=5
+9.after-link-only.dst: dev=2398801474 ino=42221246507837050 nlink=2 size=5
+10.readonly-parent: 未在当前账户下构造（管理员权限下 chmod 不生效），未验证
+A.link-while-source-open: SUCCESS
+B.link-of-symlink: SUCCESS
+B.sym-link.identity: dev=2398801474 ino=7036874419005056 nlink=2 size=70 mtimeMs=1795351972016.577
+B.real.identity: dev=2398801474 ino=10696049116243584 nlink=1 size=4 mtimeMs=1795351972015.1404
+B.sym.identity: dev=2398801474 ino=7036874419005056 nlink=2 size=70 mtimeMs=1795351972016.577
+C.dest-parent-missing: ENOENT: ENOENT: no such file or directory, link 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work2\real.bin' -> 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work2\no-such-dir\x.bin'
+D.before: dev=2398801474 ino=5066549582030465 nlink=1 size=1 mtimeMs=1795351972023.495
+D.after: dev=2398801474 ino=5066549582030465 nlink=2 size=1 mtimeMs=1795351972023.495
+E.read-after-unlink-open: "EEE"
+E.name-after-close: ENOENT: ENOENT: no such file or directory, lstat 'C:\Users\Administrator\AppData\Local\Temp\ws-link-probe\work2\e.bin'
+F.dst: dev=2398801474 ino=4785074605319810 nlink=1 size=3 mtimeMs=1795351972030.4941
+F.dst.content: "FFF"
