@@ -444,7 +444,7 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_PICK_REQUEST_GONE: '目录选择请求已不存在（Host 可能已重启），请重试',
   ERR_COMMAND_UNSUPPORTED: '当前运行模式不提供该接口',
   ERR_PATH_RESERVED: '该路径属于工作台内部目录（回收区），不接受普通访问',
-  ERR_TRASH_KIND_UNSUPPORTED: '只有普通文件可以移入回收区（目录与链接暂不支持）',
+  ERR_TRASH_KIND_UNSUPPORTED: '只有普通文件可以移入回收区（目录、链接与超大文件暂不支持）',
   ERR_TRASH_UNAVAILABLE: '回收区不可用（项目内 .weavespace 目录被占用或被替换）',
   ERR_TRASH_FULL: '回收区已满，请先恢复部分文件（本版本不提供永久删除）',
   ERR_TRASH_RECORD_NOT_FOUND: '回收记录不存在',

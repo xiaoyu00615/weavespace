@@ -61,6 +61,7 @@ import {
   type RootCheckpoint,
 } from './path-safety.ts';
 import { decodeUtf8Text, encodeUtf8Text, textError } from './text-safety.ts';
+import { isTrashSizeSupported } from './trash-size.ts';
 
 /** 统一错误映射在路径安全层实现（避免与 provider 循环依赖），此处转出便于调用方使用。 */
 export { mapStorageError } from './path-safety.ts';
@@ -915,7 +916,7 @@ async function verifyRestoreSourceReadOnly(
     return { ok: false, errorCode: 'ERR_TRASH_STATE_CONFLICT' };
   }
   // 形状先于事实：类型/取值不合契约就是"清单不可信"，不与"和磁盘不一致"混同
-  if (typeof row.size !== 'number' || !Number.isSafeInteger(row.size) || row.size < 0) {
+  if (!isTrashSizeSupported(row.size)) {
     return { ok: false, errorCode: 'ERR_TRASH_UNAVAILABLE' };
   }
   if (!isSystemIsoTimestamp(row.deletedAt)) {
@@ -1089,6 +1090,34 @@ async function objectMatchesIdentity(absPath: string, expected: string): Promise
   } catch {
     return false;
   }
+}
+
+/**
+ * 最终 `rename` 之前的回收区对象复核（R2-Supplement-R1 / R1-01）。
+ *
+ * 占位建立到 `rename` 之间仍有一段时间：payload 可能被追加、截断或整只替换。
+ * `dev:ino` 不变**不代表**字节数不变（追加/截断都不换 inode），所以这里把
+ * "普通文件 + 对象身份 + 实际字节数"三件事一起再核一遍，且字节数必须同时等于
+ * 记录里的 `expectedSize` 与清单里的 `manifestSize`。
+ *
+ * **不要**把这一步描述成"消除了最后一次核验与 rename 之间的竞争窗口"：
+ * 它只是把窗口从"整个占位阶段"收缩到"这次 lstat 与 rename 之间"。
+ */
+async function payloadStillMatches(
+  absPath: string,
+  expectedIdentity: string,
+  expectedSize: number,
+  manifestSize: number,
+): Promise<boolean> {
+  let info;
+  try {
+    info = await lstat(absPath);
+  } catch {
+    return false;
+  }
+  if (info.isSymbolicLink() || isUntrustedResolution(absPath) || !info.isFile()) return false;
+  if (`${info.dev}:${info.ino}` !== expectedIdentity) return false;
+  return info.size === expectedSize && info.size === manifestSize;
 }
 
 /** 只清理"确实还是我们自己的占位"，外部对象一律不碰。 */
@@ -2380,6 +2409,16 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
 
       const sourceIdentity = `${sourceStats.dev}:${sourceStats.ino}`;
       if (sourceIdentity !== expectedIdentity) return reject('ERR_ENTRY_SOURCE_CHANGED');
+      /**
+       * 字节数必须是**安全整数**（R2-Supplement-R1 / R1-02）。
+       *
+       * 记录、清单、恢复时的三方核对都建立在 "size 能精确表示" 这个前提上；
+       * 超过 2^53 的长度无法用 Number 精确表示，写进记录就是一条**注定恢复不了**
+       * 的回收记录。宁可在零副作用阶段拒绝，也不要制造一条救不回来的垃圾记录。
+       */
+      if (!isTrashSizeSupported(sourceStats.size)) {
+        return reject('ERR_TRASH_KIND_UNSUPPORTED');
+      }
 
       const setup = await prepareTrashRoot(faults, boundary, establishedToken, opId);
       if (!setup.ok) return reject(setup.errorCode);
@@ -2522,9 +2561,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
 
       if (!TRASH_OP_ID_RE.test(opId)) return reject('ERR_COMMAND_INVALID');
       if (typeof expectedIdentity !== 'string' || expectedIdentity === '') return reject('ERR_COMMAND_INVALID');
-      if (typeof expectedSize !== 'number' || !Number.isSafeInteger(expectedSize) || expectedSize < 0) {
-        return reject('ERR_COMMAND_INVALID');
-      }
+      if (!isTrashSizeSupported(expectedSize)) return reject('ERR_COMMAND_INVALID');
       const targetShape = validateEntryPath(targetPath);
       if (!targetShape.ok) return reject(targetShape.errorCode);
       const target = targetShape.value;
@@ -2616,8 +2653,16 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       // 仅测试注入：目标占位已建立、最终归属复核尚未执行
       faults.afterMoveReserve?.();
 
-      // 占位建立后再核一次：回收区里的对象可能在这期间被外部替换
-      if (!(await objectMatchesIdentity(payloadAbs, expectedIdentity))) {
+      /**
+       * 占位建立后的最终复核（R1-01）：类型 + 身份 + **字节数**。
+       *
+       * 先前那次 size 核对发生在占位之前；从那时到这里，payload 可以被追加或截断，
+       * 而 `dev:ino` 完全不变——只核身份会把"长度已变的对象"当成原对象搬到用户目录。
+       * 复核失败时只释放**可证明属于自己**的占位：payload 不动、目标不被写、记录不改。
+       *
+       * 这一步**没有**消除"这次 lstat 与 rename 之间"的竞争窗口（见上面注释）。
+       */
+      if (!(await payloadStillMatches(payloadAbs, expectedIdentity, expectedSize, source.manifestSize))) {
         await releaseReservation(targetAbs, reservation);
         return reject('ERR_TRASH_STATE_CONFLICT');
       }

@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { validateEntryPath } from '../../../../packages/storage/entry-name.ts';
 import { sameEntryPath } from '../../../../packages/storage/entry-name.ts';
+import { isTrashSizeSupported } from '../../../../packages/storage/trash-size.ts';
 
 export const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
@@ -324,7 +325,9 @@ function parseTrash(raw: unknown): ConfigTrashEntry | undefined {
   if (!checkedPath.ok || checkedPath.value !== originalPath) return undefined;
   if (checkedPath.value.startsWith('.weavespace')) return undefined;
   if (entryKind !== 'file') return undefined;
-  if (typeof size !== 'number' || !Number.isInteger(size) || size < 0) return undefined;
+  // 与 Provider 共用同一条长度约束（R2-Supplement-R1 / R1-02）：超过 2^53 的长度
+  // 无法精确表示，这样的记录永远无法通过恢复时的三方核对，属于"注定失败"的数据。
+  if (!isTrashSizeSupported(size)) return undefined;
   if (!isNonEmptyString(deletedAt)) return undefined;
   if (typeof state !== 'string' || !(TRASH_STATES as readonly string[]).includes(state)) return undefined;
 

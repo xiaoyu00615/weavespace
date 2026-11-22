@@ -1,0 +1,10 @@
+# 探针 I：最终复核只比身份、删掉字节数比较（R1-01）
+# mutated: local-provider.ts
+
+# pass 29 | # fail 2
+not ok 26 - R1-01a 占位建立后 payload 被追加字节 → 拒绝恢复，payload 留在回收区
+not ok 27 - R1-01b 占位建立后 payload 被截断 → 拒绝恢复，payload 留在回收区
+
+# 期望咬住：R1-01a, R1-01b
+# 实际咬住：R1-01a, R1-01b
+# 结论：BITTEN

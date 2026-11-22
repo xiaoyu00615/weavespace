@@ -1,0 +1,8 @@
+not ok 26 - R1-01a 占位建立后 payload 被追加字节 → 拒绝恢复，payload 留在回收区
+  expected: 'REJECTED'
+  actual: 'MOVED'
+not ok 27 - R1-01b 占位建立后 payload 被截断 → 拒绝恢复，payload 留在回收区
+  expected: 'REJECTED'
+  actual: 'MOVED'
+not ok 30 - R1-02b 配置里出现超出安全整数的 size → 整份配置判为不可用
+  actual:

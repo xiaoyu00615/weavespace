@@ -28,7 +28,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { parseConfig, serializeConfig } from '../../apps/server/src/store/config.ts';
 import { createLocalProvider, type StorageFaultHooks, type StorageProvider } from '../../packages/storage/index.ts';
+import { MAX_TRASH_BYTES, isTrashSizeSupported } from '../../packages/storage/trash-size.ts';
 
 const OP = 'op-r2-prov-0001';
 /** 夹具文件 `a.md` 的字节数（恢复时三方一致校验的基准）。 */
@@ -46,6 +48,8 @@ interface Ctx {
   provider: StorageProvider;
   onReserveFault(fn: ((stage: ReserveStage, attempt: 1 | 2) => void) | null): void;
   onBeforeOwnWriteRename(fn: ((paths: { tmpAbs: string; targetAbs: string }) => Promise<void> | void) | null): void;
+  /** 占位已建立、最终归属/最终内容复核尚未执行时执行一次（R1-01 的注入点）。 */
+  onAfterReserve(fn: (() => void) | null): void;
   payloadPath(opId?: string): string;
   opDir(opId?: string): string;
   manifestPath(opId?: string): string;
@@ -63,10 +67,14 @@ async function withProvider(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
 
   let reserveHook: ((stage: ReserveStage, attempt: 1 | 2) => void) | null = null;
   let ownWriteHook: ((paths: { tmpAbs: string; targetAbs: string }) => Promise<void> | void) | null = null;
+  let afterReserveHook: (() => void) | null = null;
   const faults: StorageFaultHooks = {
     reserveFault: (stage, attempt) => reserveHook?.(stage, attempt),
     beforeOwnWriteRename: async (paths) => {
       await ownWriteHook?.(paths);
+    },
+    afterMoveReserve: () => {
+      afterReserveHook?.();
     },
   };
   const provider = createLocalProvider({ rootDir: root, providerId: 'local:r2', faults });
@@ -81,6 +89,9 @@ async function withProvider(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
     },
     onBeforeOwnWriteRename(next) {
       ownWriteHook = next;
+    },
+    onAfterReserve(next) {
+      afterReserveHook = next;
     },
     payloadPath: (opId = OP) => join(root, TRASH_DIR, 'trash', opId, 'payload'),
     opDir: (opId = OP) => join(root, TRASH_DIR, 'trash', opId),
@@ -577,5 +588,135 @@ test('R2-04e 临时文件未被替换时标记正常写入（复核不误伤正�
     assert.ok(observed.length > 0);
     const marker = JSON.parse(readFileSync(h.markerPath(), 'utf8')) as { magic: string };
     assert.equal(marker.magic, 'weavespace-internal-trash-v1');
+  });
+});
+
+/* ================================================================== */
+/* R2-Supplement-R1：最终字节数复核 / 统一安全整数边界                    */
+/* ================================================================== */
+
+/** 回收一个文件后，在"目标占位已建立"的窗口里改动 payload，然后尝试恢复。 */
+async function restoreWithLatePayloadTamper(
+  h: Ctx,
+  tamper: (payloadAbs: string) => void,
+): Promise<Awaited<ReturnType<NonNullable<StorageProvider['restoreEntry']>>>> {
+  const identity = await h.identityOf('a.md');
+  assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
+
+  // 钩子只在这之后才装上：回收自己的占位不会触发这次注入
+  h.onAfterReserve(() => {
+    tamper(h.payloadPath());
+  });
+  const result = await h.provider.restoreEntry!(OP, 'a.md', identity, SOURCE_SIZE);
+  h.onAfterReserve(null);
+  return result;
+}
+
+test('R1-01a 占位建立后 payload 被追加字节 → 拒绝恢复，payload 留在回收区', async () => {
+  await withProvider(async (h) => {
+    const result = await restoreWithLatePayloadTamper(h, (payloadAbs) => {
+      appendFileSync(payloadAbs, 'x');
+    });
+
+    assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+    assert.equal(result.errorCode, 'ERR_TRASH_STATE_CONFLICT');
+    // payload 原样留在回收区（字节数已经是 8：我们不改它，也不搬它）
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\nx');
+    // 目标位置不得残留占位，更不得出现文件
+    assert.equal(exists(join(h.root, 'a.md')), false, '目标占位必须被释放');
+  });
+});
+
+test('R1-01b 占位建立后 payload 被截断 → 拒绝恢复，payload 留在回收区', async () => {
+  await withProvider(async (h) => {
+    const result = await restoreWithLatePayloadTamper(h, (payloadAbs) => {
+      truncateSync(payloadAbs, 3);
+    });
+
+    assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+    assert.equal(result.errorCode, 'ERR_TRASH_STATE_CONFLICT');
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a');
+    assert.equal(exists(join(h.root, 'a.md')), false, '目标占位必须被释放');
+  });
+});
+
+test('R1-01c 不注入改动时正常恢复仍然成功（最终复核不误伤）', async () => {
+  await withProvider(async (h) => {
+    const identity = await h.identityOf('a.md');
+    assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
+
+    let fired = 0;
+    h.onAfterReserve(() => {
+      fired += 1;
+    });
+    const result = await h.provider.restoreEntry!(OP, 'a.md', identity, SOURCE_SIZE);
+    h.onAfterReserve(null);
+
+    assert.equal(fired, 1, '最终复核之前必须真的执行到这个位置');
+    assert.equal(result.status, 'MOVED', JSON.stringify(result));
+    assert.equal(readFileSync(join(h.root, 'a.md'), 'utf8'), '# a.md\n');
+    assert.equal(exists(h.payloadPath()), false);
+  });
+});
+
+test('R1-02a 长度判定：只接受非负安全整数', () => {
+  // 边界值来自同一个纯函数：Provider 写入侧与 Store 读配置侧共用它
+  assert.equal(isTrashSizeSupported(0), true);
+  assert.equal(isTrashSizeSupported(SOURCE_SIZE), true);
+  assert.equal(isTrashSizeSupported(MAX_TRASH_BYTES), true, '2^53-1 必须被接受');
+  assert.equal(isTrashSizeSupported(MAX_TRASH_BYTES + 1), false, '2^53 必须被拒绝');
+  assert.equal(isTrashSizeSupported(Number.MAX_SAFE_INTEGER + 2), false);
+  assert.equal(isTrashSizeSupported(-1), false);
+  assert.equal(isTrashSizeSupported(1.5), false);
+  assert.equal(isTrashSizeSupported(Number.NaN), false);
+  assert.equal(isTrashSizeSupported(Number.POSITIVE_INFINITY), false);
+  assert.equal(isTrashSizeSupported('7'), false);
+  assert.equal(isTrashSizeSupported(null), false);
+  assert.equal(isTrashSizeSupported(undefined), false);
+});
+
+test('R1-02b 配置里出现超出安全整数的 size → 整份配置判为不可用', () => {
+  const entry = {
+    opId: OP,
+    projectId: 'project-x',
+    rootToken: 'tok-x',
+    originalPath: 'a.md',
+    entryKind: 'file' as const,
+    identity: '1:2',
+    deletedAt: '2026-11-22T00:00:00.000Z',
+    state: 'stored' as const,
+  };
+  const base = {
+    version: 4 as const,
+    commitSeq: 0,
+    issuedIds: ['project-x'],
+    revoked: [],
+    projects: [],
+    hidden: [],
+  };
+
+  // 2^53：恰好是"仍是整数、但已不精确"的第一个值——旧实现（Number.isInteger）会放行
+  const unsafe = serializeConfig({ ...base, trash: [{ ...entry, size: MAX_TRASH_BYTES + 1 }] });
+  assert.equal(parseConfig(unsafe), undefined, '超出安全整数的记录不得进入内存状态');
+
+  const safe = serializeConfig({ ...base, trash: [{ ...entry, size: MAX_TRASH_BYTES }] });
+  const parsed = parseConfig(safe);
+  assert.ok(parsed, '边界内的合法记录必须照常解析');
+  assert.equal(parsed!.state.trash[0].size, MAX_TRASH_BYTES);
+});
+
+test('R1-02c 恢复时传入非法 expectedSize → 直接拒绝（ERR_COMMAND_INVALID）', async () => {
+  await withProvider(async (h) => {
+    const identity = await h.identityOf('a.md');
+    assert.equal((await h.provider.trashEntry!(OP, 'a.md', identity)).status, 'MOVED');
+
+    for (const bad of [MAX_TRASH_BYTES + 1, -1, 1.5, Number.NaN]) {
+      const res = await h.provider.restoreEntry!(OP, 'a.md', identity, bad);
+      assert.equal(res.status, 'REJECTED', `expectedSize=${bad} 必须拒绝：${JSON.stringify(res)}`);
+      assert.equal(res.errorCode, 'ERR_COMMAND_INVALID');
+    }
+    // 全程零副作用：payload 还在，目标位置没有任何东西
+    assert.equal(readFileSync(h.payloadPath(), 'utf8'), '# a.md\n');
+    assert.equal(exists(join(h.root, 'a.md')), false);
   });
 });

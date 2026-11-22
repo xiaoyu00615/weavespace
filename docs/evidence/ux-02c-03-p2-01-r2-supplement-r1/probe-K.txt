@@ -1,0 +1,11 @@
+# 探针 K：共用长度判定退回 Number.isInteger（R1-02 / 判定本身）
+# mutated: trash-size.ts
+
+# pass 28 | # fail 3
+not ok 29 - R1-02a 长度判定：只接受非负安全整数
+not ok 30 - R1-02b 配置里出现超出安全整数的 size → 整份配置判为不可用
+not ok 31 - R1-02c 恢复时传入非法 expectedSize → 直接拒绝（ERR_COMMAND_INVALID）
+
+# 期望咬住：R1-02a
+# 实际咬住：R1-02a
+# 结论：BITTEN

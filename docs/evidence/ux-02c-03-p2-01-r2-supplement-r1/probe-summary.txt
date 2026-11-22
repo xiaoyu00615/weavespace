@@ -1,0 +1,5 @@
+# 变异探针汇总（R2-Supplement-R1）
+
+- I: BITTEN（期望 2 个用例，咬住 2 个）
+- J: BITTEN（期望 1 个用例，咬住 1 个）
+- K: BITTEN（期望 1 个用例，咬住 1 个）
