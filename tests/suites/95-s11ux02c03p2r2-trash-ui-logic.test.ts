@@ -19,6 +19,7 @@ import {
   trashBlockerMessage,
   trashDeleteCommandState,
   trashErrorMessage,
+  trashLoadKey,
   trashPanelView,
   trashRowView,
 } from '../../apps/shell/src/state/trash.ts';
@@ -56,7 +57,8 @@ function trashState(overrides: Partial<TrashProjectState> = {}): TrashProjectSta
     loading: false,
     errorCode: null,
     errorMessage: null,
-    busyOpId: null,
+    busyOpIds: [],
+    unconfirmedOpIds: [],
     ...overrides,
   };
 }
@@ -120,6 +122,14 @@ test('P2-02 行视图：名称取原路径末段，路径原样展示，busy 时
   assert.equal(busy.stateLabel, '恢复中');
   assert.equal(busy.tone, 'pending', '在途状态不是成功也不是失败');
   assert.doesNotMatch(busy.hint, /可以恢复到原位置/);
+
+  // 结果未确认：不是"在途"，但同样不能点；标签要能区分这两种情况
+  const unconfirmed = trashRowView(entry(), false, true);
+  assert.equal(unconfirmed.unconfirmed, true);
+  assert.equal(unconfirmed.canRestore, false, '待核对期间不得再次恢复');
+  assert.equal(unconfirmed.stateLabel, '待核对');
+  assert.equal(unconfirmed.tone, 'warn');
+  assert.match(unconfirmed.hint, /核对/);
 
   // Host 说 canRestore=false 时，即便状态是 stored 也不能点（客户端不放宽）
   const guarded = trashRowView(entry({ canRestore: false }), false);
@@ -253,7 +263,7 @@ test('P2-02 面板：没读到 ≠ 空——loading / error / 空列表三态分
   assert.equal(degraded.kind === 'list' ? degraded.degraded : null, '刷新失败');
 });
 
-test('P2-02 面板：busyOpId 只禁用对应那一行', () => {
+test('P2-02 面板：在途 / 待核对都只禁用对应那一行', () => {
   const view = trashPanelView({
     mode: 'live',
     workspaceMode: 'multi',
@@ -262,15 +272,22 @@ test('P2-02 面板：busyOpId 只禁用对应那一行', () => {
       entries: [
         entry({ opId: 'op-a', path: 'a.md' }),
         entry({ opId: 'op-b', path: 'b.md' }),
+        entry({ opId: 'op-c', path: 'c.md' }),
       ],
-      count: 2,
-      busyOpId: 'op-b',
+      count: 3,
+      busyOpIds: ['op-b'],
+      unconfirmedOpIds: ['op-c'],
     }),
   });
   assert.equal(view.kind, 'list');
   if (view.kind !== 'list') return;
   assert.equal(view.rows[0].canRestore, true, '另一个文件仍可恢复');
+  assert.equal(view.rows[0].busy, false);
+  assert.equal(view.rows[0].unconfirmed, false);
   assert.equal(view.rows[1].canRestore, false, '正在恢复的那一行必须禁用');
+  assert.equal(view.rows[1].stateLabel, '恢复中');
+  assert.equal(view.rows[2].canRestore, false, '待核对的那一行同样禁用');
+  assert.equal(view.rows[2].stateLabel, '待核对');
 });
 
 test('P2-02 导航徽标：未知不显示数字，已知才显示', () => {
@@ -310,29 +327,136 @@ test('P2-02 reducer：读取失败不覆盖已有条目，重新读取时保留�
   assert.equal(retried.trashByProject['project-a'].errorMessage, null, '重试时清掉上一次的错误');
 });
 
-test('P2-02 reducer：回收区刷新不会解除"恢复中"（只有 TRASH_BUSY 能清）', () => {
+test('P2-02-R1 reducer：刷新不解除在途，且只动对应的那一个 opId', () => {
   let state = workspaceReducer(INITIAL_STATE, {
     type: 'TRASH_LOADED',
     projectId: 'project-a',
     entries: [entry()],
     count: 1,
   });
-  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-x' });
-  assert.equal(state.trashByProject['project-a'].busyOpId, 'op-x');
+  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-A', busy: true });
+  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: true });
+  assert.deepEqual(state.trashByProject['project-a'].busyOpIds, ['op-A', 'op-B']);
 
-  // 恢复期间后台刷新回来：busy 不能被顺手清掉，否则按钮又变回可点
+  // 恢复期间后台刷新回来：在途集合不能被顺手清掉，否则按钮又变回可点
   state = workspaceReducer(state, {
     type: 'TRASH_LOADED',
     projectId: 'project-a',
     entries: [entry()],
     count: 1,
   });
-  assert.equal(state.trashByProject['project-a'].busyOpId, 'op-x', '刷新不得解除在途状态');
+  assert.deepEqual(state.trashByProject['project-a'].busyOpIds, ['op-A', 'op-B'], '刷新不得解除在途状态');
   state = workspaceReducer(state, { type: 'TRASH_LOAD_BEGIN', projectId: 'project-a' });
-  assert.equal(state.trashByProject['project-a'].busyOpId, 'op-x');
+  assert.deepEqual(state.trashByProject['project-a'].busyOpIds, ['op-A', 'op-B']);
 
-  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: null });
-  assert.equal(state.trashByProject['project-a'].busyOpId, null, 'TRASH_BUSY(null) 才结束这一轮');
+  // A 结束只移除 A
+  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-A', busy: false });
+  assert.deepEqual(state.trashByProject['project-a'].busyOpIds, ['op-B'], 'A 完成不得清掉 B');
+
+  // 重复派发同一个标记不产生新对象（省掉无意义重渲染）
+  const same = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: true });
+  assert.equal(same, state);
+
+  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: false });
+  assert.deepEqual(state.trashByProject['project-a'].busyOpIds, []);
+});
+
+test('P2-02-R1 reducer：待核对只由终态列表收敛，stored 仍保持禁用', () => {
+  let state = workspaceReducer(INITIAL_STATE, {
+    type: 'TRASH_LOADED',
+    projectId: 'project-a',
+    entries: [entry()],
+    count: 1,
+  });
+  state = workspaceReducer(state, {
+    type: 'TRASH_UNCONFIRMED',
+    projectId: 'project-a',
+    opId: entry().opId,
+    pending: true,
+  });
+  assert.deepEqual(state.trashByProject['project-a'].unconfirmedOpIds, [entry().opId]);
+
+  // 列表仍是 stored：不是终态，不能当作"恢复没发生"就放开
+  const stillStored = workspaceReducer(state, {
+    type: 'TRASH_LOADED',
+    projectId: 'project-a',
+    entries: [entry()],
+    count: 1,
+  });
+  assert.deepEqual(stillStored.trashByProject['project-a'].unconfirmedOpIds, [entry().opId]);
+
+  // 列表刷新失败：同样不放开
+  const failed = workspaceReducer(state, {
+    type: 'TRASH_LOAD_ERROR',
+    projectId: 'project-a',
+    errorCode: 'ERR_STORAGE_IO',
+    message: '读取失败',
+  });
+  assert.deepEqual(failed.trashByProject['project-a'].unconfirmedOpIds, [entry().opId]);
+
+  // 列表给出终态：收敛
+  const restored = workspaceReducer(state, {
+    type: 'TRASH_LOADED',
+    projectId: 'project-a',
+    entries: [entry({ state: 'restored', canRestore: false })],
+    count: 1,
+  });
+  assert.deepEqual(restored.trashByProject['project-a'].unconfirmedOpIds, []);
+
+  // 记录从列表里消失（没有可点的行了）：也收敛
+  const gone = workspaceReducer(state, {
+    type: 'TRASH_LOADED',
+    projectId: 'project-a',
+    entries: [],
+    count: 0,
+  });
+  assert.deepEqual(gone.trashByProject['project-a'].unconfirmedOpIds, []);
+});
+
+test('P2-02-R1 reducer：换工作区 / 切模式都丢弃旧回收区缓存', () => {
+  const loaded = workspaceReducer(
+    { ...INITIAL_STATE, mode: 'live', workspaceMode: 'multi', workspaceKey: 'key-A' },
+    { type: 'TRASH_LOADED', projectId: 'project-001', entries: [entry()], count: 1 },
+  );
+  assert.equal(loaded.trashByProject['project-001'].count, 1);
+
+  // 同一个 workspaceKey 的重复派发：不清理（否则每次重连都会闪空）
+  const same = workspaceReducer(loaded, { type: 'SET_WORKSPACE_KEY', workspaceKey: 'key-A' });
+  assert.equal(same, loaded);
+
+  // 换工作区：项目 id 相同也不得继续显示 A 的记录
+  const otherWorkspace = workspaceReducer(loaded, { type: 'SET_WORKSPACE_KEY', workspaceKey: 'key-B' });
+  assert.deepEqual(otherWorkspace.trashByProject, {}, '换工作区必须丢弃旧缓存');
+
+  const demo = workspaceReducer(loaded, { type: 'SET_MODE', mode: 'demo' });
+  assert.deepEqual(demo.trashByProject, {}, '切模式同样丢弃');
+});
+
+test('P2-02-R1 reducer：换工作区后读取失败显示错误，不回填旧工作区数据', () => {
+  const loaded = workspaceReducer(
+    { ...INITIAL_STATE, mode: 'live', workspaceMode: 'multi', workspaceKey: 'key-A' },
+    { type: 'TRASH_LOADED', projectId: 'project-001', entries: [entry()], count: 1 },
+  );
+  const switched = workspaceReducer(loaded, { type: 'SET_WORKSPACE_KEY', workspaceKey: 'key-B' });
+  const failed = workspaceReducer(switched, {
+    type: 'TRASH_LOAD_BEGIN',
+    projectId: 'project-001',
+  });
+  const errored = workspaceReducer(failed, {
+    type: 'TRASH_LOAD_ERROR',
+    projectId: 'project-001',
+    errorCode: 'ERR_STORAGE_IO',
+    message: '读取失败',
+  });
+
+  const view = trashPanelView({
+    mode: 'live',
+    workspaceMode: 'multi',
+    projectId: 'project-001',
+    state: errored.trashByProject['project-001'],
+  });
+  assert.equal(view.kind, 'error', '新工作区读失败必须显示错误，而不是旧工作区的列表');
+  assert.equal(errored.trashByProject['project-001'].entries.length, 0, '不得回填 A 的记录');
 });
 
 test('P2-02 reducer：项目按桶隔离，移除项目时连回收区视图一起清掉', () => {
@@ -355,6 +479,21 @@ test('P2-02 reducer：项目按桶隔离，移除项目时连回收区视图一�
   ], activeProjectId: 'project-a' }, { type: 'PROJECT_REMOVED', projectId: 'project-a' });
   assert.equal('project-a' in state.trashByProject, false, '被移除项目的回收区视图必须丢弃');
   assert.equal(state.trashByProject['project-b'].count, 0, '其它项目不受影响');
+});
+
+test('P2-02-R1 自动加载键：换工作区（同项目 id）必然重新读取', () => {
+  const base = { mode: 'live' as const, workspaceMode: 'multi' as const, projectId: 'project-001' };
+
+  const keyA = trashLoadKey({ ...base, workspaceKey: 'key-A' });
+  assert.ok(keyA, 'live + multi + 有项目 → 应该触发读取');
+  assert.equal(trashLoadKey({ ...base, workspaceKey: 'key-A' }), keyA, '同样的输入必须得到同样的键（否则每次渲染都会重读）');
+  assert.notEqual(trashLoadKey({ ...base, workspaceKey: 'key-B' }), keyA, '换工作区必须换键 → 重新读取');
+  assert.notEqual(trashLoadKey({ ...base, workspaceKey: 'key-A', projectId: 'project-002' }), keyA, '换项目换键');
+
+  // 不该读的三种情况一律 null
+  assert.equal(trashLoadKey({ ...base, workspaceKey: 'key-A', mode: 'demo' }), null);
+  assert.equal(trashLoadKey({ ...base, workspaceKey: 'key-A', workspaceMode: 'legacy' }), null);
+  assert.equal(trashLoadKey({ ...base, workspaceKey: 'key-A', projectId: null }), null);
 });
 
 test('P2-02 导航持久化：trash 是合法 navKey，未知值仍然被拒绝', () => {

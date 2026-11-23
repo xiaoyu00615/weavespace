@@ -16,6 +16,7 @@ import {
   createTrashController,
   trashBadgeCount,
   trashBlockerMessage,
+  trashLoadKey,
   trashPanelView,
   type TrashActionResult,
   type TrashController,
@@ -23,6 +24,7 @@ import {
   type TrashPanelView,
 } from './trash.ts';
 import {
+  dialogBelongsTo,
   openTrashDelete as openTrashDeleteState,
   submitTrashDelete,
   type TrashDeleteDialogState,
@@ -93,6 +95,7 @@ export function TrashProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     return {
       mode: current.mode,
+      workspaceMode: current.workspaceMode,
       workspaceKey: current.workspaceKey,
       activeProjectId: current.activeProjectId,
       epoch: tracker.current.epoch,
@@ -117,6 +120,30 @@ export function TrashProvider({ children }: { children: ReactNode }) {
         return current.projects.some(
           (project) => project.projectId === projectId && project.status === 'READY',
         );
+      },
+      /**
+       * 发送前的身份闸（R1-05）。
+       *
+       * 与 `supported` 的区别：这里区分"归属变了"和"项目此刻不可用"。
+       * 前者必须**静默**丢弃（用户已经不在那个项目上了，弹提示只会让人困惑），
+       * 后者要给一句能执行的话。
+       */
+      preflight: (projectId) => {
+        const current = stateRef.current;
+        if (current.mode !== 'live' || current.workspaceMode !== 'multi') {
+          return { ok: false, kind: 'stale' as const };
+        }
+        if (current.activeProjectId !== projectId) return { ok: false, kind: 'stale' as const };
+        const project = current.projects.find((item) => item.projectId === projectId);
+        if (!project) return { ok: false, kind: 'stale' as const };
+        if (project.status !== 'READY') {
+          return {
+            ok: false,
+            kind: 'blocked' as const,
+            message: '项目当前不可用，请稍后重试。',
+          };
+        }
+        return { ok: true as const };
       },
       blockers: (projectId, path) =>
         localStructureBlockers(stateRef.current.tabs, projectId, path, 'file'),
@@ -156,11 +183,20 @@ export function TrashProvider({ children }: { children: ReactNode }) {
    * 单飞在编排器里；这里只按 (模式, 项目) 触发，切换项目/重连各触发一次。
    * 迟到的响应由编排器的归属核对丢弃，不会写进新项目的桶。
    */
+  const loadKey = trashLoadKey({
+    mode: state.mode,
+    workspaceMode: state.workspaceMode,
+    workspaceKey: state.workspaceKey,
+    projectId: state.activeProjectId,
+  });
+
   useEffect(() => {
-    if (state.mode !== 'live' || state.workspaceMode !== 'multi') return;
-    if (!state.activeProjectId) return;
-    void controller.load(state.activeProjectId);
-  }, [controller, state.mode, state.workspaceMode, state.activeProjectId]);
+    // 触发键把"工作区 + 项目"压成一个值：换工作区（即使项目 id 相同）必然重新读
+    if (!loadKey) return;
+    const current = stateRef.current;
+    if (!current.activeProjectId) return;
+    void controller.load(current.activeProjectId);
+  }, [controller, loadKey]);
 
   const load = useCallback(async (): Promise<void> => {
     const current = stateRef.current;
@@ -197,10 +233,20 @@ export function TrashProvider({ children }: { children: ReactNode }) {
   const openDelete = useCallback(
     (targetProjectId: string, path: string) => {
       const checked = precheck(targetProjectId, path);
-      // 打开确认框本身不发请求：零网络、零磁盘
-      setDeleteDialog(openTrashDeleteState({ projectId: targetProjectId, path, reasons: checked.reasons }));
+      const current = identity();
+      // 打开确认框本身不发请求：零网络、零磁盘。
+      // 把"确认时的归属"记在对话框里：用户可能在确认前切走项目/工作区。
+      setDeleteDialog(
+        openTrashDeleteState({
+          projectId: targetProjectId,
+          path,
+          reasons: checked.reasons,
+          workspaceKey: current.workspaceKey,
+          epoch: current.epoch,
+        }),
+      );
     },
-    [precheck],
+    [identity, precheck],
   );
 
   const cancelDelete = useCallback(() => {
@@ -212,6 +258,18 @@ export function TrashProvider({ children }: { children: ReactNode }) {
     const dialog = deleteDialog;
     // `phase !== 'ready'` 时一次请求都不发；`confirming` ref 挡住同一 tick 的连点
     if (!dialog || dialog.phase !== 'ready' || confirming.current) return;
+    /*
+     * R1-05：确认前重新核对归属。
+     *
+     * "打开确认框 → 切到别的项目/工作区 → 点确认"是完全正常的操作序列，
+     * 但那时这条命令已经不属于当前界面了：静默关闭，一个请求都不发。
+     */
+    const now = identity();
+    if (!dialogBelongsTo(dialog, now)) {
+      // 此刻还没发请求，`confirming` 一定是 false：可以直接走"取消"的关闭路径
+      cancelDelete();
+      return;
+    }
     confirming.current = true;
     setDeleteDialog((current) => (current ? { ...current, phase: 'confirming' } : current));
     try {
@@ -231,7 +289,7 @@ export function TrashProvider({ children }: { children: ReactNode }) {
     } finally {
       confirming.current = false;
     }
-  }, [controller, deleteDialog]);
+  }, [controller, deleteDialog, identity, cancelDelete]);
 
   const value = useMemo<TrashValue>(
     () => ({

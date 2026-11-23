@@ -109,15 +109,44 @@ export interface WorkspaceUiSnapshot {
  * `loaded=false` 表示"还没成功读过"——与"回收区是空的"必须区分：
  * 前者要显示"加载中/重试"，后者才能说"没有可恢复的文件"。
  */
-export interface TrashProjectState {
-  readonly entries: readonly TrashEntryDto[];
+/**
+ * 回收记录的**终态**（UX-02C-03-P2-02-R1）。
+ *
+ * 只有这些状态代表"这件事已经有结论，不需要再等"：
+ * `pending` / `stored` / `restoring` 都还可能是"没做完"，拿它们当结论就会
+ * 把一条还能再动的记录重新开放成可恢复。
+ *
+ * 用 `Set<string>` 而不是字面量元组：这里只做"是不是终态"的判定，
+ * 不需要把七态的类型关系再引入一层。
+ */
+export const TRASH_TERMINAL_STATES: ReadonlySet<string> = new Set([
+  'restored',
+  'aborted',
+  'conflicted',
+  'missing',
+]);
+
+export interface TrashProjectState {  readonly entries: readonly TrashEntryDto[];
   readonly count: number;
   readonly loaded: boolean;
   readonly loading: boolean;
   readonly errorCode: string | null;
   readonly errorMessage: string | null;
-  /** 正在恢复的 opId（单飞展示用；null 表示空闲）。 */
-  readonly busyOpId: string | null;
+  /**
+   * 正在恢复的 `opId`（可以同时有多条：不同文件互不阻塞）。
+   *
+   * 用集合而不是单个 `busyOpId`：控制器本来就按 opId 分键单飞，状态层只能比它更宽，
+   * 不能比它更窄——否则并发恢复两个文件时，先完成的那个会把另一个的在途状态抹掉。
+   */
+  readonly busyOpIds: readonly string[];
+  /**
+   * 结果未确认、核对完成前**禁止再次操作**的 `opId`。
+   *
+   * 与 `busyOpIds` 分开：在途是"请求还没回来"，这里是"请求回来了但结论不可用"
+   * （UNKNOWN，或 APPLIED 之后列表刷新失败/记录不在终态）。两者的界面用语不同，
+   * 但都必须让恢复按钮保持禁用——重复恢复会真的再动一次磁盘。
+   */
+  readonly unconfirmedOpIds: readonly string[];
 }
 
 export interface WorkspaceState {
@@ -263,8 +292,10 @@ export type WorkspaceAction =
   | { type: 'TRASH_LOAD_BEGIN'; projectId: string }
   | { type: 'TRASH_LOADED'; projectId: string; entries: readonly TrashEntryDto[]; count: number }
   | { type: 'TRASH_LOAD_ERROR'; projectId: string; errorCode: string | null; message: string }
-  /** 单飞标记：`opId=null` 表示这一轮恢复结束（只有它能清掉 busy）。 */
-  | { type: 'TRASH_BUSY'; projectId: string; opId: string | null }
+  /** 单飞标记：只增删对应的 `opId`，不影响同一项目里别的在途恢复。 */
+  | { type: 'TRASH_BUSY'; projectId: string; opId: string; busy: boolean }
+  /** 结果未确认标记：`pending=true` 时该记录禁止再次操作。 */
+  | { type: 'TRASH_UNCONFIRMED'; projectId: string; opId: string; pending: boolean }
   /**
    * 结构变更已由 Host 明确确认（UX-02C-02）：删掉旧路径下的层与展开/选择记录。
    * 只动这一个项目；层表重新加载由 DocumentActions 负责。

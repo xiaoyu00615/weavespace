@@ -1,0 +1,115 @@
+{
+  "run": "p2-02-r1",
+  "app": "http://127.0.0.1:5278",
+  "checks": {
+    "延迟窗口内该行显示「恢复中…」": true,
+    "延迟窗口内按钮禁用": true,
+    "延迟窗口内徽标不是「已恢复」": true,
+    "延迟窗口内不出现成功文案": true,
+    "确认后徽标为「已恢复」": true,
+    "确认后该行不再有恢复按钮": true,
+    "确认后文件真的回到原位置": true,
+    "两个 opId 可以同时在途（互不阻塞）": true,
+    "两条都落到「已恢复」": true,
+    "两条都不再有恢复按钮": true,
+    "两个文件都真的回到原位置": true
+  },
+  "failed": [],
+  "detail": {
+    "midWindow": {
+      "items": [
+        {
+          "name": "a.md",
+          "badge": "恢复中",
+          "button": "恢复中…",
+          "disabled": true,
+          "note": "正在把文件恢复到原位置，结果确认前不要重复操作。"
+        }
+      ],
+      "text": "回收区 冒烟项目 · 1 条记录 ⟳ ← a.md 恢复中 原始位置：a.md 2026-11-24 02:00 · 4 B 正在把文件恢复到原位置，结果确认前不要重复操作。 恢复中…",
+      "disk": null
+    },
+    "延迟窗口内该行显示「恢复中…」": {
+      "name": "a.md",
+      "badge": "恢复中",
+      "button": "恢复中…",
+      "disabled": true,
+      "note": "正在把文件恢复到原位置，结果确认前不要重复操作。"
+    },
+    "延迟窗口内徽标不是「已恢复」": "恢复中",
+    "afterConfirm": {
+      "items": [
+        {
+          "name": "a.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null,
+          "note": "文件已恢复到原位置。"
+        }
+      ],
+      "badge": "1",
+      "disk": "# A\n"
+    },
+    "twoInFlight": [
+      {
+        "name": "b.md",
+        "badge": "恢复中",
+        "button": "恢复中…",
+        "disabled": true,
+        "note": "正在把文件恢复到原位置，结果确认前不要重复操作。"
+      },
+      {
+        "name": "a.md",
+        "badge": "恢复中",
+        "button": "恢复中…",
+        "disabled": true,
+        "note": "正在把文件恢复到原位置，结果确认前不要重复操作。"
+      },
+      {
+        "name": "a.md",
+        "badge": "已恢复",
+        "button": "",
+        "disabled": null,
+        "note": "文件已恢复到原位置。"
+      }
+    ],
+    "两个 opId 可以同时在途（互不阻塞）": [
+      "b.md:恢复中/恢复中…",
+      "a.md:恢复中/恢复中…",
+      "a.md:已恢复/"
+    ],
+    "bothDone": {
+      "items": [
+        {
+          "name": "b.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null,
+          "note": "文件已恢复到原位置。"
+        },
+        {
+          "name": "a.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null,
+          "note": "文件已恢复到原位置。"
+        },
+        {
+          "name": "a.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null,
+          "note": "文件已恢复到原位置。"
+        }
+      ],
+      "badge": "3",
+      "diskA": "# A\n",
+      "diskB": "# B\n"
+    },
+    "两条都落到「已恢复」": [
+      "b.md:已恢复",
+      "a.md:已恢复",
+      "a.md:已恢复"
+    ]
+  }
+}

@@ -800,6 +800,23 @@ async function request(
 const TRASH_STATES = ['pending', 'stored', 'restoring', 'restored', 'aborted', 'conflicted', 'missing'] as const;
 
 /**
+ * 明确"零磁盘副作用"的 HTTP 状态（UX-02C-03-P2-02-R1-03）。
+ *
+ * 依据 Host 的回收端点契约：这些状态只会在进入事务**之前**产生。
+ */
+const ZERO_SIDE_EFFECT_STATUS: ReadonlySet<number> = new Set([400, 403, 404, 409, 422, 501]);
+
+/** 503 里属于"前置拒绝"的错误码；其余 5xx 可能发生在移动之后。 */
+const ZERO_SIDE_EFFECT_503_CODES: ReadonlySet<string> = new Set([
+  'ERR_PROJECT_UNAVAILABLE',
+  'ERR_ROOT_CHANGED',
+  'ERR_ROOT_IDENTITY_UNSUPPORTED',
+  'ERR_STORE_RESTRICTED',
+]);
+
+
+
+/**
  * 把一条回收记录收窄成 DTO（UX-02C-03-P2-02）。
  *
  * 形状不合法时返回 `null`，调用方按"响应不可信"整份拒绝——半条记录渲染出来，
@@ -1648,8 +1665,18 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         httpStatus,
       };
     }
-    if (httpStatus === 200 && body.status === 'APPLIED') {
-      const entry = parseTrashEntry((body as unknown as { entry?: unknown }).entry);
+
+    /*
+     * Host 说 APPLIED，但回执里没有一条能验证的记录（字段缺失/形状非法）。
+     *
+     * 这**不是**"被拒绝"：Host 已经声明这次操作成功，磁盘大概率已经变了。
+     * 报 REJECTED 会让用户以为"什么都没发生"然后再点一次——那才是真正会重复移动文件
+     * 的路径。所以按 UNKNOWN 处理：保留 opId，交给编排层做一次只读核对。
+     */
+    if (body.status === 'APPLIED') {
+      const entry = httpStatus === 200
+        ? parseTrashEntry((body as unknown as { entry?: unknown }).entry)
+        : null;
       if (entry) {
         return {
           status: 'APPLIED',
@@ -1659,16 +1686,49 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
           replayed: (body as unknown as { replayed?: unknown }).replayed === true,
         };
       }
+      return {
+        status: 'UNKNOWN',
+        projectId,
+        opId,
+        message: '服务端已确认操作成功，但回执无法核验；请到回收区核对（不会自动重发）。',
+        httpStatus,
+      };
     }
-    const blocked = (body as unknown as { blockedBy?: unknown }).blockedBy;
+
+    /*
+     * 哪些失败能确认"零磁盘副作用"（依据 Host 的事务契约，不是猜）：
+     * - 4xx：回收/恢复端点的 400/403/404/409/422 全部出现在**动盘之前**的校验
+     *   （形状、会话、授权、路径边界、条目种类、同名冲突、忙碌屏障）；
+     * - 501：当前运行模式不支持，端点根本没进入事务；
+     * - 503：只有"项目/根不可用"这类前置拒绝是零副作用，其余 5xx 可能发生在
+     *   `trashEntry`/`restoreEntry` 之后（正文已移动、状态没提交），必须按未确认处理。
+     *
+     * 因此不能简单地"5xx = 失败"：那会把一次真实的移动报告成"没有发生"。
+     */
+    const zeroSideEffect =
+      ZERO_SIDE_EFFECT_STATUS.has(httpStatus) ||
+      (httpStatus === 503 &&
+        typeof body.errorCode === 'string' &&
+        ZERO_SIDE_EFFECT_503_CODES.has(body.errorCode));
+    if (body.status === 'REJECTED' && zeroSideEffect) {
+      const blocked = (body as unknown as { blockedBy?: unknown }).blockedBy;
+      return {
+        status: 'REJECTED',
+        projectId,
+        opId,
+        errorCode: body.errorCode ?? null,
+        message: body.message ?? '回收操作失败',
+        httpStatus,
+        ...(Array.isArray(blocked) ? { blockedBy: blocked.filter((item): item is string => typeof item === 'string') } : {}),
+      };
+    }
+
     return {
-      status: 'REJECTED',
+      status: 'UNKNOWN',
       projectId,
       opId,
-      errorCode: body.errorCode ?? null,
-      message: body.message ?? '回收操作失败',
+      message: body.message ?? '结果未确认，请在回收区核对（不会自动重发）',
       httpStatus,
-      ...(Array.isArray(blocked) ? { blockedBy: blocked.filter((item): item is string => typeof item === 'string') } : {}),
     };
   }
 

@@ -26,6 +26,9 @@ export function TrashPanel() {
   const onRestore = async (opId: string, path: string): Promise<void> => {
     const projectId = state.activeProjectId;
     if (!projectId) return;
+    const row = panel.kind === 'list' ? panel.rows.find((item) => item.opId === opId) : undefined;
+    // 在途 / 待核对的行一律不发起请求（按钮已禁用，这里再挡一层鼠标/键盘的边界情况）
+    if (row && (row.busy || row.unconfirmed || !row.canRestore)) return;
     setMessage(null);
     // 先做本地阻断检查：正在编辑/未保存的文件不让移动，避免"恢复了但草稿指向老内容"
     const checked = precheck(projectId, path);
@@ -131,7 +134,16 @@ export function TrashPanel() {
                   </div>
                   {row.hint && <div className="trash__note">{row.hint}</div>}
                   <div className="trash__actions">
-                    {row.busy ? (
+                    {row.unconfirmed ? (
+                      <button
+                        type="button"
+                        className="chip chip--tiny"
+                        disabled
+                        title="结果未确认：核对完成前不能再次恢复（不会自动重发）"
+                      >
+                        待核对
+                      </button>
+                    ) : row.busy ? (
                       <button type="button" className="chip chip--tiny" disabled>
                         恢复中…
                       </button>

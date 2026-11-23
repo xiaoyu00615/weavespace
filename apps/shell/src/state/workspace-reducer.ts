@@ -9,6 +9,7 @@ import {
   resetLevels,
   type TreeLevels,
 } from '../components/tree-model.ts';
+import { TRASH_TERMINAL_STATES } from './types.ts';
 import type {
   DocTab,
   LayoutMode,
@@ -53,6 +54,19 @@ export const INITIAL_STATE: WorkspaceState = {
   showHidden: false,
   trashByProject: {},
 };
+
+/**
+ * 在 `opId` 集合里增删一项（UX-02C-03-P2-02-R1）。
+ *
+ * 返回 `null` 表示"本来就是这个状态"：reducer 因此可以返回同一个 `state`，
+ * 既省掉一次重渲染，也让"重复派发同一个标记"不会产生看不出区别的新对象。
+ * 用数组而不是 `Set`：状态要保持可序列化与值相等（快照/测试都直接比）。
+ */
+function toggleId(ids: readonly string[], opId: string, present: boolean): readonly string[] | null {
+  const has = ids.includes(opId);
+  if (present === has) return null;
+  return present ? [...ids, opId] : ids.filter((item) => item !== opId);
+}
 
 function clampRatio(value: number): number {
   if (Number.isNaN(value)) return 50;
@@ -183,6 +197,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         expandedByProject: {},
         selectedByProject: {},
         loadingByProject: {},
+        // 回收区缓存同样属于"上一个工作区"：旧项目的记录不得挂在新模式下面
+        trashByProject: {},
         workspaceMode: 'legacy',
         // 工作区身份属于"上一个工作区"：切模式后必须重新从 Host 取得
         workspaceKey: null,
@@ -344,10 +360,17 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ? state
         : { ...state, workspaceMode: action.workspaceMode };
 
+    /**
+     * 工作区身份（UX-02C-03-P2-02-R1）。
+     *
+     * 键变了就是**另一个工作区**：即使项目 id 相同，回收记录也属于各自的磁盘，
+     * 因此必须整块丢弃再重新读取。保留旧桶会让"A 工作区的 a.md"显示在 B 下面，
+     * 而用户没有任何线索能看出那是别人的记录。
+     */
     case 'SET_WORKSPACE_KEY':
       return state.workspaceKey === action.workspaceKey
         ? state
-        : { ...state, workspaceKey: action.workspaceKey };
+        : { ...state, workspaceKey: action.workspaceKey, trashByProject: {} };
 
     /**
      * 只恢复界面局部（S11-C 阶段 A）。
@@ -566,7 +589,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             loading: true,
             errorCode: null,
             errorMessage: null,
-            busyOpId: previous?.busyOpId ?? null,
+            busyOpIds: previous?.busyOpIds ?? [],
+            unconfirmedOpIds: previous?.unconfirmedOpIds ?? [],
           },
         },
       };
@@ -584,9 +608,20 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             loading: false,
             errorCode: null,
             errorMessage: null,
-            // 列表刷新不结束恢复：`busyOpId` 只由 TRASH_BUSY 清，
+            // 列表刷新不结束恢复：在途集合只由 TRASH_BUSY 改，
             // 否则刷新回来的那一刻按钮又变回可点，用户会以为"上一次没生效"。
-            busyOpId: state.trashByProject[action.projectId]?.busyOpId ?? null,
+            busyOpIds: state.trashByProject[action.projectId]?.busyOpIds ?? [],
+            /*
+             * 「待核对」可以被一次**成功的**列表刷新收敛：列表里该记录已经落到终态
+             * （或记录已不存在），说明结论已经有了，再拦着用户没有意义。
+             * 注意这里只处理 unconfirmed——在途请求还没回来，不能提前放开。
+             */
+            unconfirmedOpIds: (state.trashByProject[action.projectId]?.unconfirmedOpIds ?? []).filter(
+              (opId) => {
+                const record = action.entries.find((entry) => entry.opId === opId);
+                return record !== undefined && !TRASH_TERMINAL_STATES.has(record.state);
+              },
+            ),
           },
         },
       };
@@ -595,6 +630,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
      * 读取失败：**不覆盖已有条目**。
      *
      * 覆盖成空列表等于告诉用户"回收区里什么都没有"——那正是最危险的一种谎报。
+     * 在途/未确认标记同样保留：刷新失败不构成"可以再试一次"的依据。
      */
     case 'TRASH_LOAD_ERROR': {
       const previous = state.trashByProject[action.projectId];
@@ -609,15 +645,18 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             loading: false,
             errorCode: action.errorCode,
             errorMessage: action.message,
-            busyOpId: previous?.busyOpId ?? null,
+            busyOpIds: previous?.busyOpIds ?? [],
+            unconfirmedOpIds: previous?.unconfirmedOpIds ?? [],
           },
         },
       };
     }
 
+    /** 单飞标记只动一个 `opId`：A 结束不得清掉 B。 */
     case 'TRASH_BUSY': {
       const previous = state.trashByProject[action.projectId];
-      if (!previous && action.opId === null) return state;
+      const next = toggleId(previous?.busyOpIds ?? [], action.opId, action.busy);
+      if (next === null) return state;
       return {
         ...state,
         trashByProject: {
@@ -629,7 +668,31 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             loading: previous?.loading ?? false,
             errorCode: previous?.errorCode ?? null,
             errorMessage: previous?.errorMessage ?? null,
-            busyOpId: action.opId,
+            busyOpIds: next,
+            unconfirmedOpIds: previous?.unconfirmedOpIds ?? [],
+          },
+        },
+      };
+    }
+
+    /** 未确认标记同样只动一个 `opId`，且不会被列表刷新顺手清掉。 */
+    case 'TRASH_UNCONFIRMED': {
+      const previous = state.trashByProject[action.projectId];
+      const next = toggleId(previous?.unconfirmedOpIds ?? [], action.opId, action.pending);
+      if (next === null) return state;
+      return {
+        ...state,
+        trashByProject: {
+          ...state.trashByProject,
+          [action.projectId]: {
+            entries: previous?.entries ?? [],
+            count: previous?.count ?? 0,
+            loaded: previous?.loaded ?? false,
+            loading: previous?.loading ?? false,
+            errorCode: previous?.errorCode ?? null,
+            errorMessage: previous?.errorMessage ?? null,
+            busyOpIds: previous?.busyOpIds ?? [],
+            unconfirmedOpIds: next,
           },
         },
       };

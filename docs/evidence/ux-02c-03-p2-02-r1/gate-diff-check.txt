@@ -1,0 +1,2 @@
+git diff --check 通过：无 "trailing whitespace" / "space before tab"。
+（命令只输出 CRLF 提示，属于工作区换行设置，不是空白错误。）

@@ -17,6 +17,35 @@ export interface TrashDeleteDialogState {
   readonly phase: TrashDeletePhase;
   readonly reasons: readonly string[];
   readonly result: { readonly tone: 'ok' | 'warn' | 'error'; readonly body: string } | null;
+  /**
+   * 打开确认框那一刻的工作区身份（`null` = 打开时还没有身份）。
+   *
+   * 确认时必须与当前身份逐项相等：用户在这中间切了项目或换了工作区，
+   * 这条命令就已经不属于当前界面了（R1-05）。
+   */
+  readonly workspaceKey: string | null;
+  readonly epoch: number;
+}
+
+/**
+ * 确认时这条命令是否仍属于当前界面（UX-02C-03-P2-02-R1-05）。
+ *
+ * 三个维度任意一个变了，都说明用户在"打开确认框"和"点确认"之间换了上下文：
+ * - `workspaceKey`：换了工作区（另一个磁盘，同项目 id 也是别人）；
+ * - `epoch`：切了模式 / 重连（工作区加载代次变了）；
+ * - `activeProjectId`：切了项目（这条命令已经不在当前项目上）。
+ *
+ * 判定做成纯函数：`.tsx` 里只留一行调用，才能被 `node:test` 真正覆盖。
+ */
+export function dialogBelongsTo(
+  dialog: TrashDeleteDialogState,
+  current: { readonly workspaceKey: string | null; readonly epoch: number; readonly activeProjectId: string | null },
+): boolean {
+  return (
+    dialog.workspaceKey === current.workspaceKey &&
+    dialog.epoch === current.epoch &&
+    current.activeProjectId === dialog.projectId
+  );
 }
 
 /**
@@ -29,6 +58,8 @@ export function openTrashDelete(input: {
   readonly projectId: string;
   readonly path: string;
   readonly reasons: readonly string[];
+  readonly workspaceKey: string | null;
+  readonly epoch: number;
 }): TrashDeleteDialogState {
   return {
     projectId: input.projectId,
@@ -37,6 +68,8 @@ export function openTrashDelete(input: {
     phase: input.reasons.length > 0 ? 'blocked' : 'ready',
     reasons: input.reasons,
     result: null,
+    workspaceKey: input.workspaceKey,
+    epoch: input.epoch,
   };
 }
 

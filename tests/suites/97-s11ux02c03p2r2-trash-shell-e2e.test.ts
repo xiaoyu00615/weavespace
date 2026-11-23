@@ -19,6 +19,7 @@ import { createShellServer, type ShellServer } from '../../apps/server/src/serve
 import { createFakePicker } from '../../apps/server/src/folder-picker/fake-picker.ts';
 import { serializeConfig, type ConfigTrashEntry } from '../../apps/server/src/store/config.ts';
 import { createLiveClient, type WeaveSpaceClient } from '../../apps/shell/src/client/client-api.ts';
+import { createTrashController, type TrashHost } from '../../apps/shell/src/state/trash.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import { rootTokenOf } from '../../packages/storage/path-safety.ts';
 
@@ -384,4 +385,208 @@ test('P2-02 客户端：回收请求不带任何路径/身份字段，恢复请�
       }
     }
   });
+});
+
+/* ================================================================== */
+/* 八、客户端收敛：APPLIED 读不懂 ≠ 被拒绝（R1-03）                        */
+/* ================================================================== */
+
+interface StubCall {
+  readonly method: string;
+  readonly path: string;
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/** 用构造好的 HTTP 回执驱动**真实客户端**（不打桩它的判断逻辑，只替换传输层）。 */
+async function withStubFetch(
+  handler: (call: StubCall) => Response,
+  fn: () => Promise<void>,
+): Promise<StubCall[]> {
+  const calls: StubCall[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
+    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+    const parsed = new URL(raw, 'http://stub.local');
+    const call = {
+      method: (init?.method ?? 'GET').toUpperCase(),
+      path: `${parsed.pathname}${parsed.search}`,
+    };
+    calls.push(call);
+    return handler(call);
+  }) as typeof fetch;
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = original;
+  }
+  return calls;
+}
+
+const RESTORED_DTO = {
+  opId: OP,
+  path: 'a.md',
+  entryKind: 'file',
+  size: 4,
+  deletedAt: '2026-11-23T00:00:00.000Z',
+  state: 'restored',
+  canRestore: false,
+};
+
+function playbackHost(client: WeaveSpaceClient, notices: string[]): TrashHost {
+  return {
+    port: {
+      list: (projectId) => client.listTrash(projectId),
+      remove: (projectId, path, opId) => client.trashEntry(projectId, path, opId),
+      restore: (projectId, opId) => client.restoreTrash(projectId, opId),
+      query: (projectId, opId) => client.queryTrashOp(projectId, opId),
+    },
+    identity: () => ({
+      mode: 'live',
+      workspaceMode: 'multi',
+      workspaceKey: 'stub-key',
+      activeProjectId: PROJ_A,
+      epoch: 1,
+    }),
+    dispatch: () => undefined,
+    newOpId: () => OP,
+    notify: (message) => notices.push(message),
+    supported: () => true,
+    preflight: () => ({ ok: true }),
+    blockers: () => [],
+    refreshAfterRemoval: async () => undefined,
+    refreshAfterRestore: async () => undefined,
+  };
+}
+
+test('P2-02-R1 客户端：APPLIED 但没有 entry → UNKNOWN（不报被拒绝）', async () => {
+  const calls = await withStubFetch(
+    (call) => {
+      if (call.path === '/api/session-token') return jsonResponse(200, { token: 'stub' });
+      // Host 说成功，但回执里没有可验证的记录
+      return jsonResponse(200, { status: 'APPLIED', projectId: PROJ_A, opId: OP });
+    },
+    async () => {
+      const client = createLiveClient('http://stub.local');
+      const outcome = await client.restoreTrash(PROJ_A, OP);
+      assert.equal(outcome.status, 'UNKNOWN', '不能把"读不懂的回执"报成被拒绝（那会诱导用户再点一次）');
+      assert.equal(outcome.status === 'UNKNOWN' ? outcome.opId : null, OP, '必须保留 opId 才能核对');
+    },
+  );
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
+});
+
+test('P2-02-R1 编排：客户端给出 UNKNOWN 时只核对一次、绝不重发', async () => {
+  const notices: string[] = [];
+  const calls = await withStubFetch(
+    (call) => {
+      if (call.path === '/api/session-token') return jsonResponse(200, { token: 'stub' });
+      if (call.path === '/api/trash/restore') {
+        // 第一次（也是唯一一次）POST 就返回"读不懂的 APPLIED"
+        return jsonResponse(200, { status: 'APPLIED', projectId: PROJ_A, opId: OP });
+      }
+      if (call.path.startsWith('/api/trash/op')) {
+        return jsonResponse(200, { status: 'APPLIED', outcome: 'restored', state: 'restored' });
+      }
+      if (call.path.startsWith('/api/trash?')) {
+        return jsonResponse(200, { status: 'APPLIED', projectId: PROJ_A, count: 1, entries: [RESTORED_DTO] });
+      }
+      return jsonResponse(404, { status: 'REJECTED', errorCode: 'ERR_NOT_FOUND' });
+    },
+    async () => {
+      const client = createLiveClient('http://stub.local');
+      const controller = createTrashController(playbackHost(client, notices));
+      const result = await controller.restore(PROJ_A, {
+        opId: OP,
+        path: 'a.md',
+        entryKind: 'file',
+        size: 4,
+        deletedAt: '2026-11-23T00:00:00.000Z',
+        state: 'stored',
+        canRestore: true,
+      });
+      assert.equal(result.status, 'unknown', '结果未确认：既不宣布成功，也不宣布失败');
+    },
+  );
+
+  const posts = calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, '副作用请求绝不允许重发');
+  assert.equal(calls.filter((call) => call.path.startsWith('/api/trash/op')).length, 1, '只读核对恰好一次');
+  assert.ok(notices.some((message) => /未确认/.test(message)), '要告诉用户结果没确认');
+});
+
+test('P2-02-R1 客户端：APPLIED 但 entry 非法 → UNKNOWN，不重发', async () => {
+  const calls = await withStubFetch(
+    (call) => {
+      if (call.path === '/api/session-token') return jsonResponse(200, { token: 'stub' });
+      if (call.path === '/api/trash/entry') {
+        return jsonResponse(200, {
+          status: 'APPLIED',
+          projectId: PROJ_A,
+          opId: OP,
+          entry: { opId: OP, path: 'a.md', entryKind: 'file', size: -1, deletedAt: 'x', state: 'weird', canRestore: true },
+        });
+      }
+      return jsonResponse(404, { status: 'REJECTED', errorCode: 'ERR_NOT_FOUND' });
+    },
+    async () => {
+      const client = createLiveClient('http://stub.local');
+      const outcome = await client.trashEntry(PROJ_A, 'a.md', OP);
+      assert.equal(outcome.status, 'UNKNOWN');
+    },
+  );
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 1);
+});
+
+test('P2-02-R1 客户端：500 可能已有副作用 → UNKNOWN；409 才是明确拒绝', async () => {
+  await withStubFetch(
+    (call) => {
+      if (call.path === '/api/session-token') return jsonResponse(200, { token: 'stub' });
+      // 5xx：可能发生在"正文已移动、状态没提交"之后，不能按"什么都没发生"处理
+      if (call.path === '/api/trash/restore') {
+        return jsonResponse(500, { status: 'REJECTED', errorCode: 'ERR_STORAGE_IO', message: '内部错误' });
+      }
+      return jsonResponse(404, { status: 'REJECTED', errorCode: 'ERR_NOT_FOUND' });
+    },
+    async () => {
+      const client = createLiveClient('http://stub.local');
+      const outcome = await client.restoreTrash(PROJ_A, OP);
+      assert.equal(outcome.status, 'UNKNOWN', '5xx 不得当成零副作用的拒绝');
+    },
+  );
+
+  await withStubFetch(
+    (call) => {
+      if (call.path === '/api/session-token') return jsonResponse(200, { token: 'stub' });
+      return jsonResponse(409, { status: 'REJECTED', errorCode: 'ERR_ENTRY_EXISTS', message: '同名' });
+    },
+    async () => {
+      const client = createLiveClient('http://stub.local');
+      const outcome = await client.restoreTrash(PROJ_A, OP);
+      assert.equal(outcome.status, 'REJECTED');
+      assert.equal(outcome.status === 'REJECTED' ? outcome.errorCode : null, 'ERR_ENTRY_EXISTS');
+    },
+  );
+});
+
+test('P2-02-R1 客户端：503 项目不可用是前置拒绝，不进入"未确认"', async () => {
+  await withStubFetch(
+    (call) => {
+      if (call.path === '/api/session-token') return jsonResponse(200, { token: 'stub' });
+      return jsonResponse(503, { status: 'REJECTED', errorCode: 'ERR_PROJECT_UNAVAILABLE', message: '项目不可用' });
+    },
+    async () => {
+      const client = createLiveClient('http://stub.local');
+      const outcome = await client.trashEntry(PROJ_A, 'a.md', OP);
+      assert.equal(outcome.status, 'REJECTED', '前置拒绝不该被误判成"可能已生效"');
+    },
+  );
 });
