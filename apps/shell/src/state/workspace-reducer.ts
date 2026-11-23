@@ -51,6 +51,7 @@ export const INITIAL_STATE: WorkspaceState = {
   selectedByProject: {},
   loadingByProject: {},
   showHidden: false,
+  trashByProject: {},
 };
 
 function clampRatio(value: number): number {
@@ -468,6 +469,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         expandedByProject: drop(state.expandedByProject),
         selectedByProject: drop(state.selectedByProject),
         loadingByProject: drop(state.loadingByProject),
+        // 项目已移出工作台：回收区入口不再存在，视图状态一并丢弃。
+        // 磁盘上的记录与文件仍由 Host 保留（撤销不删除任何东西）。
+        trashByProject: drop(state.trashByProject),
       };
     }
 
@@ -542,6 +546,94 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
      */
     case 'SET_SHOW_HIDDEN':
       return state.showHidden === action.value ? state : { ...state, showHidden: action.value };
+
+    /* ---- UX-02C-03-P2-02：回收区 ---- */
+
+    /**
+     * 开始读取：保留已有条目（避免列表闪空），只把"加载中"打开。
+     * 旧错误一并清掉——用户点了重试之后还挂着上一次的红字，会以为重试没生效。
+     */
+    case 'TRASH_LOAD_BEGIN': {
+      const previous = state.trashByProject[action.projectId];
+      return {
+        ...state,
+        trashByProject: {
+          ...state.trashByProject,
+          [action.projectId]: {
+            entries: previous?.entries ?? [],
+            count: previous?.count ?? 0,
+            loaded: previous?.loaded ?? false,
+            loading: true,
+            errorCode: null,
+            errorMessage: null,
+            busyOpId: previous?.busyOpId ?? null,
+          },
+        },
+      };
+    }
+
+    case 'TRASH_LOADED':
+      return {
+        ...state,
+        trashByProject: {
+          ...state.trashByProject,
+          [action.projectId]: {
+            entries: action.entries,
+            count: action.count,
+            loaded: true,
+            loading: false,
+            errorCode: null,
+            errorMessage: null,
+            // 列表刷新不结束恢复：`busyOpId` 只由 TRASH_BUSY 清，
+            // 否则刷新回来的那一刻按钮又变回可点，用户会以为"上一次没生效"。
+            busyOpId: state.trashByProject[action.projectId]?.busyOpId ?? null,
+          },
+        },
+      };
+
+    /**
+     * 读取失败：**不覆盖已有条目**。
+     *
+     * 覆盖成空列表等于告诉用户"回收区里什么都没有"——那正是最危险的一种谎报。
+     */
+    case 'TRASH_LOAD_ERROR': {
+      const previous = state.trashByProject[action.projectId];
+      return {
+        ...state,
+        trashByProject: {
+          ...state.trashByProject,
+          [action.projectId]: {
+            entries: previous?.entries ?? [],
+            count: previous?.count ?? 0,
+            loaded: previous?.loaded ?? false,
+            loading: false,
+            errorCode: action.errorCode,
+            errorMessage: action.message,
+            busyOpId: previous?.busyOpId ?? null,
+          },
+        },
+      };
+    }
+
+    case 'TRASH_BUSY': {
+      const previous = state.trashByProject[action.projectId];
+      if (!previous && action.opId === null) return state;
+      return {
+        ...state,
+        trashByProject: {
+          ...state.trashByProject,
+          [action.projectId]: {
+            entries: previous?.entries ?? [],
+            count: previous?.count ?? 0,
+            loaded: previous?.loaded ?? false,
+            loading: previous?.loading ?? false,
+            errorCode: previous?.errorCode ?? null,
+            errorMessage: previous?.errorMessage ?? null,
+            busyOpId: action.opId,
+          },
+        },
+      };
+    }
 
     /**
      * UX-02C-02：Host 明确 APPLIED 之后才清理旧路径。

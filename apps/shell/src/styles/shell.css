@@ -1822,3 +1822,128 @@ button {
   font-variant-numeric: tabular-nums;
   transform: translateY(-4px);
 }
+
+/* ---------- 回收区（UX-02C-03-P2-02） ---------- */
+
+/* 导航上的回收记录数量：只在"已知且 > 0"时出现，未知时整块不渲染 */
+.nav__count {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: #2a5cc4;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.trash {
+  min-width: 0;
+}
+
+.trash__hint {
+  margin: 10px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.trash__hint--error {
+  color: #b3261e;
+}
+
+.trash__hint--warn {
+  color: var(--warn);
+}
+
+.trash__hint > p {
+  margin: 0 0 6px;
+}
+
+.trash__list {
+  margin: 6px 0 0;
+  padding: 0 8px 12px;
+  list-style: none;
+  overflow: auto;
+}
+
+.trash__item {
+  padding: 8px 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  margin-bottom: 8px;
+}
+
+.trash__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.trash__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.trash__badge {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.trash__badge--ok {
+  border-color: #b7d7c0;
+  background: #eaf6ee;
+  color: #1d6b3a;
+}
+
+.trash__badge--pending {
+  border-color: #cdd8ea;
+  background: #eef3fb;
+  color: #35507d;
+}
+
+.trash__badge--warn {
+  border-color: #ecd3b6;
+  background: #fdf3e7;
+  color: var(--warn);
+}
+
+.trash__badge--muted {
+  color: var(--muted);
+  background: var(--surface-alt);
+}
+
+.trash__path,
+.trash__meta,
+.trash__note {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.trash__note {
+  color: var(--warn);
+}
+
+.trash__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.trash__disabled {
+  color: var(--muted);
+  font-size: 11px;
+}

@@ -38,7 +38,7 @@ export const MAX_PATH_LENGTH = 512;
 export const MAX_ID_LENGTH = 256;
 export const MAX_SNAPSHOT_BYTES = 64 * 1024;
 
-const NAV_KEYS: readonly NavKey[] = ['projects', 'plugins', 'diagnostics'];
+const NAV_KEYS: readonly NavKey[] = ['projects', 'plugins', 'trash', 'diagnostics'];
 const AUX_TABS: readonly AuxTab[] = ['ai', 'tasks', 'diagnostics'];
 const LAYOUTS: readonly LayoutMode[] = ['single', 'vertical'];
 const PANE_IDS: readonly PaneId[] = ['primary', 'secondary'];

@@ -47,6 +47,8 @@ import {
   visibilityUnknownNotice,
 } from '../state/visibility.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
+import { useTrash } from '../state/TrashContext.tsx';
+import { trashDeleteCommandState } from '../state/trash.ts';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { ContextMenu, type MenuItem } from './ContextMenu.tsx';
 import { MoveEntryDialog } from './MoveEntryDialog.tsx';
@@ -143,6 +145,7 @@ const TreeCommandsContext = createContext<TreeCommandsValue | null>(null);
 export function TreeCommandsProvider({ children }: { children: ReactNode }) {
   const { state, dispatch } = useWorkspace();
   const actions = useDocumentActions();
+  const trash = useTrash();
   const { ready, registry, resolveViewer, revision } = useCapabilities();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuSeq = useRef(0);
@@ -538,6 +541,12 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     };
     const structural = structureSource(target) !== null;
     const visibility = visibilityCommandState({ target, supported: usable });
+    // 只有"普通文件 + 已授权项目"可回收；目录/链接/项目根显示为禁用并说明原因
+    const trashCommand = trashDeleteCommandState({
+      origin: target.origin,
+      entryKind: target.entryKind === 'link' ? 'link' : target.entryKind,
+      supported: usable,
+    });
     return [
       {
         id: 'rename',
@@ -566,6 +575,30 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         ...(visibility.hint ? { hint: visibility.hint } : {}),
         disabled: visibility.disabled,
         command: () => void toggleVisibility(target, target.nodeHidden === true),
+      },
+      /*
+       * 移入回收区（UX-02C-03-P2-02）。
+       *
+       * 与"从文件树隐藏"是两件不同的事：隐藏只改可见性、不碰磁盘；
+       * 回收会**移动文件**，因此只在普通文件上给入口，并且要经过二段确认。
+       * `delete-local` 那个占位是"永久删除"，与本项无关，仍然不渲染。
+       */
+      {
+        id: 'trash',
+        label: '移入回收区',
+        hidden: !trashCommand.visible,
+        ...(trashCommand.hint ? { hint: trashCommand.hint } : {}),
+        disabled: trashCommand.disabled,
+        command: () => {
+          setMenu(null);
+          const projectId = target.projectId;
+          const path = normalizeDir(target.nodePath ?? '');
+          if (!projectId || path === '') {
+            dispatch({ type: 'NOTICE', message: '只有已授权项目里的普通文件可以移入回收区' });
+            return;
+          }
+          trash.openDelete(projectId, path);
+        },
       },
       {
         id: 'new-file',
@@ -611,6 +644,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     resolve,
     actions,
     toggleVisibility,
+    trash,
   ]);
 
   const value = useMemo<TreeCommandsValue>(

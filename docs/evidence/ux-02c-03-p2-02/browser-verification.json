@@ -1,0 +1,128 @@
+{
+  "run": "p2-02",
+  "app": "http://127.0.0.1:5278",
+  "checks": {
+    "项目根行渲染": true,
+    "文件右键出现「移入回收区」且可点": true,
+    "确认框为二段式（先说明再确认）": true,
+    "说明落点是 .weavespace/trash": true,
+    "说明不会永久删除": true,
+    "说明可恢复": true,
+    "说明取消零修改": true,
+    "取消后确认框关闭": true,
+    "取消后文件仍在原位置（磁盘）": true,
+    "取消后文件树未变": true,
+    "取消后没有创建回收区目录": true,
+    "回收结果屏说明可在回收区恢复": true,
+    "确认后原文件已离开原位置": true,
+    "导航徽标显示 1": true,
+    "文件树里不再有 a.md": true,
+    "回收区列出文件名 a.md": true,
+    "回收区显示原始位置": true,
+    "回收区状态为可恢复": true,
+    "可恢复行有恢复按钮": true,
+    "恢复后状态徽标为已恢复": true,
+    "已恢复行不再提供恢复按钮": true,
+    "恢复后字节一致": true,
+    "恢复后文件树重新出现 a.md": true,
+    "冲突时使用规定文案": true,
+    "冲突时不覆盖原位置内容": true,
+    "冲突后记录仍为可恢复": true,
+    "目录右键：入口可见但禁用": true,
+    "目录右键：说明只处理普通文件": true,
+    "Host 列表里两条记录状态正确（a 已恢复、b 可恢复）": true
+  },
+  "failed": [],
+  "detail": {
+    "nav": [
+      "项 项目",
+      "收 回收区",
+      "插 插件",
+      "诊 诊断"
+    ],
+    "switchToLive": "true",
+    "badgeBefore": null,
+    "menuFile": {
+      "visible": true,
+      "disabled": false,
+      "hint": null,
+      "labels": [
+        "重命名",
+        "移动到…",
+        "从文件树隐藏",
+        "移入回收区",
+        "新建文件",
+        "新建文件夹",
+        "创建已支持的扩展文件›",
+        "刷新此目录"
+      ]
+    },
+    "dialogReady": {
+      "open": true,
+      "phase": "ready",
+      "text": "移入回收区「a.md」 该文件会移动到当前项目下的 .weavespace/trash，不会被永久删除。 它从文件树里消失，但内容仍在项目目录内，只是换了位置。 你可以随时在「回收区」里把它恢复到原位置（原位置已有同名文件时不会覆盖）。 本版本没有永久删除，也不会自动清理回收区。 点「取消」不会产生任何磁盘修改。 取消 确认移入回收区"
+    },
+    "afterCancel": {
+      "dialog": false,
+      "hasA": true,
+      "disk": "# A\n",
+      "trashDir": false
+    },
+    "afterTrash": {
+      "dialogText": "移入回收区「a.md」 「a.md」已移入回收区，可在回收区恢复。 好的",
+      "navBadge": "1",
+      "notice": "已把「a.md」移入回收区（未永久删除，可在回收区恢复）",
+      "diskRead": null
+    },
+    "treeAfterTrash": {
+      "hasA": false,
+      "names": [
+        "冒烟项目",
+        "docs",
+        "guide.md",
+        "b.md"
+      ]
+    },
+    "panelStored": {
+      "text": "回收区 冒烟项目 · 1 条记录 ⟳ ← a.md 可恢复 原始位置：a.md 2026-11-23 08:57 · 4 B 文件在回收区里，可以恢复到原位置。 恢复",
+      "name": "a.md",
+      "path": "原始位置：a.md",
+      "badge": "可恢复",
+      "canRestore": true
+    },
+    "panelRestored": {
+      "text": "回收区 冒烟项目 · 1 条记录 ⟳ ← a.md 已恢复 原始位置：a.md 2026-11-23 08:57 · 4 B 文件已恢复到原位置。 已恢复",
+      "badge": "已恢复",
+      "restoreButtons": [],
+      "disabled": "已恢复",
+      "navBadge": "1",
+      "disk": "# A\n"
+    },
+    "treeAfterRestore": [
+      "冒烟项目",
+      "docs",
+      "guide.md",
+      "a.md",
+      "b.md"
+    ],
+    "restoreConflict": {
+      "text": "回收区 冒烟项目 · 2 条记录 ⟳ ← b.md 可恢复 原始位置：b.md 2026-11-23 08:57 · 4 B 文件在回收区里，可以恢复到原位置。 恢复 a.md 已恢复 原始位置：a.md 2026-11-23 08:57 · 4 B 文件已恢复到原位置。 已恢复",
+      "notice": "原位置已有同名文件，请先改名或移走它。",
+      "badge": "可恢复",
+      "disk": "# 新文件\n"
+    },
+    "menuFolder": {
+      "visible": true,
+      "disabled": true,
+      "hint": "目录暂不支持（本阶段只处理普通文件）"
+    },
+    "hostTrashList": {
+      "status": "APPLIED",
+      "count": 2,
+      "states": [
+        "b.md:stored",
+        "a.md:restored"
+      ]
+    }
+  }
+}

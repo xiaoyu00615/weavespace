@@ -1,8 +1,10 @@
 import { CapabilityProvider } from './capabilities/CapabilityContext';
 import { ShellLayout } from './layout/ShellLayout';
+import { TrashDeleteDialog } from './components/TrashDeleteDialog.tsx';
 import { TreeCommandsProvider } from './components/TreeCommandsContext.tsx';
 import { DocumentActionsProvider } from './state/DocumentActionsContext';
 import { QuickFileProvider } from './state/QuickFileContext';
+import { TrashProvider } from './state/TrashContext.tsx';
 import { WorkspaceProvider } from './state/WorkspaceContext';
 
 /**
@@ -18,9 +20,13 @@ export function App() {
       <CapabilityProvider>
         <DocumentActionsProvider>
           <QuickFileProvider>
-            <TreeCommandsProvider>
-              <ShellLayout />
-            </TreeCommandsProvider>
+            {/* 回收区编排要在文件树命令之前：右键「移入回收区」走它的二段确认 */}
+            <TrashProvider>
+              <TreeCommandsProvider>
+                <ShellLayout />
+              </TreeCommandsProvider>
+              <TrashDeleteDialog />
+            </TrashProvider>
           </QuickFileProvider>
         </DocumentActionsProvider>
       </CapabilityProvider>

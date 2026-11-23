@@ -1,12 +1,18 @@
 /** 工作台状态模型（S9-A / S9-B / G2）。布局与缓冲属于 UI；会话与版本以 Core 为准。 */
-import type { ProjectSummary, TreeEntry, WorkspaceMode } from '../client/client-api.ts';
+import type { ProjectSummary, TrashEntryDto, TreeEntry, WorkspaceMode } from '../client/client-api.ts';
 import type { TreeLevels } from '../components/tree-model.ts';
 
 export type ViewMode = 'editor' | 'preview';
 export type LayoutMode = 'single' | 'vertical';
 export type PaneId = 'primary' | 'secondary';
 export type AuxTab = 'ai' | 'tasks' | 'diagnostics';
-export type NavKey = 'projects' | 'plugins' | 'diagnostics';
+/**
+ * 一级导航。`trash` 是回收区（UX-02C-03-P2-02）：
+ *
+ * 它和 `projects` 共用**同一个项目上下文**（`activeProjectId`），因此切换项目时
+ * 回收区跟着换数据；切到 Demo/Live 时整块按模式重新判定，不沿用旧项目的记录。
+ */
+export type NavKey = 'projects' | 'plugins' | 'trash' | 'diagnostics';
 
 /**
  * 资源与文档只描述**事实**（是目录/是文件/是链接、扩展名），
@@ -96,6 +102,24 @@ export interface WorkspaceUiSnapshot {
   focusedPane: PaneId;
 }
 
+/**
+ * 某个项目的回收区视图状态（UX-02C-03-P2-02）。
+ *
+ * 按项目分桶存放：项目 A 的记录永远不会被渲染在项目 B 的入口下。
+ * `loaded=false` 表示"还没成功读过"——与"回收区是空的"必须区分：
+ * 前者要显示"加载中/重试"，后者才能说"没有可恢复的文件"。
+ */
+export interface TrashProjectState {
+  readonly entries: readonly TrashEntryDto[];
+  readonly count: number;
+  readonly loaded: boolean;
+  readonly loading: boolean;
+  readonly errorCode: string | null;
+  readonly errorMessage: string | null;
+  /** 正在恢复的 opId（单飞展示用；null 表示空闲）。 */
+  readonly busyOpId: string | null;
+}
+
 export interface WorkspaceState {
   navCollapsed: boolean;
   navKey: NavKey;
@@ -148,6 +172,13 @@ export interface WorkspaceState {
    * `includeHidden=1`。隐藏记录本身在 Host 的工作区配置里，与它无关。
    */
   showHidden: boolean;
+  /**
+   * 每个项目的回收区（UX-02C-03-P2-02）。键是 `projectId`。
+   *
+   * 只存**Host 明确返回**的记录；任何写入都必须先通过编排层的归属核对，
+   * 迟到的响应不得落到这里。
+   */
+  trashByProject: Record<string, TrashProjectState>;
 }
 
 export type WorkspaceAction =
@@ -227,6 +258,13 @@ export type WorkspaceAction =
    * 没有隐藏条目，留着就会出现"点了开关却什么都没变"。
    */
   | { type: 'SET_SHOW_HIDDEN'; value: boolean }
+  /* ---- UX-02C-03-P2-02：回收区 ---- */
+  /** 开始读取某个项目的回收区（保留已有条目，避免列表闪空）。 */
+  | { type: 'TRASH_LOAD_BEGIN'; projectId: string }
+  | { type: 'TRASH_LOADED'; projectId: string; entries: readonly TrashEntryDto[]; count: number }
+  | { type: 'TRASH_LOAD_ERROR'; projectId: string; errorCode: string | null; message: string }
+  /** 单飞标记：`opId=null` 表示这一轮恢复结束（只有它能清掉 busy）。 */
+  | { type: 'TRASH_BUSY'; projectId: string; opId: string | null }
   /**
    * 结构变更已由 Host 明确确认（UX-02C-02）：删掉旧路径下的层与展开/选择记录。
    * 只动这一个项目；层表重新加载由 DocumentActions 负责。

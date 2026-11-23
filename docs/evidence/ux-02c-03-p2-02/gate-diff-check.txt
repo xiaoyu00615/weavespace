@@ -1,0 +1,3 @@
+warning: in the working copy of 'apps/shell/src/state/types.ts', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'apps/shell/src/state/workspace-reducer.ts', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'apps/shell/src/styles/shell.css', LF will be replaced by CRLF the next time Git touches it

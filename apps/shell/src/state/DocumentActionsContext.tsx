@@ -27,6 +27,9 @@ import {
   type CreateEntryKindDto,
   type StructureChangeOutcome,
   type VisibilityOutcome,
+  type TrashActionOutcome,
+  type TrashListOutcome,
+  type TrashOpQueryOutcome,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
 import { backupDraftBeforeReload } from '../client/draft-backup';
@@ -224,6 +227,22 @@ export interface DocumentActions {
    * 不重取就会出现"点了开关却什么都没变"。
    */
   setShowHidden(value: boolean): Promise<void>;
+
+  /* ---- UX-02C-03-P2-02：回收区 ---- */
+
+  /**
+   * 读取某个项目的回收记录（只读）。
+   *
+   * Demo / Legacy / 静态 Multi 一律明确"不支持"：那里没有磁盘，也没有回收记录，
+   * 假装返回空列表会让用户以为"文件真的已经不在了"。
+   */
+  listTrash(projectId: string): Promise<TrashListOutcome>;
+  /** 移入回收区：只有 `opId` 由调用方持有，其余身份全部由 Host 判定。 */
+  trashEntry(projectId: string, path: string, opId: string): Promise<TrashActionOutcome>;
+  /** 恢复到原始路径：不提供目标参数（Host 记录即权威）。 */
+  restoreTrash(projectId: string, opId: string): Promise<TrashActionOutcome>;
+  /** 按 `opId` 做一次只读核对（UNKNOWN 后唯一允许的后续动作）。 */
+  queryTrashOp(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
 }
 
 const DocumentActionsContext = createContext<DocumentActions | null>(null);
@@ -1086,6 +1105,60 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           treeLoader.current.invalidateLevel(projectId, dir);
           await treeLoader.current.load(projectId, dir, false);
         }
+      },
+
+      /* ---- UX-02C-03-P2-02：回收区 ---- */
+
+      async listTrash(projectId) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return {
+            status: 'REJECTED' as const,
+            errorCode: 'ERR_COMMAND_UNSUPPORTED',
+            message: '当前模式没有回收区',
+            httpStatus: 501,
+          };
+        }
+        return liveClient.listTrash(projectId);
+      },
+
+      async trashEntry(projectId, path, opId) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return {
+            status: 'REJECTED' as const,
+            projectId,
+            opId,
+            errorCode: 'ERR_COMMAND_UNSUPPORTED',
+            message: '当前模式不提供真实回收',
+            httpStatus: 501,
+          };
+        }
+        return liveClient.trashEntry(projectId, path, opId);
+      },
+
+      async restoreTrash(projectId, opId) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return {
+            status: 'REJECTED' as const,
+            projectId,
+            opId,
+            errorCode: 'ERR_COMMAND_UNSUPPORTED',
+            message: '当前模式没有回收区',
+            httpStatus: 501,
+          };
+        }
+        return liveClient.restoreTrash(projectId, opId);
+      },
+
+      async queryTrashOp(projectId, opId) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return {
+            status: 'REJECTED' as const,
+            errorCode: 'ERR_COMMAND_UNSUPPORTED',
+            message: '当前模式没有回收区',
+            httpStatus: 501,
+          };
+        }
+        return liveClient.queryTrashOp(projectId, opId);
       },
 
       async setShowHidden(value) {

@@ -218,6 +218,71 @@ export type HiddenListOutcome =
   | { status: 'APPLIED'; projectId: string; entries: HiddenEntryDto[] }
   | { status: 'REJECTED'; errorCode: string | null; message?: string };
 
+/* ---- UX-02C-03-P2-02：回收区（Shell） ---- */
+
+/**
+ * 回收记录的七个状态（与 Host `ConfigTrashEntry.state` 一一对应）。
+ *
+ * 客户端**不派生**新状态：`pending` / `restoring` 是"还在核对"，不是"成功"也不是"失败"；
+ * 把它们折成任何一端都会让用户对文件到底在哪产生错误判断。
+ */
+export type TrashEntryState =
+  | 'pending'
+  | 'stored'
+  | 'restoring'
+  | 'restored'
+  | 'aborted'
+  | 'conflicted'
+  | 'missing';
+
+/** 一条回收记录（Host DTO）。`path` 是**原始相对路径**，不是回收区内部路径。 */
+export interface TrashEntryDto {
+  readonly opId: string;
+  readonly path: string;
+  readonly entryKind: 'file';
+  readonly size: number;
+  readonly deletedAt: string;
+  readonly state: TrashEntryState;
+  /** 只有 `stored` 才是 true；客户端不得自行放宽。 */
+  readonly canRestore: boolean;
+  readonly note?: string;
+  readonly restoredAt?: string;
+}
+
+export type TrashListOutcome =
+  | { status: 'APPLIED'; projectId: string; count: number; entries: TrashEntryDto[] }
+  | { status: 'REJECTED'; errorCode: string | null; message?: string; httpStatus?: number };
+
+/**
+ * 回收 / 恢复的共同结论。
+ *
+ * `UNKNOWN` 是独立一种：磁盘可能已经变了，只允许按 `opId` 做**一次只读**核对，
+ * 绝不自动重发（重发会真的再移动一次文件）。
+ */
+export type TrashActionOutcome =
+  | { status: 'APPLIED'; projectId: string; opId: string; entry: TrashEntryDto; replayed: boolean }
+  | { status: 'UNKNOWN'; projectId: string; opId: string; message: string; httpStatus: number }
+  | {
+      status: 'REJECTED';
+      projectId: string;
+      opId: string;
+      errorCode: string | null;
+      message: string;
+      httpStatus: number;
+      blockedBy?: string[];
+    };
+
+/** 按 `opId` 只读核对真实结果（不重发、不改任何东西）。 */
+export type TrashOpQueryOutcome =
+  | {
+      status: 'APPLIED';
+      opId: string;
+      /** `none` = 没有这条记录；`unknown` = 记录还在核对中。 */
+      outcome: 'trashed' | 'restored' | 'aborted' | 'conflicted' | 'missing' | 'unknown' | 'none';
+      state: TrashEntryState | null;
+    }
+  | { status: 'REJECTED'; errorCode: string | null; message?: string; httpStatus: number };
+
 export type TreeQueryOutcome =
   | {
       status: 'APPLIED';
@@ -658,6 +723,31 @@ export interface WeaveSpaceClient {
   /** 查询隐藏记录及其当前状态（只读；含 missing / rebound 这类失效态）。 */
   hiddenEntries(projectId: string): Promise<HiddenListOutcome>;
 
+  /* ---- UX-02C-03-P2-02：回收区 ---- */
+
+  /**
+   * 读取当前项目的回收记录（只读；Host 会先做一次对账）。
+   *
+   * `projectId` 必填：没有它，Host 无法判断这批记录属于谁，也不知道该用哪份授权。
+   */
+  listTrash(projectId: string): Promise<TrashListOutcome>;
+  /**
+   * 把一个**普通文件**移入回收区。
+   *
+   * `opId` 由调用方在提交前生成并持有：超时/202 时才能用 `queryTrashOp` 核对，
+   * 而不是凭"文件还在不在"猜。同一 opId 重试不会再次移动文件。
+   */
+  trashEntry(projectId: string, path: string, opId: string): Promise<TrashActionOutcome>;
+  /**
+   * 恢复一条回收记录到它的**原始路径**。
+   *
+   * 目标由 Host 记录决定，客户端不提供 `targetPath`；原位置已有同名对象时
+   * Host 返回 409 `ERR_ENTRY_EXISTS`，绝不覆盖。
+   */
+  restoreTrash(projectId: string, opId: string): Promise<TrashActionOutcome>;
+  /** 只读核对某个 opId 的真实结果。 */
+  queryTrashOp(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
+
   renameEntry(projectId: string, sourcePath: string, name: string): Promise<StructureChangeOutcome>;
   /** 同一授权项目内移动：只提交项目内相对目录 + 单段名称。 */
   moveEntry(
@@ -705,6 +795,43 @@ async function request(
     body = {};
   }
   return { httpStatus: res.status, body };
+}
+
+const TRASH_STATES = ['pending', 'stored', 'restoring', 'restored', 'aborted', 'conflicted', 'missing'] as const;
+
+/**
+ * 把一条回收记录收窄成 DTO（UX-02C-03-P2-02）。
+ *
+ * 形状不合法时返回 `null`，调用方按"响应不可信"整份拒绝——半条记录渲染出来，
+ * 用户会以为"文件名丢了/大小是 0"，比直接说"读取失败"更糟。
+ *
+ * `path` 只接受项目内相对路径：绝对路径、盘符、`..` 段一律视为不可信
+ * （Host 不会发这种值，出现就说明来源不对，不该拿去拼提示文案）。
+ */
+function parseTrashEntry(raw: unknown): TrashEntryDto | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const row = raw as Record<string, unknown>;
+  if (typeof row.opId !== 'string' || row.opId === '') return null;
+  if (typeof row.path !== 'string' || row.path === '') return null;
+  if (/^[a-zA-Z]:|^[\\/]/.test(row.path)) return null;
+  if (row.path.split('/').some((segment) => segment === '..')) return null;
+  if (row.entryKind !== 'file') return null;
+  if (typeof row.size !== 'number' || !Number.isSafeInteger(row.size) || row.size < 0) return null;
+  if (typeof row.deletedAt !== 'string' || row.deletedAt === '') return null;
+  const state = TRASH_STATES.find((item) => item === row.state);
+  if (!state) return null;
+  return {
+    opId: row.opId,
+    path: row.path,
+    entryKind: 'file',
+    size: row.size,
+    deletedAt: row.deletedAt,
+    state,
+    // 服务端没说 canRestore 时按状态推导；绝不在非 stored 上给出 true
+    canRestore: row.canRestore === true && state === 'stored',
+    ...(typeof row.note === 'string' ? { note: row.note } : {}),
+    ...(typeof row.restoredAt === 'string' ? { restoredAt: row.restoredAt } : {}),
+  };
 }
 
 /**
@@ -1364,7 +1491,186 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       }
       return { status: 'APPLIED' as const, projectId, entries };
     },
+
+    /* ---- UX-02C-03-P2-02：回收区 ---- */
+
+    async listTrash(projectId) {
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return {
+          status: 'REJECTED' as const,
+          errorCode: 'ERR_PERMISSION_DENIED',
+          message: '无法获取会话令牌',
+          httpStatus: 403,
+        };
+      }
+      let response: { httpStatus: number; body: ApiEnvelope };
+      try {
+        response = await request(
+          baseUrl,
+          `/api/trash?projectId=${encodeURIComponent(projectId)}`,
+          { headers: { 'x-ws-token': token } },
+        );
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_STORAGE_IO', message: '读取回收区失败，请稍后重试', httpStatus: 0 };
+      }
+      const { httpStatus, body } = response;
+      if (httpStatus !== 200 || body.status !== 'APPLIED') {
+        return {
+          status: 'REJECTED' as const,
+          errorCode: body.errorCode ?? null,
+          message: body.message ?? '读取回收区失败',
+          httpStatus,
+        };
+      }
+      const raw = (body as unknown as { entries?: unknown }).entries;
+      // 形状不完整时按拒绝处理：绝不把半截列表渲染成"回收区里只剩这些"
+      if (!Array.isArray(raw)) {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_INTERNAL', message: '回收区响应不完整', httpStatus };
+      }
+      const entries: TrashEntryDto[] = [];
+      for (const item of raw) {
+        const parsed = parseTrashEntry(item);
+        if (!parsed) {
+          return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_INTERNAL', message: '回收区记录形状不合法', httpStatus };
+        }
+        entries.push(parsed);
+      }
+      const count = typeof (body as unknown as { count?: unknown }).count === 'number'
+        ? ((body as unknown as { count: number }).count)
+        : entries.length;
+      // count 与 entries 不一致时以 entries 为准并明确拒绝——两个数不可能都对
+      if (count !== entries.length) {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_INTERNAL', message: '回收区数量与列表不一致', httpStatus };
+      }
+      return { status: 'APPLIED' as const, projectId, count, entries };
+    },
+
+    async trashEntry(projectId, path, opId) {
+      return postTrashAction('/api/trash/entry', { projectId, path, opId }, projectId, opId);
+    },
+
+    async restoreTrash(projectId, opId) {
+      return postTrashAction('/api/trash/restore', { projectId, opId }, projectId, opId);
+    },
+
+    async queryTrashOp(projectId, opId) {
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED', message: '无法获取会话令牌', httpStatus: 403 };
+      }
+      let response: { httpStatus: number; body: ApiEnvelope };
+      try {
+        response = await request(
+          baseUrl,
+          `/api/trash/op?opId=${encodeURIComponent(opId)}&projectId=${encodeURIComponent(projectId)}`,
+          { headers: { 'x-ws-token': token } },
+        );
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_STORAGE_IO', message: '无法核对回收结果', httpStatus: 0 };
+      }
+      const { httpStatus, body } = response;
+      const asOp = body as unknown as { outcome?: unknown; state?: unknown; errorCode?: string | null; message?: string };
+      const outcomes = ['trashed', 'restored', 'aborted', 'conflicted', 'missing', 'unknown', 'none'] as const;
+      const outcome = outcomes.find((item) => item === asOp.outcome);
+      if ((httpStatus === 200 || httpStatus === 202) && outcome) {
+        const state = asOp.state;
+        const validStates = ['pending', 'stored', 'restoring', 'restored', 'aborted', 'conflicted', 'missing'];
+        return {
+          status: 'APPLIED' as const,
+          opId,
+          outcome,
+          state: typeof state === 'string' && validStates.includes(state) ? (state as TrashEntryState) : null,
+        };
+      }
+      return {
+        status: 'REJECTED' as const,
+        errorCode: asOp.errorCode ?? null,
+        message: asOp.message ?? '核对回收结果失败',
+        httpStatus,
+      };
+    },
   };
+
+  /**
+   * 回收 / 恢复共用的请求与收敛（UX-02C-03-P2-02）。
+   *
+   * 与结构变更同一纪律：**磁盘可能已经变了**的三种情况（网络异常、超时、202 UNKNOWN）
+   * 一律返回 UNKNOWN 并保留 `opId`，由编排层做一次只读核对 + 人工确认提示。
+   */
+  async function postTrashAction(
+    endpoint: string,
+    requestBody: { projectId: string; path?: string; opId: string },
+    projectId: string,
+    opId: string,
+  ): Promise<TrashActionOutcome> {
+    let token: string;
+    try {
+      token = await sessionToken();
+    } catch {
+      return {
+        status: 'REJECTED',
+        projectId,
+        opId,
+        errorCode: 'ERR_PERMISSION_DENIED',
+        message: '无法获取会话令牌',
+        httpStatus: 403,
+      };
+    }
+    let response: { httpStatus: number; body: ApiEnvelope };
+    try {
+      response = await request(baseUrl, endpoint, {
+        method: 'POST',
+        headers: { 'x-ws-token': token },
+        // 只有 projectId + 项目内相对路径 + opId：没有目标路径、没有身份、没有绝对路径
+        body: JSON.stringify(requestBody),
+      });
+    } catch {
+      return {
+        status: 'UNKNOWN',
+        projectId,
+        opId,
+        message: '网络中断或请求超时，结果未确认',
+        httpStatus: 0,
+      };
+    }
+    const { httpStatus, body } = response;
+    if (httpStatus === 202 && body.status === 'UNKNOWN') {
+      return {
+        status: 'UNKNOWN',
+        projectId,
+        opId,
+        message: body.message ?? '结果未确认，请在回收区核对（不会自动重发）',
+        httpStatus,
+      };
+    }
+    if (httpStatus === 200 && body.status === 'APPLIED') {
+      const entry = parseTrashEntry((body as unknown as { entry?: unknown }).entry);
+      if (entry) {
+        return {
+          status: 'APPLIED',
+          projectId,
+          opId,
+          entry,
+          replayed: (body as unknown as { replayed?: unknown }).replayed === true,
+        };
+      }
+    }
+    const blocked = (body as unknown as { blockedBy?: unknown }).blockedBy;
+    return {
+      status: 'REJECTED',
+      projectId,
+      opId,
+      errorCode: body.errorCode ?? null,
+      message: body.message ?? '回收操作失败',
+      httpStatus,
+      ...(Array.isArray(blocked) ? { blockedBy: blocked.filter((item): item is string => typeof item === 'string') } : {}),
+    };
+  }
 
   /**
    * 隐藏 / 取消隐藏共用的请求与收敛（UX-02C-03-P1）。
@@ -1781,6 +2087,48 @@ export function createDemoClient(
         status: 'REJECTED' as const,
         errorCode: 'ERR_COMMAND_UNSUPPORTED',
         message: '演示模式没有隐藏记录',
+      };
+    },
+
+    // 演示模式没有磁盘、也没有工作区配置：回收区必须明确"不支持"，
+    // 绝不在演示树里演一遍"移入回收区"的假动作
+    async listTrash() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式没有回收区',
+        httpStatus: 501,
+      };
+    },
+
+    async trashEntry(projectId: string, _path: string, opId: string) {
+      return {
+        status: 'REJECTED' as const,
+        projectId,
+        opId,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式不会移动任何文件',
+        httpStatus: 501,
+      };
+    },
+
+    async restoreTrash(projectId: string, opId: string) {
+      return {
+        status: 'REJECTED' as const,
+        projectId,
+        opId,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式没有可恢复的文件',
+        httpStatus: 501,
+      };
+    },
+
+    async queryTrashOp() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式没有回收事务',
+        httpStatus: 501,
       };
     },
   };

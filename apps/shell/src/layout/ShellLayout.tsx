@@ -9,6 +9,7 @@ import { QuickFilePanel } from '../components/QuickFilePanel';
 import { QuickFilePreview } from '../components/QuickFilePreview';
 import { SplitWorkspace } from '../components/SplitWorkspace';
 import { StatusBar } from '../components/StatusBar';
+import { TrashPanel } from '../components/TrashPanel';
 import { TabStrip } from '../components/TabStrip';
 import { isQuickFileVisible, useQuickFile } from '../state/QuickFileContext';
 import { useWorkspace } from '../state/WorkspaceContext';
@@ -45,6 +46,8 @@ export function ShellLayout() {
         <div className="side__tree">
           {state.navKey === 'plugins' ? (
             <PluginPanel />
+          ) : state.navKey === 'trash' ? (
+            <TrashPanel />
           ) : state.workspaceMode === 'multi' && state.mode === 'live' ? (
             <ProjectList />
           ) : (
