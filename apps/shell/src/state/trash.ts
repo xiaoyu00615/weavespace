@@ -142,15 +142,18 @@ export function trashRowView(
   entry: TrashEntryDto,
   busy: boolean,
   unconfirmed = false,
+  restoreBlocked = false,
 ): TrashRowView {
   const view = TRASH_STATE_VIEW[entry.state];
   const stateLabel = unconfirmed ? '待核对' : busy ? '恢复中' : view.label;
   const tone: TrashTone = unconfirmed ? 'warn' : busy ? 'pending' : view.tone;
-  const hint = unconfirmed
-    ? '上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。'
-    : busy
-      ? '正在把文件恢复到原位置，结果确认前不要重复操作。'
-      : (entry.note ?? view.hint);
+  const hint = restoreBlocked
+    ? '本机的「待核对」记录不可用，暂时不能恢复（见面板上方说明）。'
+    : unconfirmed
+      ? '上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。'
+      : busy
+        ? '正在把文件恢复到原位置，结果确认前不要重复操作。'
+        : (entry.note ?? view.hint);
   return {
     opId: entry.opId,
     name: entryNameOf(entry.path),
@@ -160,7 +163,7 @@ export function trashRowView(
     stateLabel,
     tone,
     // Host 的 canRestore 与状态两者都要满足：客户端不单方面放宽
-    canRestore: entry.canRestore && view.canRestore && !busy && !unconfirmed,
+    canRestore: entry.canRestore && view.canRestore && !busy && !unconfirmed && !restoreBlocked,
     hint,
     busy,
     unconfirmed,
@@ -313,6 +316,10 @@ export type TrashPanelView =
       readonly rows: readonly TrashRowView[];
       /** 列表可用但本轮刷新失败：显示一条降级提示，不把列表清空。 */
       readonly degraded: string | null;
+      /** 本地待核对台账不可用：所有恢复关闭，必须说明原因（fail-closed）。 */
+      readonly blocked: string | null;
+      /** 台账写入失败等"功能可用但保护降级"的提示。 */
+      readonly warning: string | null;
     };
 
 export const TRASH_DEMO_MESSAGE =
@@ -323,6 +330,12 @@ export interface TrashPanelInput {
   readonly workspaceMode: 'legacy' | 'multi';
   readonly projectId: string | null;
   readonly state: TrashProjectState | undefined;
+  /** 跨重启台账里属于当前工作区+项目的待核对 opId（与内存集合取并集）。 */
+  readonly extraUnconfirmed?: readonly string[];
+  /** 台账不可用时的说明：非空即关闭全部恢复。 */
+  readonly restoreBlocked?: string | null;
+  /** 保护降级提示（例如台账写不进去）。 */
+  readonly warning?: string | null;
 }
 
 /** 面板该画什么：**不**返回"空列表"来掩盖"还没读到"。 */
@@ -343,6 +356,8 @@ export function trashPanelView(input: TrashPanelInput): TrashPanelView {
       message: state.errorMessage ?? '读取回收区失败，请重试。',
     };
   }
+  const extra = input.extraUnconfirmed ?? [];
+  const blocked = input.restoreBlocked ?? null;
   return {
     kind: 'list',
     count: state.count,
@@ -350,10 +365,13 @@ export function trashPanelView(input: TrashPanelInput): TrashPanelView {
       trashRowView(
         entry,
         state.busyOpIds.includes(entry.opId),
-        state.unconfirmedOpIds.includes(entry.opId),
+        state.unconfirmedOpIds.includes(entry.opId) || extra.includes(entry.opId),
+        blocked !== null,
       ),
     ),
     degraded: state.errorMessage,
+    blocked,
+    warning: input.warning ?? null,
   };
 }
 
@@ -439,6 +457,13 @@ export interface TrashHost {
   supported(projectId: string): boolean;
   /** 发送前的身份/就绪检查：live + multi + READY + activeProjectId 一致。 */
   preflight(projectId: string): TrashPreflight;
+  /**
+   * 本地「待核对」台账不可用时的硬闸（R1.1-02）。
+   *
+   * 返回非空字符串 = 此刻不能恢复（无法证明没有未知副作用），控制器直接拒绝，
+   * 连 GET/POST 都不发。UI 禁用按钮只是表象，这里才是真正的门。
+   */
+  restoreGate(): string | null;
   /** Shell 侧本地阻断（活动标签 / 草稿 / 保存中 / 结果未知）。 */
   blockers(projectId: string, path: string): readonly string[];
   /** 回收成功 / 结果未知：只刷新原文件的父层，不递归、不碰其他项目。 */
@@ -497,6 +522,21 @@ function confirmedByList(
  * 因此状态层也必须能同时记住多个在途 opId——见 `TrashProjectState.busyOpIds`。
  */
 export function createTrashController(host: TrashHost): TrashController {
+  /*
+   * 键必须带上**完整读取身份**（R1.1-01）。
+   *
+   * 只按 projectId 索引时，换工作区后（workspaceKey/epoch 变了）同一 projectId 会命中
+   * 上一个工作区的在途 Promise：B 的读取被 A 的请求"顶替"，A 的结果回来又因
+   * 归属检查被丢弃 —— 于是 B 永远读不到，界面停在旧数据或加载中。
+   *
+   * 副作用操作同理：跨工作区共享 Promise 会让 B 的操作拿到 A 的结论。
+   */
+  const identityKeyOf = (snapshot: TrashIdentity): string =>
+    `${snapshot.mode}\u0000${snapshot.workspaceMode}\u0000${snapshot.workspaceKey ?? ''}\u0000${snapshot.epoch}`;
+
+  const loadKeyOf = (snapshot: TrashIdentity, projectId: string): string =>
+    `${identityKeyOf(snapshot)}\u0000${projectId}`;
+
   const loadSeq = new Map<string, number>();
   const inflightLoad = new Map<string, Promise<TrashLoadResult>>();
   const inflightAction = new Map<string, Promise<TrashActionResult>>();
@@ -526,10 +566,10 @@ export function createTrashController(host: TrashHost): TrashController {
   };
 
   /** 真正发一次列表请求；结果落地前先核对归属与序号。 */
-  const runLoad = async (projectId: string): Promise<TrashLoadResult> => {
-    const seq = (loadSeq.get(projectId) ?? 0) + 1;
-    loadSeq.set(projectId, seq);
-    const snapshot = capture();
+  const runLoad = async (projectId: string, snapshot: TrashIdentity): Promise<TrashLoadResult> => {
+    const key = loadKeyOf(snapshot, projectId);
+    const seq = (loadSeq.get(key) ?? 0) + 1;
+    loadSeq.set(key, seq);
     host.dispatch({ type: 'TRASH_LOAD_BEGIN', projectId });
     let outcome: TrashListOutcome;
     try {
@@ -537,7 +577,7 @@ export function createTrashController(host: TrashHost): TrashController {
     } catch {
       outcome = { status: 'REJECTED', errorCode: 'ERR_STORAGE_IO', message: '读取回收区失败，请稍后重试' };
     }
-    if (loadSeq.get(projectId) !== seq) return { status: 'stale' };
+    if (loadSeq.get(key) !== seq) return { status: 'stale' };
     if (!owned(projectId, snapshot)) return { status: 'stale' };
     if (outcome.status === 'APPLIED') {
       host.dispatch({ type: 'TRASH_LOADED', projectId, entries: outcome.entries, count: outcome.count });
@@ -552,16 +592,18 @@ export function createTrashController(host: TrashHost): TrashController {
     return { status: 'failed' };
   };
 
-  /** 单飞读取：并发调用共享同一个请求（用户连点刷新不会打两次）。 */
+  /** 单飞读取：**同一工作区身份**的并发调用共享同一个请求（连点刷新不会打两次）。 */
   const load = (projectId: string): Promise<TrashLoadResult> => {
     if (!projectId) return Promise.resolve({ status: 'failed' });
-    const existing = inflightLoad.get(projectId);
+    const snapshot = capture();
+    const key = loadKeyOf(snapshot, projectId);
+    const existing = inflightLoad.get(key);
     if (existing) return existing;
     let task: Promise<TrashLoadResult>;
-    task = runLoad(projectId).finally(() => {
-      if (inflightLoad.get(projectId) === task) inflightLoad.delete(projectId);
+    task = runLoad(projectId, snapshot).finally(() => {
+      if (inflightLoad.get(key) === task) inflightLoad.delete(key);
     });
-    inflightLoad.set(projectId, task);
+    inflightLoad.set(key, task);
     return task;
   };
 
@@ -573,7 +615,9 @@ export function createTrashController(host: TrashHost): TrashController {
    * "刚恢复完按钮又亮着"。
    */
   const freshLoad = async (projectId: string): Promise<TrashLoadResult> => {
-    const existing = inflightLoad.get(projectId);
+    // 只等**同身份**的在途读取：别的工作区的请求与本次操作无关，等它只会白等
+    const key = loadKeyOf(capture(), projectId);
+    const existing = inflightLoad.get(key);
     if (existing) {
       try {
         await existing;
@@ -701,8 +745,9 @@ export function createTrashController(host: TrashHost): TrashController {
     const reasons = host.blockers(projectId, path);
     if (reasons.length > 0) return { status: 'blocked', reasons };
 
-    return run(`${projectId}\u0000${path}`, async () => {
-      const snapshot = capture();
+    const snapshot = capture();
+    // 操作键同样带身份：A 未结束时在 B 发起同路径操作，不得复用 A 的 Promise
+    return run(`${identityKeyOf(snapshot)}\u0000${projectId}\u0000${path}`, async () => {
       const opId = host.newOpId();
       let outcome: TrashActionOutcome;
       try {
@@ -736,6 +781,9 @@ export function createTrashController(host: TrashHost): TrashController {
   };
 
   const restore = async (projectId: string, entry: TrashEntryDto): Promise<TrashActionResult> => {
+    // 台账不可用 → fail-closed：先于一切判断，连 entry.state 都不看
+    const ledgerGate = host.restoreGate();
+    if (ledgerGate) return { status: 'rejected', message: ledgerGate };
     if (!TRASH_STATE_VIEW[entry.state].canRestore) {
       return { status: 'rejected', message: TRASH_STATE_VIEW[entry.state].hint };
     }
@@ -751,50 +799,53 @@ export function createTrashController(host: TrashHost): TrashController {
     const reasons = host.blockers(projectId, entry.path);
     if (reasons.length > 0) return { status: 'blocked', reasons };
 
-    return run(`restore\u0000${projectId}\u0000${entry.opId}`, async () => {
-      const snapshot = capture();
-      host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: true });
-      try {
-        let outcome: TrashActionOutcome;
+    const snapshot = capture();
+    return run(
+      `restore\u0000${identityKeyOf(snapshot)}\u0000${projectId}\u0000${entry.opId}`,
+      async () => {
+        host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: true });
         try {
-          outcome = await host.port.restore(projectId, entry.opId);
-        } catch {
-          outcome = {
-            status: 'UNKNOWN',
+          let outcome: TrashActionOutcome;
+          try {
+            outcome = await host.port.restore(projectId, entry.opId);
+          } catch {
+            outcome = {
+              status: 'UNKNOWN',
+              projectId,
+              opId: entry.opId,
+              message: '网络中断或请求超时，结果未确认',
+              httpStatus: 0,
+            };
+          }
+          const settled = await settle(
             projectId,
-            opId: entry.opId,
-            message: '网络中断或请求超时，结果未确认',
-            httpStatus: 0,
-          };
+            entry.opId,
+            outcome,
+            () => owned(projectId, snapshot),
+            () => host.refreshAfterRestore(projectId, entry.path),
+            {
+              applied: trashRestoredNotice(entry.path),
+              appliedUnconfirmed: `已把「${entry.path}」恢复到原位置，但回收区列表没能刷新；记录暂不可再次操作，请稍后手动刷新核对。`,
+              rejectedFallback: '无法恢复该文件',
+            },
+            TRASH_TERMINAL_STATES,
+          );
+          if (settled.hold) {
+            // 结论不可用（UNKNOWN / 刷新失败 / 记录仍在非终态）：转为"待核对"，仍然禁用
+            host.dispatch({
+              type: 'TRASH_UNCONFIRMED',
+              projectId,
+              opId: entry.opId,
+              pending: true,
+            });
+          }
+          return settled.result;
+        } finally {
+          // 只解除**这一条**的在途标记：同项目里别的恢复不受影响
+          host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: false });
         }
-        const settled = await settle(
-          projectId,
-          entry.opId,
-          outcome,
-          () => owned(projectId, snapshot),
-          () => host.refreshAfterRestore(projectId, entry.path),
-          {
-            applied: trashRestoredNotice(entry.path),
-            appliedUnconfirmed: `已把「${entry.path}」恢复到原位置，但回收区列表没能刷新；记录暂不可再次操作，请稍后手动刷新核对。`,
-            rejectedFallback: '无法恢复该文件',
-          },
-          TRASH_TERMINAL_STATES,
-        );
-        if (settled.hold) {
-          // 结论不可用（UNKNOWN / 刷新失败 / 记录仍在非终态）：转为"待核对"，仍然禁用
-          host.dispatch({
-            type: 'TRASH_UNCONFIRMED',
-            projectId,
-            opId: entry.opId,
-            pending: true,
-          });
-        }
-        return settled.result;
-      } finally {
-        // 只解除**这一条**的在途标记：同项目里别的恢复不受影响
-        host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: false });
-      }
-    });
+      },
+    );
   };
 
   return { load, remove, restore };

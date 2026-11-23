@@ -102,6 +102,20 @@ export function TrashPanel() {
 
       {panel.kind === 'list' && (
         <>
+          {/*
+            台账不可用 = 无法证明"没有未知副作用"：恢复整体关闭。
+            这条提示必须排在列表前面——否则用户会先看到一片禁用按钮却不知道为什么。
+          */}
+          {panel.blocked && (
+            <div className="trash__hint trash__hint--error" role="alert">
+              <p>{panel.blocked}</p>
+            </div>
+          )}
+          {panel.warning && (
+            <p className="trash__hint trash__hint--warn" role="status">
+              {panel.warning}
+            </p>
+          )}
           {panel.degraded && (
             <p className="trash__hint trash__hint--warn" role="status">
               {panel.degraded}

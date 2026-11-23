@@ -73,6 +73,7 @@ interface Harness {
   setBlockers(codes: readonly string[]): void;
   setSupported(value: boolean): void;
   setProjectReady(value: boolean): void;
+  setRestoreGate(message: string | null): void;
   opIds: string[];
 }
 
@@ -87,6 +88,7 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
   let blockers: readonly string[] = [];
   let supported = true;
   let projectReady = true;
+  let restoreGate: string | null = null;
   const actions: WorkspaceAction[] = [];
   const notices: string[] = [];
   const refreshes: string[] = [];
@@ -157,6 +159,7 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
     },
     notify: (message) => notices.push(message),
     supported: () => supported,
+    restoreGate: () => restoreGate,
     /**
      * 真实 Host 的发送前闸：live + multi + activeProjectId 一致 + 项目 READY。
      * 测试通过 `setProjectReady(false)` 模拟"项目此刻不可用"。
@@ -198,6 +201,9 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
     },
     setProjectReady(value) {
       projectReady = value;
+    },
+    setRestoreGate(message) {
+      restoreGate = message;
     },
     opIds,
   };
@@ -924,4 +930,118 @@ test('P2-02-R1 确认框：归属不符时确认 = 零 POST、零磁盘修改', 
   assert.equal(posts, 0, '归属不符时一次都不提交');
   assert.equal(h.calls.remove, 0, '控制器同样不会发请求');
   assert.equal(h.notices.length, 0);
+});
+
+/* ================================================================== */
+/* R1.1-01：跨工作区的读取 / 操作隔离                                     */
+/* ================================================================== */
+
+test('P2-02-R1.1 读取：换工作区后各发一次，旧响应不写新桶', async () => {
+  const gates: Array<ReturnType<typeof deferred<TrashListOutcome>>> = [];
+  const h = makeHarness({
+    list: () => {
+      const gate = deferred<TrashListOutcome>();
+      gates.push(gate);
+      return gate.promise;
+    },
+  });
+
+  const loadA = h.controller.load(PROJ);
+  assert.equal(h.calls.list, 1);
+
+  // 换工作区：workspaceKey 与 epoch 都变了，但 projectId 相同
+  h.setIdentity({ workspaceKey: 'key-B-0000000000002', epoch: 2 });
+  const loadB = h.controller.load(PROJ);
+  assert.equal(h.calls.list, 2, '不同工作区必须发独立请求，不能复用 A 的在途 Promise');
+
+  // A 的迟到响应
+  gates[0].resolve({ status: 'APPLIED', projectId: PROJ, count: 9, entries: [entry({ path: 'a.md' })] });
+  assert.equal((await loadA).status, 'stale', '旧工作区的结果只能是 stale');
+
+  gates[1].resolve({ status: 'APPLIED', projectId: PROJ, count: 1, entries: [entry({ path: 'b.md' })] });
+  assert.equal((await loadB).status, 'applied');
+
+  const loaded = h.actions.filter((action) => action.type === 'TRASH_LOADED') as Array<
+    Extract<WorkspaceAction, { type: 'TRASH_LOADED' }>
+  >;
+  assert.equal(loaded.length, 1, '只允许 B 的结果落地');
+  assert.equal(loaded[0].entries[0].path, 'b.md', 'A 的记录绝不能出现在 B 的桶里');
+});
+
+test('P2-02-R1.1 回收：A 未结束时在 B 用同 projectId/path 发起 → 两个请求，互不复用', async () => {
+  const gates: Array<ReturnType<typeof deferred<TrashActionOutcome>>> = [];
+  const h = makeHarness({
+    remove: () => {
+      const gate = deferred<TrashActionOutcome>();
+      gates.push(gate);
+      return gate.promise;
+    },
+  });
+
+  const first = h.controller.remove(PROJ, 'a.md');
+  assert.equal(h.calls.remove, 1);
+
+  h.setIdentity({ workspaceKey: 'key-B-0000000000002', epoch: 2 });
+  const second = h.controller.remove(PROJ, 'a.md');
+  assert.equal(h.calls.remove, 2, '跨工作区不得共享副作用 Promise');
+
+  gates[0].resolve({ status: 'APPLIED', projectId: PROJ, opId: OP, entry: entry({ path: 'a.md' }), replayed: false });
+  assert.equal((await first).status, 'stale', 'A 的操作结果不能落到 B 的界面');
+  assert.equal(h.notices.length, 0);
+
+  gates[1].resolve({ status: 'APPLIED', projectId: PROJ, opId: OP, entry: entry({ path: 'a.md' }), replayed: false });
+  assert.equal((await second).status, 'applied');
+  assert.equal(h.notices.filter((message) => /移入回收区/.test(message)).length, 1, '只宣布 B 的那一次');
+});
+
+test('P2-02-R1.1 恢复：同一 opId 跨工作区也不得复用 Promise', async () => {
+  const gates: Array<ReturnType<typeof deferred<TrashActionOutcome>>> = [];
+  const h = makeHarness({
+    restore: () => {
+      const gate = deferred<TrashActionOutcome>();
+      gates.push(gate);
+      return gate.promise;
+    },
+  });
+
+  const first = h.controller.restore(PROJ, entry());
+  assert.equal(h.calls.restore, 1);
+  h.setIdentity({ workspaceKey: 'key-B-0000000000002', epoch: 2 });
+  const second = h.controller.restore(PROJ, entry());
+  assert.equal(h.calls.restore, 2, '同项目 + 同 opId，但不同工作区 → 各发一次');
+
+  gates[0].resolve({
+    status: 'APPLIED',
+    projectId: PROJ,
+    opId: OP,
+    entry: entry({ state: 'restored', canRestore: false }),
+    replayed: false,
+  });
+  assert.equal((await first).status, 'stale');
+
+  gates[1].resolve({
+    status: 'APPLIED',
+    projectId: PROJ,
+    opId: OP,
+    entry: entry({ state: 'restored', canRestore: false }),
+    replayed: false,
+  });
+  assert.equal((await second).status, 'applied');
+});
+
+test('P2-02-R1.1 台账闸：不可用时恢复直接拒绝，连 GET/POST 都不发', async () => {
+  const h = makeHarness();
+  h.setRestoreGate('本机的「待核对」记录已损坏，恢复已关闭。');
+
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'rejected');
+  assert.match(result.status === 'rejected' ? result.message : '', /损坏/);
+  assert.equal(h.calls.restore, 0, '零 POST');
+  assert.equal(h.calls.list, 0, '也不需要读取');
+  assert.equal(h.calls.query, 0);
+
+  // 闸门先于 entry.state 判断：非 stored 的记录也返回台账原因
+  const nonStored = await h.controller.restore(PROJ, entry({ state: 'restored', canRestore: false }));
+  assert.equal(nonStored.status, 'rejected');
+  assert.match(nonStored.status === 'rejected' ? nonStored.message : '', /损坏/);
 });

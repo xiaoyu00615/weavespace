@@ -29,8 +29,32 @@ import {
   submitTrashDelete,
   type TrashDeleteDialogState,
 } from './trash-dialog.ts';
+import {
+  addTrashPending,
+  pendingIdsOf,
+  readTrashLedger,
+  reconcileTrashPending,
+  trashLedgerBlockMessage,
+  writeTrashLedger,
+  type TrashPendingRecord,
+} from './trash-ledger.ts';
+import type { StorageLike } from './workspace-persistence.ts';
 import { useWorkspace } from './WorkspaceContext.tsx';
-import type { ClientMode } from './types.ts';
+import type { ClientMode, WorkspaceAction } from './types.ts';
+
+/**
+ * 浏览器存储的安全包装（与工作区快照同源的处理方式）。
+ *
+ * 隐私模式/策略禁用时**访问 `localStorage` 本身**就会抛异常；这里吞掉并返回 null，
+ * 由台账模块判为 `unavailable`（fail-closed），而不是让启动流程崩掉。
+ */
+function safeBrowserStorage(): StorageLike | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
 export interface TrashPrecheck {
   readonly ok: boolean;
@@ -75,7 +99,7 @@ function useIdentityTracker(mode: ClientMode, workspaceMode: string, workspaceKe
 }
 
 export function TrashProvider({ children }: { children: ReactNode }) {
-  const { state, dispatch } = useWorkspace();
+  const { state, dispatch: workspaceDispatch } = useWorkspace();
   const actions = useDocumentActions();
   const [deleteDialog, setDeleteDialog] = useState<TrashDeleteDialogState | null>(null);
 
@@ -85,6 +109,61 @@ export function TrashProvider({ children }: { children: ReactNode }) {
    */
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  /*
+   * 跨重启的「待核对」台账（R1.1-02）。
+   *
+   * `localStorage` 是同步 API，因此在**第一次渲染**时就能读到记录：
+   * 面板第一次算出来的行就已经带着"待核对"，不存在"先亮出恢复按钮、下一帧才禁用"的窗口。
+   * 读取失败/损坏 → `ledgerStatus` 非 ok → 恢复操作整体关闭（fail-closed）。
+   */
+  const storage = useMemo(() => safeBrowserStorage(), []);
+  const ledgerRead = useMemo(() => readTrashLedger(storage), [storage]);
+  const ledgerStatus = ledgerRead.status;
+  const [ledger, setLedger] = useState<readonly TrashPendingRecord[]>(
+    () => (ledgerRead.status === 'ok' ? ledgerRead.records : []),
+  );
+  const [ledgerWriteFailed, setLedgerWriteFailed] = useState(false);
+  const ledgerRef = useRef(ledger);
+  ledgerRef.current = ledger;
+
+  const persistLedger = useCallback(
+    (next: readonly TrashPendingRecord[]) => {
+      setLedger(next);
+      // 读都读不了时不再写：避免用一份"看起来正常"的新台账覆盖掉未知的旧内容
+      if (ledgerStatus !== 'ok') return;
+      setLedgerWriteFailed(!writeTrashLedger(storage, next));
+    },
+    [ledgerStatus, storage],
+  );
+
+  /**
+   * 派发包装：观察 `TRASH_UNCONFIRMED(pending=true)`，把它写进跨重启台账。
+   *
+   * 为什么在 Provider 里做而不是在控制器里：控制器是纯编排（只认识 host 接口），
+   * 持久化是 Shell 的装配职责；这样控制器仍可被 `node:test` 用假 host 完整驱动。
+   */
+  const dispatch = useCallback(
+    (action: WorkspaceAction) => {
+      if (action.type === 'TRASH_UNCONFIRMED' && action.pending) {
+        const workspaceKey = stateRef.current.workspaceKey;
+        if (!workspaceKey) {
+          // 没有工作区身份就无法把这条记录归位：如实标记"保护降级"，绝不假装已记录
+          setLedgerWriteFailed(true);
+        } else {
+          const next = addTrashPending(ledgerRef.current, {
+            workspaceKey,
+            projectId: action.projectId,
+            opId: action.opId,
+            createdAt: new Date().toISOString(),
+          });
+          if (next !== ledgerRef.current) persistLedger(next);
+        }
+      }
+      workspaceDispatch(action);
+    },
+    [persistLedger, workspaceDispatch],
+  );
 
   const tracker = useIdentityTracker(state.mode, state.workspaceMode, state.workspaceKey);
   const controllerRef = useRef<TrashController | null>(null);
@@ -128,6 +207,8 @@ export function TrashProvider({ children }: { children: ReactNode }) {
        * 前者必须**静默**丢弃（用户已经不在那个项目上了，弹提示只会让人困惑），
        * 后者要给一句能执行的话。
        */
+      // 台账不可用 = 无法证明"没有未知副作用"：恢复一律关闭（fail-closed）
+      restoreGate: () => trashLedgerBlockMessage(ledgerStatus),
       preflight: (projectId) => {
         const current = stateRef.current;
         if (current.mode !== 'live' || current.workspaceMode !== 'multi') {
@@ -164,6 +245,17 @@ export function TrashProvider({ children }: { children: ReactNode }) {
   const projectId = state.activeProjectId;
   const projectTrash = projectId ? state.trashByProject[projectId] : undefined;
 
+  /** 台账里属于当前工作区+项目的待核对 opId（与内存集合取并集展示）。 */
+  const pendingFromLedger = useMemo(
+    () => pendingIdsOf(ledger, state.workspaceKey, projectId),
+    [ledger, state.workspaceKey, projectId],
+  );
+
+  const ledgerBlocked = trashLedgerBlockMessage(ledgerStatus);
+  const ledgerWarning = ledgerWriteFailed
+    ? '「待核对」记录没能写入本机存储：本次会话内仍然禁用，但重开应用后可能失去保护；请尽快核对并恢复浏览器存储。'
+    : null;
+
   const panel = useMemo(
     () =>
       trashPanelView({
@@ -171,9 +263,32 @@ export function TrashProvider({ children }: { children: ReactNode }) {
         workspaceMode: state.workspaceMode,
         projectId,
         state: projectTrash,
+        extraUnconfirmed: pendingFromLedger,
+        restoreBlocked: ledgerBlocked,
+        warning: ledgerWarning,
       }),
-    [state.mode, state.workspaceMode, projectId, projectTrash],
+    [state.mode, state.workspaceMode, projectId, projectTrash, pendingFromLedger, ledgerBlocked, ledgerWarning],
   );
+
+  /**
+   * 用**成功的**列表读取收敛台账（R1.1-02 清除规则）。
+   *
+   * 只在 `loaded && !loading && errorCode === null` 时做：读取失败不构成任何结论，
+   * 这时把记录删掉就等于"因为一次网络错误放开了未知副作用"。
+   */
+  useEffect(() => {
+    if (ledgerStatus !== 'ok') return;
+    if (!state.workspaceKey || !projectId) return;
+    const bucket = state.trashByProject[projectId];
+    if (!bucket || !bucket.loaded || bucket.loading || bucket.errorCode !== null) return;
+    const next = reconcileTrashPending(ledgerRef.current, {
+      workspaceKey: state.workspaceKey,
+      projectId,
+      entries: bucket.entries,
+      loaded: true,
+    });
+    if (next !== ledgerRef.current) persistLedger(next);
+  }, [ledgerStatus, state.workspaceKey, state.trashByProject, projectId, persistLedger]);
 
   const badge = trashBadgeCount(projectTrash, state.mode, projectId);
 

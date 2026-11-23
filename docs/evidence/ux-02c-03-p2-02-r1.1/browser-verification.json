@@ -1,0 +1,130 @@
+{
+  "run": "p2-02-r1.1",
+  "phase": "b",
+  "checks": {
+    "A 工作区有 1 条可恢复记录": true,
+    "A 工作区待核对台账为空": true,
+    "换了工作区：workspaceKey 不同": true,
+    "跨工作区读取窗口内不显示旧工作区记录": true,
+    "跨工作区确实发起了新的列表读取": true,
+    "加载完成后是 B 自己的空回收区": true,
+    "UNKNOWN 后行变为「待核对」": true,
+    "UNKNOWN 后写入了跨重启台账": true,
+    "台账记录归属当前工作区": true,
+    "台账记录含 projectId + opId + createdAt": true,
+    "重载后仍然是「待核对」且按钮禁用": true,
+    "重载后台账记录仍在": true,
+    "Host 端恢复成功（终态 restored）": true,
+    "终态确认后行变为「已恢复」": true,
+    "终态确认后台账已清除": true
+  },
+  "detail": {
+    "health_a": {
+      "workspaceKey": "079ea95186591e85af1bcd93eb9977e5a8744ab489b6f866dae4b8a22bb4e7f0",
+      "workspaceMode": "multi"
+    },
+    "aRecords": [
+      {
+        "name": "a.md",
+        "badge": "可恢复",
+        "button": "恢复",
+        "disabled": false,
+        "note": "文件在回收区里，可以恢复到原位置。"
+      }
+    ],
+    "health_b": {
+      "workspaceKey": "2b4fb470742e2d089abe121db2872d4d58ed42c0b09d82baebff02ace0a48982",
+      "workspaceMode": "multi"
+    },
+    "换了工作区：workspaceKey 不同": {
+      "keyA": "079ea9518659",
+      "keyB": "2b4fb470742e"
+    },
+    "crossWorkspaceWindow": {
+      "items": [],
+      "text": "回收区 冒烟项目 · 按项目隔离 ⟳ ← 正在读取回收区…",
+      "getCalls": 1
+    },
+    "跨工作区读取窗口内不显示旧工作区记录": "回收区 冒烟项目 · 按项目隔离 ⟳ ← 正在读取回收区…",
+    "跨工作区确实发起了新的列表读取": 1,
+    "crossWorkspaceAfter": {
+      "text": "回收区 冒烟项目 · 0 条记录 ⟳ ← 回收区是空的。移入回收区的文件会出现在这里，可随时恢复到原位置。",
+      "getCalls": 1
+    },
+    "pendingAfterUnknown": {
+      "row": {
+        "name": "c.md",
+        "badge": "待核对",
+        "button": "待核对",
+        "disabled": true,
+        "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。"
+      },
+      "ledger": {
+        "version": 1,
+        "records": [
+          {
+            "workspaceKey": "2b4fb470742e2d089abe121db2872d4d58ed42c0b09d82baebff02ace0a48982",
+            "projectId": "proj-a",
+            "opId": "op-d77017b6-e088-4c18-a33b-208961fb1731",
+            "createdAt": "2026-11-23T18:21:16.464Z"
+          }
+        ]
+      }
+    },
+    "台账记录归属当前工作区": {
+      "workspaceKey": "2b4fb470742e2d089abe121db2872d4d58ed42c0b09d82baebff02ace0a48982",
+      "projectId": "proj-a",
+      "opId": "op-d77017b6-e088-4c18-a33b-208961fb1731",
+      "createdAt": "2026-11-23T18:21:16.464Z"
+    },
+    "afterReload": {
+      "items": [
+        {
+          "name": "c.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true,
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。"
+        }
+      ],
+      "ledger": "{\"version\":1,\"records\":[{\"workspaceKey\":\"2b4fb470742e2d089abe121db2872d4d58ed42c0b09d82baebff02ace0a48982\",\"projectId\":\"proj-a\",\"opId\":\"op-d77017b6-e088-4c18-a33b-208961fb1731\",\"createdAt\":\"2026-11-23T18:21:16.464Z\"}]}"
+    },
+    "重载后台账记录仍在": "{\"version\":1,\"records\":[{\"workspaceKey\":\"2b4fb470742e2d089abe121db2872d4d58ed42c0b09d82baebff02ace0a48982\",\"projectId\":\"proj-a\",\"opId\":\"op-d77017b6-e088-4c18-a33b-208961fb1731\",\"createdAt\":\"2026-11-23T18:21:16.464Z\"}]}",
+    "realRestore": {
+      "status": 200,
+      "body": {
+        "status": "APPLIED",
+        "projectId": "proj-a",
+        "opId": "op-d77017b6-e088-4c18-a33b-208961fb1731",
+        "path": "c.md",
+        "entry": {
+          "opId": "op-d77017b6-e088-4c18-a33b-208961fb1731",
+          "path": "c.md",
+          "entryKind": "file",
+          "size": 4,
+          "deletedAt": "2026-11-23T18:21:15.882Z",
+          "state": "restored",
+          "canRestore": false,
+          "restoredAt": "2026-11-23T18:21:17.417Z"
+        }
+      }
+    },
+    "afterTerminal": {
+      "items": [
+        {
+          "name": "c.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null,
+          "note": "文件已恢复到原位置。"
+        }
+      ],
+      "ledger": "{\"version\":1,\"records\":[]}"
+    },
+    "终态确认后台账已清除": {
+      "version": 1,
+      "records": []
+    }
+  },
+  "failed": []
+}

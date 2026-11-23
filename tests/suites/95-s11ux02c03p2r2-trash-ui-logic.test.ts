@@ -33,6 +33,21 @@ import {
 } from '../../apps/shell/src/state/workspace-persistence.ts';
 import type { TrashEntryDto, TrashEntryState } from '../../apps/shell/src/client/client-api.ts';
 import type { TrashProjectState, WorkspaceState } from '../../apps/shell/src/state/types.ts';
+import {
+  addTrashPending,
+  encodeTrashLedger,
+  MAX_TRASH_PENDING,
+  pendingIdsOf,
+  readTrashLedger,
+  reconcileTrashPending,
+  removeTrashPending,
+  TRASH_LEDGER_KEY,
+  TRASH_LEDGER_VERSION,
+  trashLedgerBlockMessage,
+  writeTrashLedger,
+  type TrashPendingRecord,
+} from '../../apps/shell/src/state/trash-ledger.ts';
+import type { StorageLike } from '../../apps/shell/src/state/workspace-persistence.ts';
 
 const AT = '2026-11-23T04:05:06.000Z';
 
@@ -510,4 +525,217 @@ test('P2-02 导航持久化：trash 是合法 navKey，未知值仍然被拒绝'
   // 白名单仍然生效：不在白名单里的 navKey 整份判为不可用
   const tampered = { ...raw, ui: { ...raw.ui, navKey: 'trash-can' } };
   assert.equal(validateSnapshot(tampered), null);
+});
+
+/* ================================================================== */
+/* 五、跨重启「待核对」台账（R1.1-02）                                    */
+/* ================================================================== */
+
+/** 最小 StorageLike：可注入初始值，也能按需抛异常。 */
+function memoryStorage(initial: Record<string, string> = {}): StorageLike & { data: Map<string, string> } {
+  const data = new Map(Object.entries(initial));
+  return {
+    data,
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => void data.set(key, value),
+    removeItem: (key) => void data.delete(key),
+  };
+}
+
+function pendingRecord(overrides: Partial<TrashPendingRecord> = {}): TrashPendingRecord {
+  return {
+    workspaceKey: 'a1b2c3d4e5f60718',
+    projectId: 'project-001',
+    opId: 'op-pending-0001',
+    createdAt: '2026-11-24T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+test('P2-02-R1.1 台账：只接受合法结构，任何可疑内容整体判损坏', () => {
+  // 没有记录 ≠ 损坏：第一次运行本来就没有
+  assert.deepEqual(readTrashLedger(memoryStorage()), { status: 'ok', records: [] });
+
+  const ok = memoryStorage({ [TRASH_LEDGER_KEY]: encodeTrashLedger([pendingRecord()]) });
+  const read = readTrashLedger(ok);
+  assert.equal(read.status, 'ok');
+  assert.equal(read.status === 'ok' ? read.records.length : -1, 1);
+
+  // JSON 坏了
+  assert.deepEqual(readTrashLedger(memoryStorage({ [TRASH_LEDGER_KEY]: '{oops' })), { status: 'corrupt' });
+  // 版本不认识
+  assert.deepEqual(
+    readTrashLedger(memoryStorage({ [TRASH_LEDGER_KEY]: JSON.stringify({ version: 99, records: [] }) })),
+    { status: 'corrupt' },
+  );
+  // 单条非法 → 整体损坏（静默丢掉会把它重新开放）
+  const badRecord = memoryStorage({
+    [TRASH_LEDGER_KEY]: JSON.stringify({ version: TRASH_LEDGER_VERSION, records: [{ ...pendingRecord(), opId: 'x' }] }),
+  });
+  assert.deepEqual(readTrashLedger(badRecord), { status: 'corrupt' });
+  // 超量
+  const tooMany = memoryStorage({
+    [TRASH_LEDGER_KEY]: JSON.stringify({
+      version: TRASH_LEDGER_VERSION,
+      records: Array.from({ length: MAX_TRASH_PENDING + 1 }, (_, i) => pendingRecord({ opId: `op-${String(i).padStart(8, '0')}` })),
+    }),
+  });
+  assert.deepEqual(readTrashLedger(tooMany), { status: 'corrupt' });
+
+  // 存储本身不可用 / 读取抛异常
+  assert.deepEqual(readTrashLedger(null), { status: 'unavailable' });
+  const throwing: StorageLike = {
+    getItem() {
+      throw new Error('denied');
+    },
+    setItem() {
+      throw new Error('denied');
+    },
+    removeItem() {},
+  };
+  assert.deepEqual(readTrashLedger(throwing), { status: 'unavailable' });
+
+  // 两种非 ok 都必须给出"关闭恢复"的说明，而且不能是空集合语义
+  assert.match(trashLedgerBlockMessage('corrupt') ?? '', /损坏/);
+  assert.match(trashLedgerBlockMessage('unavailable') ?? '', /不可用/);
+  assert.equal(trashLedgerBlockMessage('ok'), null);
+});
+
+test('P2-02-R1.1 台账：按 工作区 + 项目 + opId 隔离，写入失败要如实返回', () => {
+  const a = pendingRecord();
+  const b = pendingRecord({ workspaceKey: 'b1b2c3d4e5f60718', opId: 'op-pending-0002' });
+  let records = addTrashPending([], a);
+  records = addTrashPending(records, b);
+  records = addTrashPending(records, a); // 重复不追加
+  assert.equal(records.length, 2);
+
+  assert.deepEqual(pendingIdsOf(records, a.workspaceKey, a.projectId), [a.opId]);
+  assert.deepEqual(pendingIdsOf(records, b.workspaceKey, b.projectId), [b.opId]);
+  assert.deepEqual(pendingIdsOf(records, a.workspaceKey, 'project-999'), [], '同工作区别的项目不受影响');
+  assert.deepEqual(pendingIdsOf(records, null, a.projectId), [], '没有工作区身份时不能"猜"归属');
+
+  // 只删指定那一条
+  assert.deepEqual(removeTrashPending(records, { workspaceKey: a.workspaceKey, projectId: a.projectId, opIds: [a.opId] }), [b]);
+
+  // 写入失败（隐私模式 / 配额）必须返回 false，由调用方提示保护降级
+  const storage = memoryStorage();
+  assert.equal(writeTrashLedger(storage, [a]), true);
+  assert.equal(readTrashLedger(storage).status, 'ok');
+  const quota: StorageLike = {
+    getItem: () => null,
+    setItem() {
+      const err = new Error('quota');
+      err.name = 'QuotaExceededError';
+      throw err;
+    },
+    removeItem() {},
+  };
+  assert.equal(writeTrashLedger(quota, [a]), false, '写不进去不能假装成功');
+  assert.equal(writeTrashLedger(null, [a]), false);
+});
+
+test('P2-02-R1.1 台账：只有终态或记录消失才解除（stored/读取失败都保留）', () => {
+  const record = pendingRecord();
+  const scope = { workspaceKey: record.workspaceKey, projectId: record.projectId };
+  const records = [record];
+
+  for (const state of ['restored', 'aborted', 'conflicted', 'missing'] as const) {
+    assert.deepEqual(
+      reconcileTrashPending(records, { ...scope, entries: [entry({ opId: record.opId, state, canRestore: false })], loaded: true }),
+      [],
+      `${state} 是终态，必须解除`,
+    );
+  }
+  for (const state of ['stored', 'pending', 'restoring'] as const) {
+    assert.deepEqual(
+      reconcileTrashPending(records, { ...scope, entries: [entry({ opId: record.opId, state, canRestore: false })], loaded: true }),
+      records,
+      `${state} 不是终态，必须保留`,
+    );
+  }
+  // 记录已不在列表里：没有可点的行了 → 解除
+  assert.deepEqual(reconcileTrashPending(records, { ...scope, entries: [], loaded: true }), []);
+  // 读取失败：原样保留（一次网络错误不构成结论）
+  assert.deepEqual(reconcileTrashPending(records, { ...scope, entries: [], loaded: false }), records);
+  // 别的工作区的记录不受影响
+  assert.deepEqual(
+    reconcileTrashPending([record, pendingRecord({ workspaceKey: 'b1b2c3d4e5f60718' })], {
+      ...scope,
+      entries: [],
+      loaded: true,
+    }),
+    [pendingRecord({ workspaceKey: 'b1b2c3d4e5f60718' })],
+  );
+});
+
+test('P2-02-R1.1 重启：内存清空后仅凭台账也必须保持禁用', () => {
+  const storage = memoryStorage({
+    [TRASH_LEDGER_KEY]: encodeTrashLedger([pendingRecord()]),
+  });
+
+  // "重启" = React 状态全丢，只剩浏览器存储
+  const reloaded = readTrashLedger(storage);
+  assert.equal(reloaded.status, 'ok');
+  const pending = reloaded.status === 'ok' ? reloaded.records : [];
+
+  // Host 对账还没跑完：列表仍然说 stored
+  const freshState = workspaceReducer(INITIAL_STATE, {
+    type: 'TRASH_LOADED',
+    projectId: pendingRecord().projectId,
+    entries: [entry({ opId: pendingRecord().opId, state: 'stored' })],
+    count: 1,
+  });
+  const view = trashPanelView({
+    mode: 'live',
+    workspaceMode: 'multi',
+    projectId: pendingRecord().projectId,
+    state: freshState.trashByProject[pendingRecord().projectId],
+    extraUnconfirmed: pendingIdsOf(pending, pendingRecord().workspaceKey, pendingRecord().projectId),
+  });
+  assert.equal(view.kind, 'list');
+  if (view.kind !== 'list') return;
+  assert.equal(view.rows[0].canRestore, false, '重启后仍然不能恢复');
+  assert.equal(view.rows[0].stateLabel, '待核对');
+
+  // 列表给出终态后才解除，并且解除要落盘
+  const next = reconcileTrashPending(pending, {
+    workspaceKey: pendingRecord().workspaceKey,
+    projectId: pendingRecord().projectId,
+    entries: [entry({ opId: pendingRecord().opId, state: 'restored', canRestore: false })],
+    loaded: true,
+  });
+  assert.deepEqual(next, []);
+  assert.equal(writeTrashLedger(storage, next), true);
+  assert.deepEqual(readTrashLedger(storage), { status: 'ok', records: [] });
+});
+
+test('P2-02-R1.1 台账不可用：所有恢复关闭并给出原因（fail-closed）', () => {
+  const corrupted = readTrashLedger(memoryStorage({ [TRASH_LEDGER_KEY]: 'not-json' }));
+  assert.equal(corrupted.status, 'corrupt');
+
+  const view = trashPanelView({
+    mode: 'live',
+    workspaceMode: 'multi',
+    projectId: 'project-a',
+    state: trashState({ entries: [entry()], count: 1 }),
+    restoreBlocked: trashLedgerBlockMessage(corrupted.status),
+  });
+  assert.equal(view.kind, 'list');
+  if (view.kind !== 'list') return;
+  assert.ok(view.blocked, '必须说明为什么不能恢复');
+  assert.match(view.blocked ?? '', /损坏/);
+  assert.equal(view.rows[0].canRestore, false, '台账不可用时任何记录都不能恢复');
+  assert.match(view.rows[0].hint, /暂时不能恢复/);
+});
+
+test('P2-02-R1.1 reducer：切换工作区模式同样丢弃回收区缓存', () => {
+  const loaded = workspaceReducer(
+    { ...INITIAL_STATE, mode: 'live', workspaceMode: 'multi', workspaceKey: 'key-A' },
+    { type: 'TRASH_LOADED', projectId: 'project-001', entries: [entry()], count: 1 },
+  );
+  const sameMode = workspaceReducer(loaded, { type: 'SET_WORKSPACE_MODE', workspaceMode: 'multi' });
+  assert.equal(sameMode, loaded, '同样的模式不清理');
+
+  const legacy = workspaceReducer(loaded, { type: 'SET_WORKSPACE_MODE', workspaceMode: 'legacy' });
+  assert.deepEqual(legacy.trashByProject, {}, '模式变了就是换工作区');
 });

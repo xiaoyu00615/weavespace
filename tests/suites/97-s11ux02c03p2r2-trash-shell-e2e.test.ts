@@ -461,6 +461,7 @@ function playbackHost(client: WeaveSpaceClient, notices: string[]): TrashHost {
     notify: (message) => notices.push(message),
     supported: () => true,
     preflight: () => ({ ok: true }),
+    restoreGate: () => null,
     blockers: () => [],
     refreshAfterRemoval: async () => undefined,
     refreshAfterRestore: async () => undefined,

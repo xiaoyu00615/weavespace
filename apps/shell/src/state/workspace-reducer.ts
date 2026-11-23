@@ -355,10 +355,17 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     // ---- 多项目（G2-05）----
+    /**
+     * 工作区模式（legacy / multi，UX-02C-03-P2-02-R1.1）。
+     *
+     * 模式是工作区身份的一部分：切到另一个模式后，同一个 `projectId` 可能指向
+     * 完全不同的东西（legacy 里根本没有项目这一层）。回收区缓存必须整块丢弃，
+     * 否则 legacy 界面会显示 multi 时期的记录。
+     */
     case 'SET_WORKSPACE_MODE':
       return state.workspaceMode === action.workspaceMode
         ? state
-        : { ...state, workspaceMode: action.workspaceMode };
+        : { ...state, workspaceMode: action.workspaceMode, trashByProject: {} };
 
     /**
      * 工作区身份（UX-02C-03-P2-02-R1）。
