@@ -35,7 +35,9 @@ import type { TrashEntryDto, TrashEntryState } from '../../apps/shell/src/client
 import type { TrashProjectState, WorkspaceState } from '../../apps/shell/src/state/types.ts';
 import {
   addTrashPending,
+  createTrashLedgerStore,
   encodeTrashLedger,
+  MAX_TRASH_LEDGER_BYTES,
   MAX_TRASH_PENDING,
   pendingIdsOf,
   readTrashLedger,
@@ -50,6 +52,11 @@ import {
 import type { StorageLike } from '../../apps/shell/src/state/workspace-persistence.ts';
 
 const AT = '2026-11-23T04:05:06.000Z';
+/** 工作区身份键：与 `state/trash.ts` 的 `identityKeyOf` 同一写法。 */
+const SCOPE_A = 'live\u0000multi\u0000a1b2c3d4e5f60718\u00001';
+const SCOPE_B = 'live\u0000multi\u0000b1b2c3d4e5f60718\u00001';
+/** 切回 A 之后的下一代次（epoch 变了 → 身份键不同）。 */
+const SCOPE_A_V2 = 'live\u0000multi\u0000a1b2c3d4e5f60718\u00002';
 
 function entry(overrides: Partial<TrashEntryDto> = {}): TrashEntryDto {
   return {
@@ -73,6 +80,7 @@ function trashState(overrides: Partial<TrashProjectState> = {}): TrashProjectSta
     errorCode: null,
     errorMessage: null,
     busyOpIds: [],
+    busyOwners: {},
     unconfirmedOpIds: [],
     ...overrides,
   };
@@ -349,8 +357,8 @@ test('P2-02-R1 reducer：刷新不解除在途，且只动对应的那一个 opI
     entries: [entry()],
     count: 1,
   });
-  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-A', busy: true });
-  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: true });
+  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-A', busy: true, scope: SCOPE_A });
+  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: true, scope: SCOPE_A });
   assert.deepEqual(state.trashByProject['project-a'].busyOpIds, ['op-A', 'op-B']);
 
   // 恢复期间后台刷新回来：在途集合不能被顺手清掉，否则按钮又变回可点
@@ -365,14 +373,14 @@ test('P2-02-R1 reducer：刷新不解除在途，且只动对应的那一个 opI
   assert.deepEqual(state.trashByProject['project-a'].busyOpIds, ['op-A', 'op-B']);
 
   // A 结束只移除 A
-  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-A', busy: false });
+  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-A', busy: false, scope: SCOPE_A });
   assert.deepEqual(state.trashByProject['project-a'].busyOpIds, ['op-B'], 'A 完成不得清掉 B');
 
   // 重复派发同一个标记不产生新对象（省掉无意义重渲染）
-  const same = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: true });
+  const same = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: true, scope: SCOPE_A });
   assert.equal(same, state);
 
-  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: false });
+  state = workspaceReducer(state, { type: 'TRASH_BUSY', projectId: 'project-a', opId: 'op-B', busy: false, scope: SCOPE_A });
   assert.deepEqual(state.trashByProject['project-a'].busyOpIds, []);
 });
 
@@ -738,4 +746,292 @@ test('P2-02-R1.1 reducer：切换工作区模式同样丢弃回收区缓存', ()
 
   const legacy = workspaceReducer(loaded, { type: 'SET_WORKSPACE_MODE', workspaceMode: 'legacy' });
   assert.deepEqual(legacy.trashByProject, {}, '模式变了就是换工作区');
+});
+
+/* ================================================================== */
+/* 六、R1.2：台账原子性 / 容量 / busy 归属                                */
+/* ================================================================== */
+
+/** 可切换"写盘必失败"的 StorageLike（隐私模式、配额用尽）。 */
+function storageWithFailure(initial: Record<string, string> = {}) {
+  const data = new Map(Object.entries(initial));
+  const ctl = { failWrites: false };
+  const storage: StorageLike = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => {
+      if (ctl.failWrites) throw new Error('QuotaExceededError');
+      data.set(key, value);
+    },
+    removeItem: (key) => void data.delete(key),
+  };
+  return { storage, data, ctl };
+}
+
+const pendingOf = (opId: string, overrides: Partial<TrashPendingRecord> = {}): TrashPendingRecord => ({
+  workspaceKey: 'a1b2c3d4e5f60718',
+  projectId: 'project-001',
+  opId,
+  createdAt: '2026-11-24T00:00:00.000Z',
+  ...overrides,
+});
+
+test('P2-02-R1.2 台账原子性：同一 tick 连续两次预留都不丢（内存与 localStorage 一致）', () => {
+  const { storage, ctl } = storageWithFailure();
+  const first = createTrashLedgerStore(storage, readTrashLedger(storage));
+
+  // 模拟两条 UNKNOWN 在同一次 React 提交前先后到达：中间**没有**重新渲染
+  assert.equal(first.reserve(pendingOf('op-atomic-a01')).status, 'reserved');
+  assert.equal(first.reserve(pendingOf('op-atomic-b02')).status, 'reserved');
+
+  assert.deepEqual(first.records().map((record) => record.opId), ['op-atomic-a01', 'op-atomic-b02']);
+
+  const stored = readTrashLedger(storage);
+  assert.equal(stored.status, 'ok');
+  assert.deepEqual(
+    stored.status === 'ok' ? stored.records.map((record) => record.opId) : [],
+    ['op-atomic-a01', 'op-atomic-b02'],
+    'localStorage 与内存必须一致',
+  );
+
+  // 模拟重新初始化（页面重启）：两条都还在待核对
+  const reopened = createTrashLedgerStore(storage, readTrashLedger(storage));
+  assert.deepEqual(reopened.records().map((record) => record.opId), ['op-atomic-a01', 'op-atomic-b02']);
+
+  // 重复预留是幂等的，不重复占位
+  assert.equal(first.reserve(pendingOf('op-atomic-a01')).status, 'exists');
+  assert.equal(first.records().length, 2);
+
+  // 落盘失败 → 内存回滚，绝不假装保护生效
+  ctl.failWrites = true;
+  assert.equal(first.reserve(pendingOf('op-atomic-c03')).status, 'write-failed');
+  assert.deepEqual(first.records().map((record) => record.opId), ['op-atomic-a01', 'op-atomic-b02']);
+  ctl.failWrites = false;
+  const afterFailure = readTrashLedger(storage);
+  assert.deepEqual(
+    afterFailure.status === 'ok' ? afterFailure.records.map((record) => record.opId) : [],
+    ['op-atomic-a01', 'op-atomic-b02'],
+    '写失败不得留下半条记录',
+  );
+});
+
+test('P2-02-R1.2 容量：满仓不淘汰，最多 64 条，第 65 条被拒且第一条仍在', () => {
+  const { storage } = storageWithFailure();
+  const store = createTrashLedgerStore(storage, readTrashLedger(storage));
+
+  for (let i = 0; i < MAX_TRASH_PENDING; i += 1) {
+    assert.equal(store.reserve(pendingOf(`op-cap-${String(i).padStart(8, '0')}`)).status, 'reserved');
+  }
+  assert.equal(store.records().length, MAX_TRASH_PENDING);
+  assert.equal(store.status(), 'full');
+  assert.match(store.blockMessage() ?? '', /已满/);
+
+  // 64 条能被正常读回（写入前按实际字节校验过）
+  const stored = readTrashLedger(storage);
+  assert.equal(stored.status, 'ok');
+  assert.equal(stored.status === 'ok' ? stored.records.length : -1, MAX_TRASH_PENDING);
+
+  // 第 65 条：拒绝，且**不淘汰**最早那条
+  assert.equal(store.reserve(pendingOf('op-cap-overflow')).status, 'full');
+  assert.equal(store.records().length, MAX_TRASH_PENDING);
+  assert.equal(store.records()[0].opId, 'op-cap-00000000', '第一条不得被挤掉');
+  assert.equal(
+    store.records().some((record) => record.opId === 'op-cap-overflow'),
+    false,
+  );
+
+  // 满仓时不能恢复：闸门给的是"已满"，不是"损坏"
+  assert.match(store.blockMessage() ?? '', /已满/);
+  assert.doesNotMatch(store.blockMessage() ?? '', /损坏/);
+
+  // 解除一条后重新获得一个位置
+  store.release({ workspaceKey: 'a1b2c3d4e5f60718', projectId: 'project-001', opIds: ['op-cap-00000000'] });
+  assert.equal(store.status(), 'ok');
+  assert.equal(store.records().length, MAX_TRASH_PENDING - 1);
+  assert.equal(store.reserve(pendingOf('op-cap-reuse001')).status, 'reserved');
+  assert.equal(store.records().length, MAX_TRASH_PENDING);
+});
+
+test('P2-02-R1.2 容量：62 条时两个并发恢复各占一位，都 UNKNOWN 也不丢记录', () => {
+  const { storage } = storageWithFailure();
+  const store = createTrashLedgerStore(storage, readTrashLedger(storage));
+  for (let i = 0; i < MAX_TRASH_PENDING - 2; i += 1) {
+    store.reserve(pendingOf(`op-pre-${String(i).padStart(8, '0')}`));
+  }
+  assert.equal(store.records().length, MAX_TRASH_PENDING - 2);
+
+  // 两个恢复在同一个 tick 里先后预留（控制器按 opId 分键，不互相阻塞）
+  assert.equal(store.reserve(pendingOf('op-race-a00001')).status, 'reserved');
+  assert.equal(store.reserve(pendingOf('op-race-b00002')).status, 'reserved');
+  assert.equal(store.records().length, MAX_TRASH_PENDING);
+
+  // 两个都 UNKNOWN：列表里都还是 stored（不是终态），台账必须一条不少
+  const reconciled = store.reconcile({
+    workspaceKey: 'a1b2c3d4e5f60718',
+    projectId: 'project-001',
+    entries: store.records().map((record) => entry({ opId: record.opId, state: 'stored' })),
+    loaded: true,
+  });
+  assert.equal(reconciled.status, 'unchanged');
+  assert.equal(store.records().length, MAX_TRASH_PENDING);
+  assert.equal(
+    store.records().filter((record) => record.opId.startsWith('op-race-')).length,
+    2,
+  );
+});
+
+test('P2-02-R1.2 容量：63 条时两个恢复只有一个能预留，另一个必须被挡', () => {
+  const { storage } = storageWithFailure();
+  const store = createTrashLedgerStore(storage, readTrashLedger(storage));
+  for (let i = 0; i < MAX_TRASH_PENDING - 1; i += 1) {
+    store.reserve(pendingOf(`op-last-${String(i).padStart(8, '0')}`));
+  }
+  assert.equal(store.reserve(pendingOf('op-last-winner')).status, 'reserved');
+  assert.equal(store.reserve(pendingOf('op-last-loser0')).status, 'full', '最后一个位置只能给一个请求');
+  assert.equal(store.records().length, MAX_TRASH_PENDING);
+  assert.equal(
+    store.records().some((record) => record.opId === 'op-last-loser0'),
+    false,
+  );
+});
+
+test('P2-02-R1.2 台账：写盘前按实际字节校验，绝不写入下次必判损坏的数据', () => {
+  const { storage, data } = storageWithFailure();
+
+  // 字段都取上限：64 条编码后超过 16 KiB
+  const bulky: TrashPendingRecord[] = Array.from({ length: MAX_TRASH_PENDING }, (_, i) => ({
+    workspaceKey: 'f'.repeat(128),
+    projectId: 'p'.repeat(32),
+    opId: `op-${String(i).padStart(8, '0')}${'x'.repeat(48)}`,
+    createdAt: '2026-11-24T00:00:00.000Z',
+  }));
+  const encoded = encodeTrashLedger(bulky);
+  assert.ok(encoded.length > MAX_TRASH_LEDGER_BYTES, `夹具必须真的超限（${encoded.length}）`);
+
+  assert.equal(writeTrashLedger(storage, bulky), false, '超限必须拒写');
+  assert.equal(data.has(TRASH_LEDGER_KEY), false, '不能留下一条下次必判 corrupt 的数据');
+  assert.deepEqual(readTrashLedger(storage), { status: 'ok', records: [] }, '下次启动仍是干净的首次使用');
+
+  // 正常体量的 64 条必须写得进去
+  const normal: TrashPendingRecord[] = Array.from({ length: MAX_TRASH_PENDING }, (_, i) =>
+    pendingOf(`op-norm-${String(i).padStart(8, '0')}`),
+  );
+  assert.equal(writeTrashLedger(storage, normal), true);
+  assert.equal(readTrashLedger(storage).status, 'ok');
+});
+
+test('P2-02-R1.2 文案：损坏时关闭恢复，且不引导用户清除本应用数据', () => {
+  const message = trashLedgerBlockMessage('corrupt') ?? '';
+  assert.match(message, /已损坏/);
+  assert.match(message, /暂时关闭/);
+  assert.doesNotMatch(message, /清除本应用数据/, '清数据会连台账一起删掉，等于绕过 fail-closed');
+});
+
+test('P2-02-R1.2 reducer：A 的收尾不得清掉 B 的同 opId 在途，A→B→A 也不行', () => {
+  const KEY_A = 'a1b2c3d4e5f60718';
+  const KEY_B = 'b1b2c3d4e5f60718';
+  const base = { ...INITIAL_STATE, mode: 'live' as const, workspaceMode: 'multi' as const, workspaceKey: KEY_A };
+  const loaded = (state: typeof INITIAL_STATE) =>
+    workspaceReducer(state, {
+      type: 'TRASH_LOADED',
+      projectId: 'project-001',
+      entries: [entry({ opId: 'op-x-0001' })],
+      count: 1,
+    });
+
+  let state = loaded(base);
+  state = workspaceReducer(state, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-001',
+    opId: 'op-x-0001',
+    busy: true,
+    scope: SCOPE_A,
+  });
+  assert.deepEqual(state.trashByProject['project-001'].busyOpIds, ['op-x-0001']);
+
+  // 切到 B 工作区（同 projectId）：桶被清空，B 重新读到记录并开始恢复
+  state = workspaceReducer(state, { type: 'SET_WORKSPACE_KEY', workspaceKey: KEY_B });
+  state = loaded(state);
+  state = workspaceReducer(state, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-001',
+    opId: 'op-x-0001',
+    busy: true,
+    scope: SCOPE_B,
+  });
+  assert.deepEqual(state.trashByProject['project-001'].busyOpIds, ['op-x-0001']);
+
+  // A 的旧请求这时才返回，finally 里带的是 A 的身份
+  const afterLateA = workspaceReducer(state, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-001',
+    opId: 'op-x-0001',
+    busy: false,
+    scope: SCOPE_A,
+  });
+  assert.equal(afterLateA, state, '别人的收尾必须整个丢弃（连对象都不新建）');
+  assert.deepEqual(afterLateA.trashByProject['project-001'].busyOpIds, ['op-x-0001'], 'B 仍在恢复中');
+
+  // B 自己结束：正常解除
+  const afterB = workspaceReducer(afterLateA, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-001',
+    opId: 'op-x-0001',
+    busy: false,
+    scope: SCOPE_B,
+  });
+  assert.deepEqual(afterB.trashByProject['project-001'].busyOpIds, []);
+
+  // A→B→A：代次不同 → 身份键不同，旧收尾不得清掉新一轮的在途
+  let back = workspaceReducer(afterB, { type: 'SET_WORKSPACE_KEY', workspaceKey: KEY_A });
+  back = loaded(back);
+  back = workspaceReducer(back, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-001',
+    opId: 'op-x-0001',
+    busy: true,
+    scope: SCOPE_A_V2,
+  });
+  const lateOldEpoch = workspaceReducer(back, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-001',
+    opId: 'op-x-0001',
+    busy: false,
+    scope: SCOPE_A,
+  });
+  assert.deepEqual(
+    lateOldEpoch.trashByProject['project-001'].busyOpIds,
+    ['op-x-0001'],
+    '上一代次的收尾不能结束这一代次的恢复',
+  );
+  const done = workspaceReducer(lateOldEpoch, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-001',
+    opId: 'op-x-0001',
+    busy: false,
+    scope: SCOPE_A_V2,
+  });
+  assert.deepEqual(done.trashByProject['project-001'].busyOpIds, []);
+});
+
+test('P2-02-R1.2 reducer：同一工作区切项目后，旧项目的在途仍能正常结算', () => {
+  let state = workspaceReducer(
+    { ...INITIAL_STATE, mode: 'live', workspaceMode: 'multi', workspaceKey: 'a1b2c3d4e5f60718' },
+    { type: 'TRASH_LOADED', projectId: 'project-a', entries: [entry({ opId: 'op-x-0001' })], count: 1 },
+  );
+  state = workspaceReducer(state, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-a',
+    opId: 'op-x-0001',
+    busy: true,
+    scope: SCOPE_A,
+  });
+  state = workspaceReducer(state, { type: 'SET_ACTIVE_PROJECT', projectId: 'project-b' });
+  state = workspaceReducer(state, {
+    type: 'TRASH_BUSY',
+    projectId: 'project-a',
+    opId: 'op-x-0001',
+    busy: false,
+    scope: SCOPE_A,
+  });
+  assert.deepEqual(state.trashByProject['project-a'].busyOpIds, [], '切项目不影响原来那条的收尾');
 });

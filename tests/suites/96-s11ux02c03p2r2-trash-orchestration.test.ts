@@ -32,6 +32,13 @@ import {
   submitTrashDelete,
 } from '../../apps/shell/src/state/trash-dialog.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
+import {
+  createTrashLedgerStore,
+  MAX_TRASH_PENDING,
+  TRASH_LEDGER_KEY,
+  type TrashPendingRecord,
+} from '../../apps/shell/src/state/trash-ledger.ts';
+import type { StorageLike } from '../../apps/shell/src/state/workspace-persistence.ts';
 import { trashPanelView } from '../../apps/shell/src/state/trash.ts';
 import type { WorkspaceAction } from '../../apps/shell/src/state/types.ts';
 
@@ -75,13 +82,39 @@ interface Harness {
   setProjectReady(value: boolean): void;
   setRestoreGate(message: string | null): void;
   opIds: string[];
+  /** 台账当前记录（真实 store，不是打桩的数组）。 */
+  ledger(): readonly TrashPendingRecord[];
+  /** 预填 n 条（容量测试用）。 */
+  prefillLedger(n: number): void;
+  /** 让下一次写盘失败（权限/配额）。 */
+  setLedgerWriteFails(value: boolean): void;
+}
+
+/**
+ * 最小 StorageLike：可读可写，`failWrites` 打开后 `setItem` 抛异常。
+ * 台账用**真实** store（`createTrashLedgerStore`），因此"预留是否真的落盘"
+ * 在这层就能被断言，不需要再去猜 Provider 的内部状态。
+ */
+function memoryStorage(): StorageLike & { failWrites: boolean; data: Map<string, string> } {
+  const data = new Map<string, string>();
+  const storage = {
+    data,
+    failWrites: false,
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      if (storage.failWrites) throw new Error('quota');
+      data.set(key, value);
+    },
+    removeItem: (key: string) => void data.delete(key),
+  };
+  return storage;
 }
 
 function makeHarness(port: Partial<TrashPort> = {}): Harness {
   let identity: TrashIdentity = {
     mode: 'live',
     workspaceMode: 'multi',
-    workspaceKey: 'ws-key-0000000000001',
+    workspaceKey: 'a1b2c3d4e5f60718',
     activeProjectId: PROJ,
     epoch: 1,
   };
@@ -94,6 +127,8 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
   const refreshes: string[] = [];
   const opIds: string[] = [];
   const calls = { list: 0, remove: 0, restore: 0, query: 0 };
+  const storage = memoryStorage();
+  const ledgerStore = createTrashLedgerStore(storage, { status: 'ok', records: [] });
 
   /**
    * 端口分两层：`rawPort` 是行为，`wrapped` 只负责计数。
@@ -160,6 +195,22 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
     notify: (message) => notices.push(message),
     supported: () => supported,
     restoreGate: () => restoreGate,
+    /** 与 Provider 同构：先落盘再发请求，写不进去就不许发。 */
+    reservePending: (target) => {
+      const outcome = ledgerStore.reserve({ ...target, createdAt: '2026-11-24T00:00:00.000Z' });
+      if (outcome.status === 'reserved' || outcome.status === 'exists') return { ok: true as const };
+      // 文案与 Provider 保持一致：满仓说"已满"，落盘失败说"写入失败"
+      return {
+        ok: false as const,
+        message:
+          outcome.status === 'write-failed'
+            ? '本机存储写入失败，无法记录这次恢复的「待核对」状态，已取消（未发送请求）。'
+            : '本机的「待核对」记录已满，恢复已关闭。',
+      };
+    },
+    releasePending: (target) => {
+      ledgerStore.release({ ...target, opIds: [target.opId] });
+    },
     /**
      * 真实 Host 的发送前闸：live + multi + activeProjectId 一致 + 项目 READY。
      * 测试通过 `setProjectReady(false)` 模拟"项目此刻不可用"。
@@ -205,6 +256,20 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
     setRestoreGate(message) {
       restoreGate = message;
     },
+    ledger: () => ledgerStore.records(),
+    prefillLedger(n) {
+      for (let i = 0; i < n; i += 1) {
+        ledgerStore.reserve({
+          workspaceKey: identity.workspaceKey ?? 'missing',
+          projectId: PROJ,
+          opId: `op-fill-${String(i).padStart(8, '0')}`,
+          createdAt: '2026-11-24T00:00:00.000Z',
+        });
+      }
+    },
+    setLedgerWriteFails(value) {
+      storage.failWrites = value;
+    },
     opIds,
   };
 }
@@ -222,7 +287,7 @@ function openDialog(input: {
     projectId: PROJ,
     path: input.path,
     reasons: input.reasons,
-    workspaceKey: input.workspaceKey === undefined ? 'ws-key-0000000000001' : input.workspaceKey,
+    workspaceKey: input.workspaceKey === undefined ? 'a1b2c3d4e5f60718' : input.workspaceKey,
     epoch: input.epoch ?? 1,
   });
 }
@@ -712,7 +777,7 @@ test('P2-02-R1 恢复：列表仍是 stored（Host 尚未提交）→ 继续保�
 
 test('P2-02-R1 并发恢复：A 完成只解除 A，B 保持；刷新也不清 B', async () => {
   const gates = new Map<string, ReturnType<typeof deferred<TrashActionOutcome>>>();
-  let listEntries: TrashEntryDto[] = [entry({ opId: 'op-A' }), entry({ opId: 'op-B', path: 'b.md' })];
+  let listEntries: TrashEntryDto[] = [entry({ opId: 'op-a-0001' }), entry({ opId: 'op-b-0002', path: 'b.md' })];
 
   const h = makeHarness({
     list: async () => ({ status: 'APPLIED', projectId: PROJ, count: listEntries.length, entries: listEntries }),
@@ -723,49 +788,49 @@ test('P2-02-R1 并发恢复：A 完成只解除 A，B 保持；刷新也不清 B
     },
   });
 
-  const a = h.controller.restore(PROJ, entry({ opId: 'op-A' }));
+  const a = h.controller.restore(PROJ, entry({ opId: 'op-a-0001' }));
   await flush();
-  const b = h.controller.restore(PROJ, entry({ opId: 'op-B', path: 'b.md' }));
+  const b = h.controller.restore(PROJ, entry({ opId: 'op-b-0002', path: 'b.md' }));
   await flush();
 
   const busyIds = (): string[] =>
     (stateOf(h, listEntries).trashByProject[PROJ]?.busyOpIds ?? []).slice().sort();
-  assert.deepEqual(busyIds(), ['op-A', 'op-B'], '两条都在途');
-  assert.equal(rowOfState(stateOf(h, listEntries), 'op-A')!.busy, true);
-  assert.equal(rowOfState(stateOf(h, listEntries), 'op-B')!.busy, true);
+  assert.deepEqual(busyIds(), ['op-a-0001', 'op-b-0002'], '两条都在途');
+  assert.equal(rowOfState(stateOf(h, listEntries), 'op-a-0001')!.busy, true);
+  assert.equal(rowOfState(stateOf(h, listEntries), 'op-b-0002')!.busy, true);
 
   // A 完成：列表里 A 已是 restored，B 仍是 stored
-  listEntries = [entry({ opId: 'op-A', state: 'restored', canRestore: false }), entry({ opId: 'op-B', path: 'b.md' })];
-  gates.get('op-A')!.resolve({
+  listEntries = [entry({ opId: 'op-a-0001', state: 'restored', canRestore: false }), entry({ opId: 'op-b-0002', path: 'b.md' })];
+  gates.get('op-a-0001')!.resolve({
     status: 'APPLIED',
     projectId: PROJ,
-    opId: 'op-A',
-    entry: entry({ opId: 'op-A', state: 'restored', canRestore: false }),
+    opId: 'op-a-0001',
+    entry: entry({ opId: 'op-a-0001', state: 'restored', canRestore: false }),
     replayed: false,
   });
   assert.equal((await a).status, 'applied');
 
   const afterA = stateOf(h, listEntries);
-  assert.deepEqual((afterA.trashByProject[PROJ]?.busyOpIds ?? []).slice(), ['op-B'], 'A 完成不得清掉 B');
-  assert.equal(rowOfState(afterA, 'op-A')!.busy, false);
-  assert.equal(rowOfState(afterA, 'op-B')!.busy, true);
+  assert.deepEqual((afterA.trashByProject[PROJ]?.busyOpIds ?? []).slice(), ['op-b-0002'], 'A 完成不得清掉 B');
+  assert.equal(rowOfState(afterA, 'op-a-0001')!.busy, false);
+  assert.equal(rowOfState(afterA, 'op-b-0002')!.busy, true);
 
   // 手动刷新一次：在途集合不因刷新而清空
   await h.controller.load(PROJ);
-  assert.deepEqual((stateOf(h, listEntries).trashByProject[PROJ]?.busyOpIds ?? []).slice(), ['op-B']);
+  assert.deepEqual((stateOf(h, listEntries).trashByProject[PROJ]?.busyOpIds ?? []).slice(), ['op-b-0002']);
 
   // B 完成：两条都不在途
-  gates.get('op-B')!.resolve({
+  gates.get('op-b-0002')!.resolve({
     status: 'APPLIED',
     projectId: PROJ,
-    opId: 'op-B',
-    entry: entry({ opId: 'op-B', path: 'b.md', state: 'restored', canRestore: false }),
+    opId: 'op-b-0002',
+    entry: entry({ opId: 'op-b-0002', path: 'b.md', state: 'restored', canRestore: false }),
     replayed: false,
   });
   assert.equal((await b).status, 'applied');
   listEntries = [
-    entry({ opId: 'op-A', state: 'restored', canRestore: false }),
-    entry({ opId: 'op-B', path: 'b.md', state: 'restored', canRestore: false }),
+    entry({ opId: 'op-a-0001', state: 'restored', canRestore: false }),
+    entry({ opId: 'op-b-0002', path: 'b.md', state: 'restored', canRestore: false }),
   ];
   const afterB = stateOf(h, listEntries);
   assert.deepEqual(afterB.trashByProject[PROJ]?.busyOpIds, [], '两条都结束');
@@ -816,6 +881,7 @@ test('P2-02-R1 恢复：切走项目后收到 REJECTED → stale，不提示、�
   assert.equal(result.status, 'stale');
   assert.equal(h.notices.length, 0);
   assert.deepEqual(h.refreshes, []);
+  assert.deepEqual(h.ledger(), [], '零副作用的拒绝即使归属已变也要释放预留（否则永久待核对）');
 });
 
 /* ================================================================== */
@@ -867,7 +933,7 @@ test('P2-02-R1 恢复：工作区身份变了（同项目 id）→ stale，不�
   const h = makeHarness({ restore: () => gate.promise });
 
   const pending = h.controller.restore(PROJ, entry());
-  h.setIdentity({ workspaceKey: 'ws-key-0000000000002', epoch: 2 });
+  h.setIdentity({ workspaceKey: 'b1b2c3d4e5f60718', epoch: 2 });
   gate.resolve({
     status: 'APPLIED',
     projectId: PROJ,
@@ -950,7 +1016,7 @@ test('P2-02-R1.1 读取：换工作区后各发一次，旧响应不写新桶', 
   assert.equal(h.calls.list, 1);
 
   // 换工作区：workspaceKey 与 epoch 都变了，但 projectId 相同
-  h.setIdentity({ workspaceKey: 'key-B-0000000000002', epoch: 2 });
+  h.setIdentity({ workspaceKey: 'b1b2c3d4e5f60718', epoch: 2 });
   const loadB = h.controller.load(PROJ);
   assert.equal(h.calls.list, 2, '不同工作区必须发独立请求，不能复用 A 的在途 Promise');
 
@@ -981,7 +1047,7 @@ test('P2-02-R1.1 回收：A 未结束时在 B 用同 projectId/path 发起 → �
   const first = h.controller.remove(PROJ, 'a.md');
   assert.equal(h.calls.remove, 1);
 
-  h.setIdentity({ workspaceKey: 'key-B-0000000000002', epoch: 2 });
+  h.setIdentity({ workspaceKey: 'b1b2c3d4e5f60718', epoch: 2 });
   const second = h.controller.remove(PROJ, 'a.md');
   assert.equal(h.calls.remove, 2, '跨工作区不得共享副作用 Promise');
 
@@ -1006,7 +1072,7 @@ test('P2-02-R1.1 恢复：同一 opId 跨工作区也不得复用 Promise', asyn
 
   const first = h.controller.restore(PROJ, entry());
   assert.equal(h.calls.restore, 1);
-  h.setIdentity({ workspaceKey: 'key-B-0000000000002', epoch: 2 });
+  h.setIdentity({ workspaceKey: 'b1b2c3d4e5f60718', epoch: 2 });
   const second = h.controller.restore(PROJ, entry());
   assert.equal(h.calls.restore, 2, '同项目 + 同 opId，但不同工作区 → 各发一次');
 
@@ -1044,4 +1110,131 @@ test('P2-02-R1.1 台账闸：不可用时恢复直接拒绝，连 GET/POST 都�
   const nonStored = await h.controller.restore(PROJ, entry({ state: 'restored', canRestore: false }));
   assert.equal(nonStored.status, 'rejected');
   assert.match(nonStored.status === 'rejected' ? nonStored.message : '', /损坏/);
+});
+
+/* ================================================================== */
+/* R1.2-03：恢复前的台账预留                                              */
+/* ================================================================== */
+
+test('P2-02-R1.2 恢复：POST 之前就已预留台账，结算期间关页面也不会丢', async () => {
+  const seenAtPost: string[][] = [];
+  const h = makeHarness({
+    restore: async (projectId, opId): Promise<TrashActionOutcome> => {
+      // 请求发出的这一刻，台账里必须已经有这条
+      seenAtPost.push(h.ledger().map((record) => record.opId));
+      return {
+        status: 'APPLIED',
+        projectId,
+        opId,
+        entry: entry({ state: 'restored', canRestore: false }),
+        replayed: false,
+      };
+    },
+  });
+
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'applied');
+  assert.deepEqual(seenAtPost, [[OP]], 'POST 之前必须已经写进台账');
+  // 结算成功但（假宿主不做收敛）预留仍在：只有成功的列表终态才能释放
+  assert.deepEqual(h.ledger().map((record) => record.opId), [OP]);
+});
+
+test('P2-02-R1.2 恢复：列表确认到终态后释放预留', async () => {
+  const h = makeHarness({
+    list: async () => ({
+      status: 'APPLIED',
+      projectId: PROJ,
+      count: 1,
+      entries: [entry({ state: 'restored', canRestore: false })],
+    }),
+  });
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'applied');
+  // 编排层只在"明确零副作用"时释放；终态释放由 Provider 的收敛 effect 完成
+  assert.deepEqual(h.ledger().map((record) => record.opId), [OP]);
+});
+
+test('P2-02-R1.2 恢复：明确 REJECTED（零副作用）释放预留', async () => {
+  const h = makeHarness({
+    restore: async (projectId, opId): Promise<TrashActionOutcome> => ({
+      status: 'REJECTED',
+      projectId,
+      opId,
+      errorCode: 'ERR_ENTRY_EXISTS',
+      message: '同名',
+      httpStatus: 409,
+    }),
+  });
+
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'rejected');
+  assert.deepEqual(h.ledger(), [], '确认零副作用才允许释放');
+});
+
+test('P2-02-R1.2 恢复：UNKNOWN 保留预留（重启后仍然拦着）', async () => {
+  const h = makeHarness({
+    restore: async (projectId, opId): Promise<TrashActionOutcome> => ({
+      status: 'UNKNOWN',
+      projectId,
+      opId,
+      message: '网络中断',
+      httpStatus: 0,
+    }),
+    list: async () => ({
+      status: 'APPLIED',
+      projectId: PROJ,
+      count: 1,
+      entries: [entry({ state: 'stored' })],
+    }),
+  });
+
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'unknown');
+  assert.deepEqual(h.ledger().map((record) => record.opId), [OP], '结论不明时必须留在台账里');
+});
+
+test('P2-02-R1.2 恢复：台账满仓 → 零 POST、零 GET', async () => {
+  const h = makeHarness();
+  h.prefillLedger(MAX_TRASH_PENDING);
+
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'rejected');
+  assert.match(result.status === 'rejected' ? result.message : '', /full|已满/);
+  assert.equal(h.calls.restore, 0, '占不到位置就不许发副作用请求');
+  assert.equal(h.calls.list, 0);
+  assert.equal(h.calls.query, 0);
+  assert.equal(h.ledger().length, MAX_TRASH_PENDING, '不许为腾位置淘汰任何记录');
+});
+
+test('P2-02-R1.2 恢复：台账写盘失败 → 零 POST（不能假装有保护）', async () => {
+  const h = makeHarness();
+  h.setLedgerWriteFails(true);
+
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'rejected');
+  assert.match(result.status === 'rejected' ? result.message : '', /写入失败/);
+  assert.equal(h.calls.restore, 0);
+  assert.deepEqual(h.ledger(), [], '内存也回滚：没落盘就不算预留');
+});
+
+test('P2-02-R1.2 恢复：63 条时两个并发恢复只有一个能发出请求', async () => {
+  const gate = deferred<TrashActionOutcome>();
+  const h = makeHarness({ restore: () => gate.promise });
+  h.prefillLedger(MAX_TRASH_PENDING - 1);
+
+  const first = h.controller.restore(PROJ, entry({ opId: 'op-last-winner' }));
+  const second = await h.controller.restore(PROJ, entry({ opId: 'op-last-loser0', path: 'b.md' }));
+  assert.equal(second.status, 'rejected');
+  assert.equal(h.calls.restore, 1, '最后一个容量位置不能同时给两个请求');
+  assert.equal(h.ledger().length, MAX_TRASH_PENDING);
+
+  gate.resolve({
+    status: 'APPLIED',
+    projectId: PROJ,
+    opId: 'op-last-winner',
+    entry: entry({ opId: 'op-last-winner', state: 'restored', canRestore: false }),
+    replayed: false,
+  });
+  assert.equal((await first).status, 'applied');
+  assert.equal(h.ledger().length, MAX_TRASH_PENDING, '两条记录都没丢');
 });

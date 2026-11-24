@@ -18,8 +18,13 @@ import { test } from 'node:test';
 import { createShellServer, type ShellServer } from '../../apps/server/src/server.ts';
 import { createFakePicker } from '../../apps/server/src/folder-picker/fake-picker.ts';
 import { serializeConfig, type ConfigTrashEntry } from '../../apps/server/src/store/config.ts';
-import { createLiveClient, type WeaveSpaceClient } from '../../apps/shell/src/client/client-api.ts';
+import {
+  createLiveClient,
+  type TrashEntryDto,
+  type WeaveSpaceClient,
+} from '../../apps/shell/src/client/client-api.ts';
 import { createTrashController, type TrashHost } from '../../apps/shell/src/state/trash.ts';
+import { createTrashLedgerStore, type TrashPendingRecord } from '../../apps/shell/src/state/trash-ledger.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import { rootTokenOf } from '../../packages/storage/path-safety.ts';
 
@@ -441,7 +446,26 @@ const RESTORED_DTO = {
   canRestore: false,
 };
 
-function playbackHost(client: WeaveSpaceClient, notices: string[]): TrashHost {
+/** 回放宿主 + 台账访问器：让"预留 / 收敛"能在真实 HTTP 链路上被断言。 */
+interface PlaybackHost extends TrashHost {
+  ledgerRecords(): readonly TrashPendingRecord[];
+  /** 模拟 Provider 用一次成功列表收敛台账，返回 store 的结论。 */
+  reconcilePending(entries: readonly TrashEntryDto[]): string;
+}
+
+const PLAYBACK_WORKSPACE_KEY = 'a1b2c3d4e5f60718';
+
+function playbackHost(client: WeaveSpaceClient, notices: string[]): PlaybackHost {
+  // 台账用真实 store（内存 StorageLike）：97 证明的是 HTTP 契约，但预留在链路上必须真实存在
+  const data = new Map<string, string>();
+  const store = createTrashLedgerStore(
+    {
+      getItem: (key) => data.get(key) ?? null,
+      setItem: (key, value) => void data.set(key, value),
+      removeItem: (key) => void data.delete(key),
+    },
+    { status: 'ok', records: [] },
+  );
   return {
     port: {
       list: (projectId) => client.listTrash(projectId),
@@ -452,7 +476,7 @@ function playbackHost(client: WeaveSpaceClient, notices: string[]): TrashHost {
     identity: () => ({
       mode: 'live',
       workspaceMode: 'multi',
-      workspaceKey: 'stub-key',
+      workspaceKey: PLAYBACK_WORKSPACE_KEY,
       activeProjectId: PROJ_A,
       epoch: 1,
     }),
@@ -461,10 +485,27 @@ function playbackHost(client: WeaveSpaceClient, notices: string[]): TrashHost {
     notify: (message) => notices.push(message),
     supported: () => true,
     preflight: () => ({ ok: true }),
-    restoreGate: () => null,
+    restoreGate: () => store.blockMessage(),
+    reservePending: (target) => {
+      const outcome = store.reserve({ ...target, createdAt: '2026-11-24T00:00:00.000Z' });
+      return outcome.status === 'reserved' || outcome.status === 'exists'
+        ? { ok: true as const }
+        : { ok: false as const, message: `台账拒绝预留（${outcome.status}）` };
+    },
+    releasePending: (target) => {
+      store.release({ ...target, opIds: [target.opId] });
+    },
     blockers: () => [],
     refreshAfterRemoval: async () => undefined,
     refreshAfterRestore: async () => undefined,
+    ledgerRecords: () => store.records(),
+    reconcilePending: (entries) =>
+      store.reconcile({
+        workspaceKey: PLAYBACK_WORKSPACE_KEY,
+        projectId: PROJ_A,
+        entries,
+        loaded: true,
+      }).status,
   };
 }
 
@@ -590,4 +631,60 @@ test('P2-02-R1 客户端：503 项目不可用是前置拒绝，不进入"未确
       assert.equal(outcome.status, 'REJECTED', '前置拒绝不该被误判成"可能已生效"');
     },
   );
+});
+
+/* ================================================================== */
+/* 九、R1.2：真实链路上的预留与收敛                                         */
+/* ================================================================== */
+
+test('P2-02-R1.2 真实链路：恢复前预留，成功后等列表终态才释放', async () => {
+  await withHost(async ({ client }) => {
+    const notices: string[] = [];
+    const host = playbackHost(client, notices);
+    const controller = createTrashController(host);
+
+    const opId = 'op-p202-r12-0001';
+    const removed = await client.trashEntry(PROJ_A, 'a.md', opId);
+    assert.equal(removed.status, 'APPLIED', '先真的把文件移进回收区');
+
+    const listed = await client.listTrash(PROJ_A);
+    assert.equal(listed.status, 'APPLIED');
+    const record = listed.status === 'APPLIED' ? listed.entries.find((item) => item.opId === opId) : undefined;
+    assert.ok(record, '回收区里必须有这条记录');
+
+    const result = await controller.restore(PROJ_A, record!);
+    assert.equal(result.status, 'applied');
+    // 磁盘已经恢复成功，但台账里这条仍在：要等一次**成功的列表**给出终态才算有结论
+    assert.deepEqual(host.ledgerRecords().map((item) => item.opId), [opId]);
+
+    const after = await client.listTrash(PROJ_A);
+    assert.equal(after.status, 'APPLIED');
+    const settled = after.status === 'APPLIED' ? after.entries : [];
+    assert.equal(
+      settled.find((item) => item.opId === opId)?.state,
+      'restored',
+      'Host 必须已经把它标成 restored',
+    );
+    assert.equal(host.reconcilePending(settled), 'changed');
+    assert.deepEqual(host.ledgerRecords(), [], '终态确认后才释放');
+  });
+});
+
+test('P2-02-R1.2 真实链路：不存在的记录 → 明确拒绝并释放预留', async () => {
+  await withHost(async ({ client }) => {
+    const host = playbackHost(client, []);
+    const controller = createTrashController(host);
+
+    const result = await controller.restore(PROJ_A, {
+      opId: 'op-p202-r12-0009',
+      path: 'a.md',
+      entryKind: 'file',
+      size: 6,
+      deletedAt: '2026-11-23T00:00:00.000Z',
+      state: 'stored',
+      canRestore: true,
+    });
+    assert.equal(result.status, 'rejected', '0 副作用的明确拒绝');
+    assert.deepEqual(host.ledgerRecords(), [], '拒绝之后不留占位');
+  });
 });

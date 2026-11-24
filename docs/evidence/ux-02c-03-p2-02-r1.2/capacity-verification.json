@@ -1,0 +1,133 @@
+{
+  "run": "p2-02-r1.2-capacity",
+  "checks": {
+    "上一次浏览器会话留下的两条「待核对」在新会话里仍然存在": true,
+    "两条对应行仍是「待核对」且禁用": true,
+    "容量未满时 e.md 可以恢复": true,
+    "台账被填到 64 条（62 条属于另一个项目，不会被本项目的列表收敛掉）": true,
+    "满仓时面板明确说明「已满」": true,
+    "满仓时 e.md 不提供恢复操作（按钮消失 + 说明原因）": true,
+    "满仓时台账仍是 64 条（没有为腾位置淘汰记录）": true,
+    "满仓时点击恢复不产生任何 POST": true,
+    "手工解除一条后台账是 63 条": true,
+    "解除一条后不再显示「已满」": true,
+    "解除一条后 e.md 重新可恢复": true
+  },
+  "detail": {
+    "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+    "persisted": {
+      "items": [
+        {
+          "name": "d.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true,
+          "restorable": false
+        },
+        {
+          "name": "c.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true,
+          "restorable": false
+        },
+        {
+          "name": "f.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null,
+          "restorable": false
+        }
+      ],
+      "records": 2
+    },
+    "两条对应行仍是「待核对」且禁用": [
+      {
+        "name": "d.md",
+        "badge": "待核对",
+        "button": "待核对",
+        "disabled": true,
+        "restorable": false
+      },
+      {
+        "name": "c.md",
+        "badge": "待核对",
+        "button": "待核对",
+        "disabled": true,
+        "restorable": false
+      },
+      {
+        "name": "f.md",
+        "badge": "已恢复",
+        "button": "",
+        "disabled": null,
+        "restorable": false
+      }
+    ],
+    "injected": {
+      "total": 64
+    },
+    "full": {
+      "items": [
+        {
+          "name": "e.md",
+          "badge": "可恢复",
+          "button": "",
+          "disabled": null,
+          "restorable": false
+        },
+        {
+          "name": "d.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true,
+          "restorable": false
+        },
+        {
+          "name": "c.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true,
+          "restorable": false
+        },
+        {
+          "name": "f.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null,
+          "restorable": false
+        }
+      ],
+      "text": "回收区 冒烟项目 · 4 条记录 ⟳ ← 本机的「待核对」记录已满（64 条），为避免再产生无法追踪的恢复，恢复操作暂时关闭。请先刷新回收区核对已有记录，等它们有了结论再试。 e.md 可恢复 原始位置：e.md 2026-11-24 12:20 · 4 B 暂时不能恢复：请先看回收区顶部的说明。 不可恢复 d.md 待核对 原始位置：d.md 2026-11-24 12:20 · 4 B 暂时不能恢复：请先看回收区顶部的说明。 待核对 c.md 待核对 原始位置：c.md "
+    },
+    "满仓时 e.md 不提供恢复操作（按钮消失 + 说明原因）": {
+      "name": "e.md",
+      "badge": "可恢复",
+      "button": "",
+      "disabled": null,
+      "restorable": false
+    },
+    "fullClick": {
+      "before": 0,
+      "after": 0
+    },
+    "relaxed": {
+      "e": {
+        "name": "e.md",
+        "badge": "可恢复",
+        "button": "恢复",
+        "disabled": false,
+        "restorable": true
+      },
+      "text": "回收区 冒烟项目 · 4 条记录 ⟳ ← e.md 可恢复 原始位置：e.md 2026-11-24 12:20 · 4 B 文件在回收区里，可以恢复到原位置。 恢复 d.md 待核对 原始位置：d.md 2026-11-24 12:20 · 4 B 上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。 待核对 c.md 待核对 原始位置：c.md 2026-11-24 12:20 "
+    },
+    "解除一条后 e.md 重新可恢复": {
+      "name": "e.md",
+      "badge": "可恢复",
+      "button": "恢复",
+      "disabled": false,
+      "restorable": true
+    }
+  },
+  "failed": []
+}

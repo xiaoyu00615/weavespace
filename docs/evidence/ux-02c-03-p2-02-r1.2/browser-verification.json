@@ -1,0 +1,261 @@
+{
+  "run": "p2-02-r1.2",
+  "checks": {
+    "A 工作区里真的有一条回收记录": true,
+    "A 的迟到 GET 被挂起（请求已发出但未返回）": true,
+    "换了工作区：workspaceKey 不同": true,
+    "B 自己发起了独立的列表读取": true,
+    "B 的读取窗口内不显示 A 的记录": true,
+    "A 的成功回执（含 a.md）没有写进 B 的回收区": true,
+    "A 的恢复在途：行显示「恢复中」且禁用": true,
+    "A 的恢复请求被挂起（尚未到达 Host）": true,
+    "B 用同一个 opId 造出了自己的记录": true,
+    "B 的同 opId 恢复也在途": true,
+    "A 的迟到收尾没有清掉 B 的「恢复中」": true,
+    "A 的拒绝只释放了 A 工作区的预留（B 的同 opId 记录不受影响）": true,
+    "B 的恢复成功后台账里不留它的 opId": true,
+    "Host 列表里能拿到 c.md / d.md 的 opId": true,
+    "两条 UNKNOWN 同时落进台账（不会互相覆盖）": true,
+    "两条都显示「待核对」且禁用": true,
+    "重载后两条仍是「待核对」+ 禁用": true,
+    "重载后台账两条仍在": true
+  },
+  "detail": {
+    "healthA": {
+      "workspaceKey": "d616873bd63d06b260fd06c184c5d4d3ea6aaecc1698d350ae6a877d681b52c7"
+    },
+    "seedA": {
+      "status": 200,
+      "body": {
+        "status": "APPLIED",
+        "projectId": "proj-a",
+        "opId": "op-browser-a0001",
+        "path": "a.md",
+        "entry": {
+          "opId": "op-browser-a0001",
+          "path": "a.md",
+          "entryKind": "file",
+          "size": 4,
+          "deletedAt": "2026-11-24T04:20:17.576Z",
+          "state": "stored",
+          "canRestore": true
+        }
+      }
+    },
+    "A 的迟到 GET 被挂起（请求已发出但未返回）": {
+      "getCalls": 1
+    },
+    "healthB": {
+      "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785"
+    },
+    "crossWindow": {
+      "items": [],
+      "text": "回收区 冒烟项目 · 0 条记录 ⟳ ← 回收区是空的。移入回收区的文件会出现在这里，可随时恢复到原位置。",
+      "getCalls": 2,
+      "getBeforeSwitch": 1
+    },
+    "B 自己发起了独立的列表读取": {
+      "before": 1,
+      "after": 2
+    },
+    "afterStale": {
+      "items": [],
+      "text": "回收区 冒烟项目 · 0 条记录 ⟳ ← 回收区是空的。移入回收区的文件会出现在这里，可随时恢复到原位置。"
+    },
+    "aInFlight": {
+      "row": {
+        "name": "a.md",
+        "badge": "恢复中",
+        "button": "恢复中…",
+        "disabled": true
+      },
+      "heldOpId": "op-browser-a0001",
+      "posts": 1
+    },
+    "seedSameOp": {
+      "status": 200,
+      "body": {
+        "status": "APPLIED",
+        "projectId": "proj-a",
+        "opId": "op-browser-a0001",
+        "path": "f.md",
+        "entry": {
+          "opId": "op-browser-a0001",
+          "path": "f.md",
+          "entryKind": "file",
+          "size": 4,
+          "deletedAt": "2026-11-24T04:20:27.189Z",
+          "state": "stored",
+          "canRestore": true
+        }
+      }
+    },
+    "bInFlight": {
+      "row": {
+        "name": "f.md",
+        "badge": "恢复中",
+        "button": "恢复中…",
+        "disabled": true
+      },
+      "held": 2
+    },
+    "afterAFinal": {
+      "items": [
+        {
+          "name": "f.md",
+          "badge": "恢复中",
+          "button": "恢复中…",
+          "disabled": true
+        }
+      ],
+      "text": "回收区 冒烟项目 · 1 条记录 ⟳ ← f.md 恢复中 原始位置：f.md 2026-11-24 12:20 · 4 B 正在把文件恢复到原位置，结果确认前不要重复操作。 恢复中…",
+      "ledger": "{\"version\":1,\"records\":[{\"workspaceKey\":\"026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785\",\"projectId\":\"proj-a\",\"opId\":\"op-browser-a0001\",\"createdAt\":\"2026-11-24T04:20:27.456Z\"}]}"
+    },
+    "A 的拒绝只释放了 A 工作区的预留（B 的同 opId 记录不受影响）": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+          "projectId": "proj-a",
+          "opId": "op-browser-a0001",
+          "createdAt": "2026-11-24T04:20:27.456Z"
+        }
+      ]
+    },
+    "B 的恢复成功后台账里不留它的 opId": {
+      "version": 1,
+      "records": []
+    },
+    "rowsBeforeUnknown": [
+      "d.md",
+      "c.md",
+      "f.md"
+    ],
+    "listedForUnknown": [
+      {
+        "opId": "op-e2249015-2530-40a5-8d93-a4d4ef8b8e39",
+        "path": "d.md",
+        "state": "stored"
+      },
+      {
+        "opId": "op-fafe592a-1ce1-4205-8c3c-aa364b60692e",
+        "path": "c.md",
+        "state": "stored"
+      }
+    ],
+    "afterUnknown": {
+      "items": [
+        {
+          "name": "d.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true
+        },
+        {
+          "name": "c.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true
+        },
+        {
+          "name": "f.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null
+        }
+      ],
+      "ledger": {
+        "version": 1,
+        "records": [
+          {
+            "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+            "projectId": "proj-a",
+            "opId": "op-fafe592a-1ce1-4205-8c3c-aa364b60692e",
+            "createdAt": "2026-11-24T04:20:31.518Z"
+          },
+          {
+            "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+            "projectId": "proj-a",
+            "opId": "op-e2249015-2530-40a5-8d93-a4d4ef8b8e39",
+            "createdAt": "2026-11-24T04:20:31.532Z"
+          }
+        ]
+      },
+      "before": "{\"version\":1,\"records\":[]}"
+    },
+    "两条 UNKNOWN 同时落进台账（不会互相覆盖）": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+          "projectId": "proj-a",
+          "opId": "op-fafe592a-1ce1-4205-8c3c-aa364b60692e",
+          "createdAt": "2026-11-24T04:20:31.518Z"
+        },
+        {
+          "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+          "projectId": "proj-a",
+          "opId": "op-e2249015-2530-40a5-8d93-a4d4ef8b8e39",
+          "createdAt": "2026-11-24T04:20:31.532Z"
+        }
+      ]
+    },
+    "afterReload": {
+      "items": [
+        {
+          "name": "d.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true
+        },
+        {
+          "name": "c.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true
+        },
+        {
+          "name": "f.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null
+        }
+      ],
+      "ledger": {
+        "version": 1,
+        "records": [
+          {
+            "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+            "projectId": "proj-a",
+            "opId": "op-fafe592a-1ce1-4205-8c3c-aa364b60692e",
+            "createdAt": "2026-11-24T04:20:31.518Z"
+          },
+          {
+            "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+            "projectId": "proj-a",
+            "opId": "op-e2249015-2530-40a5-8d93-a4d4ef8b8e39",
+            "createdAt": "2026-11-24T04:20:31.532Z"
+          }
+        ]
+      }
+    },
+    "重载后台账两条仍在": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+          "projectId": "proj-a",
+          "opId": "op-fafe592a-1ce1-4205-8c3c-aa364b60692e",
+          "createdAt": "2026-11-24T04:20:31.518Z"
+        },
+        {
+          "workspaceKey": "026413e80dde6ff8b0e6142fb0a9093b5119a7e163d0259c6506cea3c294b785",
+          "projectId": "proj-a",
+          "opId": "op-e2249015-2530-40a5-8d93-a4d4ef8b8e39",
+          "createdAt": "2026-11-24T04:20:31.532Z"
+        }
+      ]
+    }
+  },
+  "failed": []
+}

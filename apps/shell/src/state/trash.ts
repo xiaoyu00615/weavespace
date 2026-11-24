@@ -145,14 +145,21 @@ export function trashRowView(
   restoreBlocked = false,
 ): TrashRowView {
   const view = TRASH_STATE_VIEW[entry.state];
-  const stateLabel = unconfirmed ? '待核对' : busy ? '恢复中' : view.label;
-  const tone: TrashTone = unconfirmed ? 'warn' : busy ? 'pending' : view.tone;
-  const hint = restoreBlocked
-    ? '本机的「待核对」记录不可用，暂时不能恢复（见面板上方说明）。'
-    : unconfirmed
-      ? '上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。'
-      : busy
-        ? '正在把文件恢复到原位置，结果确认前不要重复操作。'
+  /*
+   * 在途优先于「待核对」（R1.2-03）。
+   *
+   * 恢复请求发出**之前**就已经在台账里占了位，所以"正在恢复"的那一行同时满足
+   * busy 与 unconfirmed。这时正确的说法是「恢复中」——把在途写成「待核对」会让用户
+   * 以为已经结束了、只是在等结论，从而更想再点一次。
+   */
+  const stateLabel = busy ? '恢复中' : unconfirmed ? '待核对' : view.label;
+  const tone: TrashTone = busy ? 'pending' : unconfirmed ? 'warn' : view.tone;
+  const hint = busy
+    ? '正在把文件恢复到原位置，结果确认前不要重复操作。'
+    : restoreBlocked
+      ? '暂时不能恢复：请先看回收区顶部的说明。'
+      : unconfirmed
+        ? '上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。'
         : (entry.note ?? view.hint);
   return {
     opId: entry.opId,
@@ -361,14 +368,15 @@ export function trashPanelView(input: TrashPanelInput): TrashPanelView {
   return {
     kind: 'list',
     count: state.count,
-    rows: state.entries.map((entry) =>
-      trashRowView(
+    rows: state.entries.map((entry) => {
+      const busy = state.busyOpIds.includes(entry.opId);
+      return trashRowView(
         entry,
-        state.busyOpIds.includes(entry.opId),
-        state.unconfirmedOpIds.includes(entry.opId) || extra.includes(entry.opId),
+        busy,
+        state.unconfirmedOpIds.includes(entry.opId) || (!busy && extra.includes(entry.opId)),
         blocked !== null,
-      ),
-    ),
+      );
+    }),
     degraded: state.errorMessage,
     blocked,
     warning: input.warning ?? null,
@@ -447,6 +455,19 @@ export type TrashPreflight =
   | { readonly ok: false; readonly kind: 'stale' }
   | { readonly ok: false; readonly kind: 'blocked'; readonly message: string };
 
+/**
+ * 一条待核对记录的身份（R1.2-03）。
+ *
+ * `workspaceKey` 必须来自**发起这次恢复时的快照**，不能用"当前"值：
+ * 同一 opId 可能同时存在于两个工作区（各自磁盘上的不同记录），用当前值释放
+ * 就会把别人的记录删掉。
+ */
+export interface TrashPendingTarget {
+  readonly workspaceKey: string;
+  readonly projectId: string;
+  readonly opId: string;
+}
+
 export interface TrashHost {
   readonly port: TrashPort;
   identity(): TrashIdentity;
@@ -464,6 +485,18 @@ export interface TrashHost {
    * 连 GET/POST 都不发。UI 禁用按钮只是表象，这里才是真正的门。
    */
   restoreGate(): string | null;
+  /**
+   * 发送恢复 POST **之前**在台账里预占一个位置（R1.2-03）。
+   *
+   * 为什么必须提前：UNKNOWN 之后还要做一次只读核对、刷新文件树、再读一次列表，
+   * 这中间窗口足够长到用户直接关掉页面。那时如果台账里还没有这条记录，
+   * 重启后列表大概率仍返回 `stored`，界面就会重新给出「恢复」——而磁盘可能已经动过。
+   *
+   * 失败（满仓 / 存储写不进去）时返回原因，调用方**一个请求都不发**。
+   */
+  reservePending(target: TrashPendingTarget): { readonly ok: true } | { readonly ok: false; readonly message: string };
+  /** 明确零副作用（REJECTED）时释放预留；其余情况一律保留。 */
+  releasePending(target: TrashPendingTarget): void;
   /** Shell 侧本地阻断（活动标签 / 草稿 / 保存中 / 结果未知）。 */
   blockers(projectId: string, path: string): readonly string[];
   /** 回收成功 / 结果未知：只刷新原文件的父层，不递归、不碰其他项目。 */
@@ -800,10 +833,26 @@ export function createTrashController(host: TrashHost): TrashController {
     if (reasons.length > 0) return { status: 'blocked', reasons };
 
     const snapshot = capture();
+    const scope = identityKeyOf(snapshot);
     return run(
-      `restore\u0000${identityKeyOf(snapshot)}\u0000${projectId}\u0000${entry.opId}`,
+      `restore\u0000${scope}\u0000${projectId}\u0000${entry.opId}`,
       async () => {
-        host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: true });
+        /*
+         * 先占位，再发请求（R1.2-03）。占不到就一个请求都不发：
+         * 一次无法在重启后追踪的恢复，比"这次没恢复"危险得多。
+         */
+        if (!snapshot.workspaceKey) {
+          return { status: 'rejected', message: '无法确定当前工作区，已取消这次恢复（未发送请求）。' };
+        }
+        const target: TrashPendingTarget = {
+          workspaceKey: snapshot.workspaceKey,
+          projectId,
+          opId: entry.opId,
+        };
+        const reserved = host.reservePending(target);
+        if (!reserved.ok) return { status: 'rejected', message: reserved.message };
+
+        host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: true, scope });
         try {
           let outcome: TrashActionOutcome;
           try {
@@ -839,10 +888,25 @@ export function createTrashController(host: TrashHost): TrashController {
               pending: true,
             });
           }
+          /*
+           * 只有"明确被拒绝"才释放预留：客户端的 REJECTED 只包含事务开始前的失败
+           * （形状 / 会话 / 授权 / 边界 / 同名冲突 / 前置 503），磁盘零改动。
+           *
+           * 注意这里看的是**回执**而不是结算结论：即使界面已经切走（结算为 `stale`），
+           * 零副作用这个事实仍然成立，必须把预留撤掉——否则那条记录会永远停在
+           * 「待核对」，而它对应的操作其实压根没发生。
+           *
+           * APPLIED 与 UNKNOWN 一律保留，直到一次成功的列表读取给出终态或确认记录不存在
+           * （由 Provider 的收敛逻辑释放）——"重启 / 关闭页面"永远不是释放理由。
+           * 释放用的是**发起时的身份快照**，不会碰到别的工作区的同 opId。
+           */
+          if (outcome.status === 'REJECTED') {
+            host.releasePending(target);
+          }
           return settled.result;
         } finally {
-          // 只解除**这一条**的在途标记：同项目里别的恢复不受影响
-          host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: false });
+          // 带上身份：旧工作区/旧代次的收尾不得清掉当前工作区的同 opId 在途标记
+          host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: false, scope });
         }
       },
     );

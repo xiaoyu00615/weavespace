@@ -140,6 +140,15 @@ export interface TrashProjectState {  readonly entries: readonly TrashEntryDto[]
    */
   readonly busyOpIds: readonly string[];
   /**
+   * 每条在途恢复**属于哪个工作区身份**（`opId → 身份键`，UX-02C-03-P2-02-R1.2）。
+   *
+   * 只有发起这次恢复的那个身份才有资格结束它：A 的旧请求在切到 B（甚至 A→B→A）之后
+   * 才回来时，`finally` 里的 `TRASH_BUSY(busy=false)` 带的还是 A 的身份，
+   * 与这里存的键不相等，于是被丢弃——B 的同名在途标记不会被别人顺手清掉。
+   * 键的定义与编排层的 `identityKeyOf` 完全一致（mode + workspaceMode + workspaceKey + epoch）。
+   */
+  readonly busyOwners: Record<string, string>;
+  /**
    * 结果未确认、核对完成前**禁止再次操作**的 `opId`。
    *
    * 与 `busyOpIds` 分开：在途是"请求还没回来"，这里是"请求回来了但结论不可用"
@@ -292,8 +301,13 @@ export type WorkspaceAction =
   | { type: 'TRASH_LOAD_BEGIN'; projectId: string }
   | { type: 'TRASH_LOADED'; projectId: string; entries: readonly TrashEntryDto[]; count: number }
   | { type: 'TRASH_LOAD_ERROR'; projectId: string; errorCode: string | null; message: string }
-  /** 单飞标记：只增删对应的 `opId`，不影响同一项目里别的在途恢复。 */
-  | { type: 'TRASH_BUSY'; projectId: string; opId: string; busy: boolean }
+  /**
+   * 单飞标记：只增删对应的 `opId`，不影响同一项目里别的在途恢复。
+   *
+   * `scope` 是发起这次恢复的工作区身份键：`busy=false` 只在键相等时生效，
+   * 因此旧工作区（或旧代次）的 `finally` 无法清掉当前工作区的在途标记。
+   */
+  | { type: 'TRASH_BUSY'; projectId: string; opId: string; busy: boolean; scope: string }
   /** 结果未确认标记：`pending=true` 时该记录禁止再次操作。 */
   | { type: 'TRASH_UNCONFIRMED'; projectId: string; opId: string; pending: boolean }
   /**

@@ -597,6 +597,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             errorCode: null,
             errorMessage: null,
             busyOpIds: previous?.busyOpIds ?? [],
+            busyOwners: previous?.busyOwners ?? {},
             unconfirmedOpIds: previous?.unconfirmedOpIds ?? [],
           },
         },
@@ -618,6 +619,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             // 列表刷新不结束恢复：在途集合只由 TRASH_BUSY 改，
             // 否则刷新回来的那一刻按钮又变回可点，用户会以为"上一次没生效"。
             busyOpIds: state.trashByProject[action.projectId]?.busyOpIds ?? [],
+            busyOwners: state.trashByProject[action.projectId]?.busyOwners ?? {},
             /*
              * 「待核对」可以被一次**成功的**列表刷新收敛：列表里该记录已经落到终态
              * （或记录已不存在），说明结论已经有了，再拦着用户没有意义。
@@ -653,17 +655,37 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             errorCode: action.errorCode,
             errorMessage: action.message,
             busyOpIds: previous?.busyOpIds ?? [],
+            busyOwners: previous?.busyOwners ?? {},
             unconfirmedOpIds: previous?.unconfirmedOpIds ?? [],
           },
         },
       };
     }
 
-    /** 单飞标记只动一个 `opId`：A 结束不得清掉 B。 */
+    /**
+     * 单飞标记只动一个 `opId`，而且**只有发起它的那个工作区身份能结束它**
+     * （UX-02C-03-P2-02-R1.2）。
+     *
+     * 场景：A 的恢复还在途 → 切到 B → B 恢复同 `opId`（不同磁盘、不同记录）→ A 的请求
+     * 这时才回来。它的 `finally` 带的是 A 的身份键，与这里记的 B 不相等，于是被丢弃；
+     * B 的“恢复中”不会被别人的收尾抹掉。A→B→A 也成立：代次不同，键就不同。
+     */
     case 'TRASH_BUSY': {
       const previous = state.trashByProject[action.projectId];
-      const next = toggleId(previous?.busyOpIds ?? [], action.opId, action.busy);
-      if (next === null) return state;
+      const owners = previous?.busyOwners ?? {};
+
+      // 结束在途：必须是自己发起的那一条
+      if (!action.busy && owners[action.opId] !== action.scope) return state;
+
+      const ids = previous?.busyOpIds ?? [];
+      const next = toggleId(ids, action.opId, action.busy);
+      const ownerChanged = action.busy && owners[action.opId] !== action.scope;
+      if (next === null && !ownerChanged) return state;
+
+      const nextOwners = { ...owners };
+      if (action.busy) nextOwners[action.opId] = action.scope;
+      else delete nextOwners[action.opId];
+
       return {
         ...state,
         trashByProject: {
@@ -675,7 +697,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             loading: previous?.loading ?? false,
             errorCode: previous?.errorCode ?? null,
             errorMessage: previous?.errorMessage ?? null,
-            busyOpIds: next,
+            busyOpIds: next ?? ids,
+            busyOwners: nextOwners,
             unconfirmedOpIds: previous?.unconfirmedOpIds ?? [],
           },
         },
@@ -699,6 +722,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
             errorCode: previous?.errorCode ?? null,
             errorMessage: previous?.errorMessage ?? null,
             busyOpIds: previous?.busyOpIds ?? [],
+            busyOwners: previous?.busyOwners ?? {},
             unconfirmedOpIds: next,
           },
         },

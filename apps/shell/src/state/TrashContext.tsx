@@ -30,12 +30,9 @@ import {
   type TrashDeleteDialogState,
 } from './trash-dialog.ts';
 import {
-  addTrashPending,
+  createTrashLedgerStore,
   pendingIdsOf,
   readTrashLedger,
-  reconcileTrashPending,
-  trashLedgerBlockMessage,
-  writeTrashLedger,
   type TrashPendingRecord,
 } from './trash-ledger.ts';
 import type { StorageLike } from './workspace-persistence.ts';
@@ -111,31 +108,27 @@ export function TrashProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
 
   /*
-   * 跨重启的「待核对」台账（R1.1-02）。
+   * 跨重启的「待核对」台账（R1.1-02 / R1.2-01）。
    *
    * `localStorage` 是同步 API，因此在**第一次渲染**时就能读到记录：
    * 面板第一次算出来的行就已经带着"待核对"，不存在"先亮出恢复按钮、下一帧才禁用"的窗口。
-   * 读取失败/损坏 → `ledgerStatus` 非 ok → 恢复操作整体关闭（fail-closed）。
+   *
+   * 台账的"当前记录"只放在 store 里，**不**从 React 渲染快照反推：`setState` 是批处理
+   * 的，两条 UNKNOWN 在同一次提交里到达时，后一条若基于旧快照起算就会覆盖前一条。
+   * 这里的 `ledger` state 只是给渲染用的一份镜像，写路径永远先问 store。
    */
   const storage = useMemo(() => safeBrowserStorage(), []);
   const ledgerRead = useMemo(() => readTrashLedger(storage), [storage]);
-  const ledgerStatus = ledgerRead.status;
-  const [ledger, setLedger] = useState<readonly TrashPendingRecord[]>(
-    () => (ledgerRead.status === 'ok' ? ledgerRead.records : []),
-  );
+  const ledgerStore = useMemo(() => createTrashLedgerStore(storage, ledgerRead), [storage, ledgerRead]);
+  const [ledger, setLedger] = useState<readonly TrashPendingRecord[]>(() => ledgerStore.records());
   const [ledgerWriteFailed, setLedgerWriteFailed] = useState(false);
-  const ledgerRef = useRef(ledger);
-  ledgerRef.current = ledger;
-
-  const persistLedger = useCallback(
-    (next: readonly TrashPendingRecord[]) => {
-      setLedger(next);
-      // 读都读不了时不再写：避免用一份"看起来正常"的新台账覆盖掉未知的旧内容
-      if (ledgerStatus !== 'ok') return;
-      setLedgerWriteFailed(!writeTrashLedger(storage, next));
-    },
-    [ledgerStatus, storage],
-  );
+  /** 把 store 的最新记录同步到渲染镜像（store 自己是唯一真相）。 */
+  const syncLedger = useCallback(() => {
+    setLedger(ledgerStore.records());
+  }, [ledgerStore]);
+  const markLedgerDegraded = useCallback(() => setLedgerWriteFailed(true), []);
+  /** 一次成功的写盘说明降级只是暂时的：把提示收掉（否则会一直挂着吓人）。 */
+  const markLedgerHealthy = useCallback(() => setLedgerWriteFailed(false), []);
 
   /**
    * 派发包装：观察 `TRASH_UNCONFIRMED(pending=true)`，把它写进跨重启台账。
@@ -149,20 +142,25 @@ export function TrashProvider({ children }: { children: ReactNode }) {
         const workspaceKey = stateRef.current.workspaceKey;
         if (!workspaceKey) {
           // 没有工作区身份就无法把这条记录归位：如实标记"保护降级"，绝不假装已记录
-          setLedgerWriteFailed(true);
+          markLedgerDegraded();
         } else {
-          const next = addTrashPending(ledgerRef.current, {
+          /*
+           * 正常情况下这条早在 POST 之前就预留过了（R1.2-03），这里是幂等的兜底：
+           * 万一有路径还没预留（或预留后又被释放），至少不要漏记。
+           */
+          const outcome = ledgerStore.reserve({
             workspaceKey,
             projectId: action.projectId,
             opId: action.opId,
             createdAt: new Date().toISOString(),
           });
-          if (next !== ledgerRef.current) persistLedger(next);
+          if (outcome.status === 'reserved') syncLedger();
+          else if (outcome.status !== 'exists') markLedgerDegraded();
         }
       }
       workspaceDispatch(action);
     },
-    [persistLedger, workspaceDispatch],
+    [ledgerStore, markLedgerDegraded, syncLedger, workspaceDispatch],
   );
 
   const tracker = useIdentityTracker(state.mode, state.workspaceMode, state.workspaceKey);
@@ -201,14 +199,68 @@ export function TrashProvider({ children }: { children: ReactNode }) {
         );
       },
       /**
+       * 台账闸（R1.1-02 / R1.2-02）。
+       *
+       * 台账损坏 / 存储不可用 / 容量用尽，都说明"这次恢复以后可能追踪不到"，
+       * 恢复一律关闭。控制器拿到的是一句可直接展示的原因。
+       */
+      restoreGate: () => ledgerStore.blockMessage(),
+      /**
+       * 恢复前的台账预留（R1.2-03）。
+       *
+       * 返回 false 时控制器一个请求都不发：宁可这次不恢复，也不要留下一次
+       * "关掉页面就再也查不到"的磁盘副作用。
+       */
+      reservePending: (target) => {
+        const outcome = ledgerStore.reserve({
+          workspaceKey: target.workspaceKey,
+          projectId: target.projectId,
+          opId: target.opId,
+          createdAt: new Date().toISOString(),
+        });
+        if (outcome.status === 'reserved') {
+          syncLedger();
+          markLedgerHealthy();
+          return { ok: true as const };
+        }
+        if (outcome.status === 'exists') {
+          markLedgerHealthy();
+          return { ok: true as const };
+        }
+        if (outcome.status === 'invalid') {
+          return { ok: false as const, message: '工作区身份无效，已取消这次恢复（未发送请求）。' };
+        }
+        if (outcome.status === 'write-failed') {
+          // 没落盘就发请求 = 关掉页面即失去保护：如实报错并拒绝
+          markLedgerDegraded();
+          return {
+            ok: false as const,
+            message: '本机存储写入失败，无法记录这次恢复的「待核对」状态，已取消（未发送请求）。',
+          };
+        }
+        return {
+          ok: false as const,
+          message: ledgerStore.blockMessage() ?? '本机的「待核对」台账当前不可用，已取消这次恢复。',
+        };
+      },
+      /** 只有明确零副作用（REJECTED）才走到这里；失败只降级提示，不回滚（结论仍然可靠）。 */
+      releasePending: (target) => {
+        const outcome = ledgerStore.release({
+          workspaceKey: target.workspaceKey,
+          projectId: target.projectId,
+          opIds: [target.opId],
+        });
+        if (outcome.status === 'changed' || outcome.status === 'write-failed') syncLedger();
+        if (outcome.status === 'write-failed') markLedgerDegraded();
+        else if (outcome.status === 'changed') markLedgerHealthy();
+      },
+      /**
        * 发送前的身份闸（R1-05）。
        *
        * 与 `supported` 的区别：这里区分"归属变了"和"项目此刻不可用"。
        * 前者必须**静默**丢弃（用户已经不在那个项目上了，弹提示只会让人困惑），
        * 后者要给一句能执行的话。
        */
-      // 台账不可用 = 无法证明"没有未知副作用"：恢复一律关闭（fail-closed）
-      restoreGate: () => trashLedgerBlockMessage(ledgerStatus),
       preflight: (projectId) => {
         const current = stateRef.current;
         if (current.mode !== 'live' || current.workspaceMode !== 'multi') {
@@ -251,7 +303,8 @@ export function TrashProvider({ children }: { children: ReactNode }) {
     [ledger, state.workspaceKey, projectId],
   );
 
-  const ledgerBlocked = trashLedgerBlockMessage(ledgerStatus);
+  // 每次渲染重算：容量用尽（full）与读写状态都算"此刻能不能恢复"
+  const ledgerBlocked = ledgerStore.blockMessage();
   const ledgerWarning = ledgerWriteFailed
     ? '「待核对」记录没能写入本机存储：本次会话内仍然禁用，但重开应用后可能失去保护；请尽快核对并恢复浏览器存储。'
     : null;
@@ -277,18 +330,18 @@ export function TrashProvider({ children }: { children: ReactNode }) {
    * 这时把记录删掉就等于"因为一次网络错误放开了未知副作用"。
    */
   useEffect(() => {
-    if (ledgerStatus !== 'ok') return;
     if (!state.workspaceKey || !projectId) return;
     const bucket = state.trashByProject[projectId];
     if (!bucket || !bucket.loaded || bucket.loading || bucket.errorCode !== null) return;
-    const next = reconcileTrashPending(ledgerRef.current, {
+    const outcome = ledgerStore.reconcile({
       workspaceKey: state.workspaceKey,
       projectId,
       entries: bucket.entries,
       loaded: true,
     });
-    if (next !== ledgerRef.current) persistLedger(next);
-  }, [ledgerStatus, state.workspaceKey, state.trashByProject, projectId, persistLedger]);
+    if (outcome.status === 'changed' || outcome.status === 'write-failed') syncLedger();
+    if (outcome.status === 'write-failed') markLedgerDegraded();
+  }, [ledgerStore, state.workspaceKey, state.trashByProject, projectId, syncLedger, markLedgerDegraded]);
 
   const badge = trashBadgeCount(projectTrash, state.mode, projectId);
 
