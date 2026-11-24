@@ -33,9 +33,10 @@ import {
 } from '../../apps/shell/src/state/trash-dialog.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import {
+  createInlineCoordination,
   createTrashLedgerStore,
   MAX_TRASH_PENDING,
-  TRASH_LEDGER_KEY,
+  trashReserveAuthorizes,
   type TrashPendingRecord,
 } from '../../apps/shell/src/state/trash-ledger.ts';
 import type { StorageLike } from '../../apps/shell/src/state/workspace-persistence.ts';
@@ -69,6 +70,11 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
   return { promise, resolve, reject };
 }
 
+/** 让出一轮宏任务：预留在锁内是异步的，POST 一定发生在它之后。 */
+const flush = async (): Promise<void> => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
 interface Harness {
   host: TrashHost;
   controller: ReturnType<typeof createTrashController>;
@@ -85,9 +91,11 @@ interface Harness {
   /** 台账当前记录（真实 store，不是打桩的数组）。 */
   ledger(): readonly TrashPendingRecord[];
   /** 预填 n 条（容量测试用）。 */
-  prefillLedger(n: number): void;
+  prefillLedger(n: number): Promise<void>;
   /** 让下一次写盘失败（权限/配额）。 */
   setLedgerWriteFails(value: boolean): void;
+  /** 模拟 Provider 用一次成功列表收敛台账。 */
+  reconcileLedger(entries: readonly TrashEntryDto[]): Promise<string>;
 }
 
 /**
@@ -128,7 +136,8 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
   const opIds: string[] = [];
   const calls = { list: 0, remove: 0, restore: 0, query: 0 };
   const storage = memoryStorage();
-  const ledgerStore = createTrashLedgerStore(storage, { status: 'ok', records: [] });
+  // 单标签页串行即可：跨标签页的互斥由套件 98 用两个 store 共享锁来证明
+  const ledgerStore = createTrashLedgerStore(storage, { status: 'ok', records: [] }, createInlineCoordination());
 
   /**
    * 端口分两层：`rawPort` 是行为，`wrapped` 只负责计数。
@@ -195,10 +204,21 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
     notify: (message) => notices.push(message),
     supported: () => supported,
     restoreGate: () => restoreGate,
-    /** 与 Provider 同构：先落盘再发请求，写不进去就不许发。 */
-    reservePending: (target) => {
-      const outcome = ledgerStore.reserve({ ...target, createdAt: '2026-11-24T00:00:00.000Z' });
-      if (outcome.status === 'reserved' || outcome.status === 'exists') return { ok: true as const };
+    /**
+     * 与 Provider 同构：先落盘再发请求，写不进去就不许发。
+     * **只有 `reserved` 是授权**——`exists` 意味着这条记录还有一次没有结论的恢复，
+     * 必须拒绝（R1.2.1-01）。
+     */
+    reservePending: async (target) => {
+      const outcome = await ledgerStore.reserve({ ...target, createdAt: '2026-11-24T00:00:00.000Z' });
+      // 与 Provider 用同一个授权函数：只有 reserved 放行
+      if (trashReserveAuthorizes(outcome)) return { ok: true as const };
+      if (outcome.status === 'exists') {
+        return {
+          ok: false as const,
+          message: '这条记录上一次恢复的结果还没有确认，已取消本次恢复（不会重复发送操作）。',
+        };
+      }
       // 文案与 Provider 保持一致：满仓说"已满"，落盘失败说"写入失败"
       return {
         ok: false as const,
@@ -208,8 +228,8 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
             : '本机的「待核对」记录已满，恢复已关闭。',
       };
     },
-    releasePending: (target) => {
-      ledgerStore.release({ ...target, opIds: [target.opId] });
+    releasePending: async (target) => {
+      await ledgerStore.release({ ...target, opIds: [target.opId] });
     },
     /**
      * 真实 Host 的发送前闸：live + multi + activeProjectId 一致 + 项目 READY。
@@ -257,9 +277,9 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
       restoreGate = message;
     },
     ledger: () => ledgerStore.records(),
-    prefillLedger(n) {
+    async prefillLedger(n) {
       for (let i = 0; i < n; i += 1) {
-        ledgerStore.reserve({
+        await ledgerStore.reserve({
           workspaceKey: identity.workspaceKey ?? 'missing',
           projectId: PROJ,
           opId: `op-fill-${String(i).padStart(8, '0')}`,
@@ -269,6 +289,15 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
     },
     setLedgerWriteFails(value) {
       storage.failWrites = value;
+    },
+    async reconcileLedger(entries) {
+      const outcome = await ledgerStore.reconcile({
+        workspaceKey: 'a1b2c3d4e5f60718',
+        projectId: PROJ,
+        entries,
+        loaded: true,
+      });
+      return outcome.status;
     },
     opIds,
   };
@@ -573,6 +602,8 @@ test('P2-02 恢复：同一 opId 并发只发一次；不同 opId 互不阻塞',
   const first = h.controller.restore(PROJ, entry({ opId: 'op-aaaa-0001' }));
   const second = h.controller.restore(PROJ, entry({ opId: 'op-aaaa-0001' }));
   const other = h.controller.restore(PROJ, entry({ opId: 'op-bbbb-0002', path: 'b.md' }));
+  // 预留（锁内写盘）在 POST 之前，因此这里必须先让出一轮
+  await flush();
   assert.equal(h.calls.restore, 2, '同 opId 复用，不同 opId 各发一次');
 
   for (const [opId, gate] of gates) {
@@ -693,10 +724,6 @@ test('P2-02 确认框：确认框打开后用户又打开了该文件 → 提交
 /* ================================================================== */
 /* R1-01：恢复在途 / 待核对的两段状态                                    */
 /* ================================================================== */
-
-const flush = async (): Promise<void> => {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-};
 
 test('P2-02-R1 恢复：列表确认之前不解除在途（延迟 GET）', async () => {
   const gate = deferred<TrashListOutcome>();
@@ -1071,9 +1098,11 @@ test('P2-02-R1.1 恢复：同一 opId 跨工作区也不得复用 Promise', asyn
   });
 
   const first = h.controller.restore(PROJ, entry());
+  await flush();
   assert.equal(h.calls.restore, 1);
   h.setIdentity({ workspaceKey: 'b1b2c3d4e5f60718', epoch: 2 });
   const second = h.controller.restore(PROJ, entry());
+  await flush();
   assert.equal(h.calls.restore, 2, '同项目 + 同 opId，但不同工作区 → 各发一次');
 
   gates[0].resolve({
@@ -1195,7 +1224,7 @@ test('P2-02-R1.2 恢复：UNKNOWN 保留预留（重启后仍然拦着）', asyn
 
 test('P2-02-R1.2 恢复：台账满仓 → 零 POST、零 GET', async () => {
   const h = makeHarness();
-  h.prefillLedger(MAX_TRASH_PENDING);
+  await h.prefillLedger(MAX_TRASH_PENDING);
 
   const result = await h.controller.restore(PROJ, entry());
   assert.equal(result.status, 'rejected');
@@ -1220,7 +1249,7 @@ test('P2-02-R1.2 恢复：台账写盘失败 → 零 POST（不能假装有保�
 test('P2-02-R1.2 恢复：63 条时两个并发恢复只有一个能发出请求', async () => {
   const gate = deferred<TrashActionOutcome>();
   const h = makeHarness({ restore: () => gate.promise });
-  h.prefillLedger(MAX_TRASH_PENDING - 1);
+  await h.prefillLedger(MAX_TRASH_PENDING - 1);
 
   const first = h.controller.restore(PROJ, entry({ opId: 'op-last-winner' }));
   const second = await h.controller.restore(PROJ, entry({ opId: 'op-last-loser0', path: 'b.md' }));
@@ -1237,4 +1266,98 @@ test('P2-02-R1.2 恢复：63 条时两个并发恢复只有一个能发出请求
   });
   assert.equal((await first).status, 'applied');
   assert.equal(h.ledger().length, MAX_TRASH_PENDING, '两条记录都没丢');
+});
+
+/* ================================================================== */
+/* R1.2.1-01：已有待核对记录 = 拒绝，不是授权                              */
+/* ================================================================== */
+
+test('P2-02-R1.2.1 恢复：台账里已有同一 opId → Controller 直接拒绝，零 POST/GET/query', async () => {
+  const h = makeHarness({
+    list: async () => ({ status: 'APPLIED', projectId: PROJ, count: 1, entries: [entry()] }),
+  });
+
+  // 直接在台账里写下这条（模拟"上一次会话留下了没有结论的恢复"）
+  const reserved = await h.host.reservePending({
+    workspaceKey: 'a1b2c3d4e5f60718',
+    projectId: PROJ,
+    opId: OP,
+  });
+  assert.equal(reserved.ok, true);
+  assert.deepEqual(h.ledger().map((record) => record.opId), [OP]);
+
+  // 不经过 UI，直接调 Controller
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'rejected');
+  assert.match(
+    result.status === 'rejected' ? result.message : '',
+    /还没有确认|待核对/,
+    '拒绝原因必须说清"上一次没有结论"',
+  );
+
+  // 三条网络路径都必须为零
+  assert.equal(h.calls.restore, 0, '绝不能再发副作用 POST');
+  assert.equal(h.calls.list, 0, '也不需要读列表');
+  assert.equal(h.calls.query, 0, '也不需要只读核对');
+
+  // 台账原样保留：这条记录仍然处于待核对
+  assert.deepEqual(h.ledger().map((record) => record.opId), [OP]);
+});
+
+test('P2-02-R1.2.1 恢复：UNKNOWN 之后再次调用 → 零 POST（exists 不是授权）', async () => {
+  const h = makeHarness({
+    restore: async (projectId, opId): Promise<TrashActionOutcome> => ({
+      status: 'UNKNOWN',
+      projectId,
+      opId,
+      message: '网络中断',
+      httpStatus: 0,
+    }),
+    // 列表仍说 stored：不是终态，台账必须继续留着
+    list: async () => ({ status: 'APPLIED', projectId: PROJ, count: 1, entries: [entry({ state: 'stored' })] }),
+  });
+
+  const first = await h.controller.restore(PROJ, entry());
+  assert.equal(first.status, 'unknown');
+  assert.equal(h.calls.restore, 1);
+  assert.deepEqual(h.ledger().map((record) => record.opId), [OP]);
+
+  // 用户再点一次（或直接调 Controller）
+  const second = await h.controller.restore(PROJ, entry());
+  assert.equal(second.status, 'rejected');
+  assert.equal(h.calls.restore, 1, '第二次必须零 POST');
+  assert.equal(h.calls.list, 1, '只有第一次结算读过列表');
+  assert.deepEqual(h.ledger().map((record) => record.opId), [OP]);
+});
+
+test('P2-02-R1.2.1 恢复：成功对账解除待核对后，允许新的合法恢复', async () => {
+  let attempts = 0;
+  const h = makeHarness({
+    restore: async (projectId, opId): Promise<TrashActionOutcome> => {
+      attempts += 1;
+      if (attempts === 1) {
+        return { status: 'UNKNOWN', projectId, opId, message: '网络中断', httpStatus: 0 };
+      }
+      return {
+        status: 'APPLIED',
+        projectId,
+        opId,
+        entry: entry({ state: 'restored', canRestore: false }),
+        replayed: false,
+      };
+    },
+    list: async () => ({ status: 'APPLIED', projectId: PROJ, count: 1, entries: [entry({ state: 'stored' })] }),
+  });
+
+  await h.controller.restore(PROJ, entry());
+  assert.equal((await h.controller.restore(PROJ, entry())).status, 'rejected');
+  assert.equal(h.calls.restore, 1);
+
+  // 一次成功的列表给出终态 → 台账收敛 → 闸门重新打开
+  assert.equal(await h.reconcileLedger([entry({ state: 'restored', canRestore: false })]), 'changed');
+  assert.deepEqual(h.ledger(), []);
+
+  const again = await h.controller.restore(PROJ, entry());
+  assert.equal(again.status, 'applied');
+  assert.equal(h.calls.restore, 2, '解除之后才允许再次恢复');
 });

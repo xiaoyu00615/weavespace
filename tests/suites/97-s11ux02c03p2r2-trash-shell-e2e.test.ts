@@ -24,7 +24,11 @@ import {
   type WeaveSpaceClient,
 } from '../../apps/shell/src/client/client-api.ts';
 import { createTrashController, type TrashHost } from '../../apps/shell/src/state/trash.ts';
-import { createTrashLedgerStore, type TrashPendingRecord } from '../../apps/shell/src/state/trash-ledger.ts';
+import {
+  createInlineCoordination,
+  createTrashLedgerStore,
+  type TrashPendingRecord,
+} from '../../apps/shell/src/state/trash-ledger.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import { rootTokenOf } from '../../packages/storage/path-safety.ts';
 
@@ -450,7 +454,7 @@ const RESTORED_DTO = {
 interface PlaybackHost extends TrashHost {
   ledgerRecords(): readonly TrashPendingRecord[];
   /** 模拟 Provider 用一次成功列表收敛台账，返回 store 的结论。 */
-  reconcilePending(entries: readonly TrashEntryDto[]): string;
+  reconcilePending(entries: readonly TrashEntryDto[]): Promise<string>;
 }
 
 const PLAYBACK_WORKSPACE_KEY = 'a1b2c3d4e5f60718';
@@ -465,6 +469,7 @@ function playbackHost(client: WeaveSpaceClient, notices: string[]): PlaybackHost
       removeItem: (key) => void data.delete(key),
     },
     { status: 'ok', records: [] },
+    createInlineCoordination(),
   );
   return {
     port: {
@@ -486,26 +491,29 @@ function playbackHost(client: WeaveSpaceClient, notices: string[]): PlaybackHost
     supported: () => true,
     preflight: () => ({ ok: true }),
     restoreGate: () => store.blockMessage(),
-    reservePending: (target) => {
-      const outcome = store.reserve({ ...target, createdAt: '2026-11-24T00:00:00.000Z' });
-      return outcome.status === 'reserved' || outcome.status === 'exists'
+    reservePending: async (target) => {
+      const outcome = await store.reserve({ ...target, createdAt: '2026-11-24T00:00:00.000Z' });
+      // 只有 reserved 是授权；exists = 这条还有一次没有结论的恢复
+      return outcome.status === 'reserved'
         ? { ok: true as const }
         : { ok: false as const, message: `台账拒绝预留（${outcome.status}）` };
     },
-    releasePending: (target) => {
-      store.release({ ...target, opIds: [target.opId] });
+    releasePending: async (target) => {
+      await store.release({ ...target, opIds: [target.opId] });
     },
     blockers: () => [],
     refreshAfterRemoval: async () => undefined,
     refreshAfterRestore: async () => undefined,
     ledgerRecords: () => store.records(),
-    reconcilePending: (entries) =>
-      store.reconcile({
-        workspaceKey: PLAYBACK_WORKSPACE_KEY,
-        projectId: PROJ_A,
-        entries,
-        loaded: true,
-      }).status,
+    reconcilePending: async (entries) =>
+      (
+        await store.reconcile({
+          workspaceKey: PLAYBACK_WORKSPACE_KEY,
+          projectId: PROJ_A,
+          entries,
+          loaded: true,
+        })
+      ).status,
   };
 }
 
@@ -665,7 +673,7 @@ test('P2-02-R1.2 真实链路：恢复前预留，成功后等列表终态才释
       'restored',
       'Host 必须已经把它标成 restored',
     );
-    assert.equal(host.reconcilePending(settled), 'changed');
+    assert.equal(await host.reconcilePending(settled), 'changed');
     assert.deepEqual(host.ledgerRecords(), [], '终态确认后才释放');
   });
 });

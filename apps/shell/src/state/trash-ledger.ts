@@ -12,10 +12,18 @@
  *   不存正文、不存绝对路径、不存 rootToken、不存身份 `dev:ino`；
  * - 读取失败 / 存储不可用 → `unavailable`；两种情况都由调用方按 fail-closed 处理。
  *
- * R1.2 起台账是一个**同步、单一真相**的小 store（`createTrashLedgerStore`）：
+ * R1.2 起台账是一个**单一真相**的小 store（`createTrashLedgerStore`）：
  * React 的 `setState` 是异步批处理的，若每次追加都从渲染快照起算，两条 UNKNOWN 在
  * 同一次提交里到达时，后一条会基于旧快照把前一条覆盖掉。因此"当前记录"只存在于
  * store 内部的 `current`，调用方读到的永远是**写入后**的最新值。
+ *
+ * R1.2.1 起再加两道边界：
+ * - **跨标签页互斥**：多个标签页共享同一份 localStorage，各自的 store 只记得自己的
+ *   快照。因此每次读改写都在 `navigator.locks` 的同一把锁内**重新读取**再校验/写盘，
+ *   否则两个标签页会各写一份 64 条、后写覆盖先写，丢掉一次已经发出的恢复。
+ *   浏览器不提供 Web Locks 时**不得退回**不安全的写法，而是整体 fail-closed。
+ * - **字节数**：上限按 UTF-8 实际字节（`TextEncoder`）而不是 JavaScript 的 UTF-16
+ *   码元长度判定，读与写用同一规则。
  */
 import type { TrashEntryDto } from '../client/client-api.ts';
 import { TRASH_TERMINAL_STATES } from './types.ts';
@@ -31,6 +39,38 @@ export const TRASH_LEDGER_KEY = 'ws:trash-pending:v1';
 export const MAX_TRASH_PENDING = 64;
 /** 单条记录上限：超过就是损坏，不做截断（截断会丢掉真正的待核对项）。 */
 export const MAX_TRASH_LEDGER_BYTES = 16 * 1024;
+/**
+ * 跨标签页台账锁名（R1.2.1-02）。
+ *
+ * 固定且带版本：同源的所有标签页必须抢同一把锁；将来若改变台账协议，换名字而不是
+ * 复用旧名，避免新旧版本在同一次操作里互不阻塞。
+ */
+export const TRASH_LEDGER_LOCK = 'weavespace-trash-ledger-v1';
+
+const utf8 = new TextEncoder();
+/** UTF-8 实际字节数（`String.length` 是 UTF-16 码元数，非 ASCII 会少算）。 */
+function byteLengthOf(value: string): number {
+  return utf8.encode(value).byteLength;
+}
+
+/**
+ * 规范 ISO 8601 UTC 时间（`YYYY-MM-DDTHH:mm:ss.sssZ`）。
+ *
+ * 不用宽松的 `Date.parse` 单独判定：`'2026-02-30T00:00:00.000Z'` 会被解析成 3 月 2 日，
+ * 而 `'2026-11-24 00:00:00'` 这类非规范写法也能过。要求"回写结果与原文完全一致"，
+ * 才能同时挡住越界日期与不规范格式。
+ */
+const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+function isCanonicalIsoUtc(value: string): boolean {
+  if (!ISO_UTC_RE.test(value)) return false;
+  const time = Date.parse(value);
+  if (Number.isNaN(time)) return false;
+  try {
+    return new Date(time).toISOString() === value;
+  } catch {
+    return false;
+  }
+}
 
 const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 /** 与 Host 的 opId 目录名规则一致：小写字母/数字开头，允许 `-` 与 `_`。 */
@@ -93,8 +133,7 @@ function parseRecord(raw: unknown): TrashPendingRecord | null {
   if (typeof workspaceKey !== 'string' || !WORKSPACE_KEY_RE.test(workspaceKey)) return null;
   if (typeof projectId !== 'string' || !PROJECT_ID_RE.test(projectId)) return null;
   if (typeof opId !== 'string' || !OP_ID_RE.test(opId)) return null;
-  if (typeof createdAt !== 'string' || createdAt.length > 40) return null;
-  if (Number.isNaN(Date.parse(createdAt))) return null;
+  if (typeof createdAt !== 'string' || !isCanonicalIsoUtc(createdAt)) return null;
   return { workspaceKey, projectId, opId, createdAt };
 }
 
@@ -117,7 +156,8 @@ export function readTrashLedger(storage: StorageLike | null): TrashLedgerRead {
     return { status: 'unavailable' };
   }
   if (raw === null) return { status: 'ok', records: [] };
-  if (raw.length > MAX_TRASH_LEDGER_BYTES) return { status: 'corrupt' };
+  // 读与写用同一把尺子：按 UTF-8 实际字节，而不是字符串长度
+  if (byteLengthOf(raw) > MAX_TRASH_LEDGER_BYTES) return { status: 'corrupt' };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -161,7 +201,7 @@ export function writeTrashLedger(storage: StorageLike | null, records: readonly 
   } catch {
     return false;
   }
-  if (encoded.length > MAX_TRASH_LEDGER_BYTES) return false;
+  if (byteLengthOf(encoded) > MAX_TRASH_LEDGER_BYTES) return false;
   try {
     storage.setItem(TRASH_LEDGER_KEY, encoded);
     return true;
@@ -271,22 +311,100 @@ export function reconcileTrashPending(
 }
 
 /* ================================================================== */
-/* 原子 store：唯一的同步真相                                            */
+/* 跨标签页互斥                                                         */
+/* ================================================================== */
+
+/**
+ * 台账的跨标签页互斥能力（R1.2.1-02）。
+ *
+ * 只暴露"能不能"和"在互斥区里跑"，不暴露锁的实现：浏览器用 `navigator.locks`，
+ * 测试用进程内串行队列，两者对 store 的语义完全相同（临界区里重新读、校验、写盘）。
+ */
+export interface TrashLedgerCoordination {
+  /** false = 无法保证跨标签页互斥 → 恢复整体关闭（fail-closed）。 */
+  readonly supported: boolean;
+  runExclusive<T>(task: () => T | Promise<T>): Promise<T>;
+}
+
+/** `navigator.locks` 的最小形状（不引入 DOM 类型依赖，也便于测试注入）。 */
+export interface LockManagerLike {
+  request<T>(name: string, options: { mode: 'exclusive' }, callback: () => Promise<T> | T): Promise<T>;
+}
+
+/** 进程内串行：单标签页 / 测试用，保证同一 store 的临界区不交错。 */
+export function createInlineCoordination(): TrashLedgerCoordination {
+  let tail: Promise<unknown> = Promise.resolve();
+  return {
+    supported: true,
+    runExclusive(task) {
+      const next = tail.then(() => task());
+      // 前一次失败不阻塞后一次
+      tail = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      return next;
+    },
+  };
+}
+
+/**
+ * 浏览器全局面板锁。
+ *
+ * 传 `null`（旧浏览器 / 被策略禁用）时返回 `supported: false`：调用方必须整体关闭
+ * 恢复，**不能**退回"各写各的 localStorage"，那正是本项要修掉的丢事务场景。
+ */
+export function createWebLockCoordination(locks: LockManagerLike | null): TrashLedgerCoordination {
+  if (!locks) {
+    return {
+      supported: false,
+      runExclusive: () => Promise.reject(new Error('Web Locks unavailable')),
+    };
+  }
+  return {
+    supported: true,
+    runExclusive: (task) => locks.request(TRASH_LEDGER_LOCK, { mode: 'exclusive' }, () => task()),
+  };
+}
+
+/* ================================================================== */
+/* 原子 store：ledger 的唯一真相                                         */
 /* ================================================================== */
 
 export type TrashReserveOutcome =
+  /** 本次真的占到了一个位置（已写盘）：**只有它可以授权新的恢复 POST**。 */
   | { readonly status: 'reserved' }
-  /** 已经有了（重复预留 / 重试）：可以继续，不需要再写一次。 */
+  /**
+   * 台账里已经有同一个 (workspaceKey, projectId, opId)。
+   *
+   * 含义是"这次恢复的结果还没有结论"，**不是**"可以再试一次"。调用方必须拒绝，
+   * 绝不能把它当成授权（R1.2.1-01）。
+   */
   | { readonly status: 'exists' }
   | { readonly status: 'full' }
+  /** 无跨标签页协调能力 / 存储不可读 / 台账损坏：一律不能继续。 */
   | { readonly status: 'unavailable' }
   /** 记录形状非法（例如工作区键不是 Host 的摘要格式）：绝不写进台账。 */
   | { readonly status: 'invalid' }
   /**
-   * 落盘失败：内存里的这次追加已**回滚**。没有持久化保护就不能发副作用请求——
+   * 落盘失败：这次追加**没有**生效。没有持久化保护就不能发副作用请求——
    * 否则页面一关，这次恢复就从账本上消失了。
    */
   | { readonly status: 'write-failed' };
+
+/**
+ * 预留结论是否**授权**本次新的恢复 POST（R1.2.1-01）。
+ *
+ * 只有 `reserved`（这一次真的占到了位置并已落盘）才是授权。
+ * `exists` 表示"同一个 opId 还有一次没有结论的恢复"——把它当成授权就是第二次
+ * 真实的磁盘移动，而这条记录正是靠台账才被禁用的；`full` / `write-failed` /
+ * `unavailable` / `invalid` 更显然都不能继续。
+ *
+ * 抽成函数只为一件事：让"授权表"能被单元测试逐项钉住，而不是散落在 JSX 的 if 里。
+ */
+export function trashReserveAuthorizes(outcome: TrashReserveOutcome): boolean {
+  return outcome.status === 'reserved';
+}
 
 export type TrashMutationOutcome =
   /** 内存与存储都已更新。 */
@@ -294,87 +412,151 @@ export type TrashMutationOutcome =
   | { readonly status: 'unchanged' }
   /** 内存已更新，但落盘失败：本次会话内有效，重启后可能回到旧台账（安全方向）。 */
   | { readonly status: 'write-failed' }
-  /** 读都读不了：不写，避免覆盖未知内容。 */
+  /** 读都读不了 / 无协调能力：不写，避免覆盖未知内容。 */
   | { readonly status: 'unavailable' };
 
 export interface TrashLedgerStore {
-  /** 当前状态（含容量用尽）。 */
+  /** 当前状态（含容量用尽 / 无协调能力）。 */
   status(): TrashLedgerStatus;
   records(): readonly TrashPendingRecord[];
   /** 非空 = 此刻不能恢复；文案已可直接展示。 */
   blockMessage(): string | null;
-  reserve(record: TrashPendingRecord): TrashReserveOutcome;
-  release(target: { workspaceKey: string; projectId: string; opIds: readonly string[] }): TrashMutationOutcome;
+  /**
+   * 预留一个位置。**异步**：必须先拿到跨标签页锁、在锁内重读最新台账再判断/写盘。
+   * 返回 `reserved` 才是授权；其余一律拒绝。
+   */
+  reserve(record: TrashPendingRecord): Promise<TrashReserveOutcome>;
+  release(target: { workspaceKey: string; projectId: string; opIds: readonly string[] }): Promise<TrashMutationOutcome>;
   reconcile(input: {
     workspaceKey: string | null;
     projectId: string | null;
     entries: readonly TrashEntryDto[];
     loaded: boolean;
-  }): TrashMutationOutcome;
+  }): Promise<TrashMutationOutcome>;
+  /**
+   * 用持久化内容刷新内存镜像（别的标签页写了台账时用）。
+   *
+   * 只动镜像、不写盘：镜像天生可以落后，真正的判断永远在锁内重读。
+   * 返回 true 表示镜像确实变了。
+   */
+  refresh(): boolean;
 }
 
 /**
  * 建一个台账 store。
  *
- * `current` 是唯一真相：`reserve` / `release` / `reconcile` 都在它上面同步串行地算，
- * 因此"同一 tick 连续两条 UNKNOWN"不会互相覆盖（React 的渲染快照根本不参与决策）。
- * `initial` 读失败时（corrupt / unavailable）**永不写盘**：原字节留着才有机会修复。
+ * 纪律（R1.2 / R1.2.1）：
+ * 1. **每次读改写都在锁内重新读取 localStorage**：本地 `current` 可能已经被别的
+ *    标签页写旧了，拿它做判断会覆盖别人的记录；
+ * 2. 只有写盘成功才更新镜像并返回 `reserved`；
+ * 3. 读失败（corrupt / unavailable）时**永不写盘**：原字节留着才有机会修复；
+ * 4. 没有跨标签页协调能力 → `status()` 为 `unavailable`，一切写操作都拒绝。
  */
 export function createTrashLedgerStore(
   storage: StorageLike | null,
   initial: TrashLedgerRead,
+  coordination: TrashLedgerCoordination,
 ): TrashLedgerStore {
-  const readStatus: TrashLedgerStatus = initial.status;
+  let readStatus: TrashLedgerStatus = coordination.supported ? initial.status : 'unavailable';
   let current: readonly TrashPendingRecord[] = initial.status === 'ok' ? initial.records : [];
 
   const status = (): TrashLedgerStatus => {
+    if (!coordination.supported) return 'unavailable';
     if (readStatus !== 'ok') return readStatus;
     return current.length >= MAX_TRASH_PENDING ? 'full' : 'ok';
   };
 
-  const commit = (next: readonly TrashPendingRecord[]): boolean => {
-    current = next;
-    if (readStatus !== 'ok') return false;
-    return writeTrashLedger(storage, next);
+  /** 锁内：从存储重新读一遍，把镜像同步成最新。 */
+  const reload = (): TrashLedgerRead => {
+    const fresh = readTrashLedger(storage);
+    readStatus = fresh.status;
+    if (fresh.status === 'ok') current = fresh.records;
+    return fresh;
   };
+
+  /** 缓存键用来判断"镜像是否真的变了"（记录数 ≤64，代价可忽略）。 */
+  const signatureOf = (records: readonly TrashPendingRecord[]): string =>
+    records.map((record) => recordKey(record)).join('|');
 
   return {
     status,
     records: () => current,
-    blockMessage: () => trashLedgerBlockMessage(status()),
+    blockMessage: () =>
+      coordination.supported
+        ? trashLedgerBlockMessage(status())
+        : '当前浏览器没有提供跨标签页的数据协调能力（Web Locks），无法安全地记录「待核对」状态；为避免重复恢复，回收区的恢复操作暂时关闭。请使用较新的浏览器。',
 
-    reserve(record) {
-      if (readStatus !== 'ok') return { status: 'unavailable' };
-      // 写进去就读不回来的记录（键格式非法）一律拒绝：否则下次启动会整份判 corrupt
+    refresh() {
+      if (!coordination.supported) return false;
+      const before = signatureOf(current);
+      const fresh = readTrashLedger(storage);
+      readStatus = fresh.status;
+      if (fresh.status !== 'ok') return false;
+      current = fresh.records;
+      return signatureOf(current) !== before;
+    },
+
+    async reserve(record) {
+      if (!coordination.supported) return { status: 'unavailable' };
+      // 写进去就读不回来的记录（键 / 时间格式非法）一律拒绝：否则下次启动会整份判 corrupt
       if (!parseRecord(record)) return { status: 'invalid' };
-      const result = reserveTrashPending(current, record);
-      if (result.status === 'full') return { status: 'full' };
-      if (result.status === 'exists') return { status: 'exists' };
-      const before = current;
-      if (!commit(result.records)) {
-        // 回滚：没落盘就等于没有保护，不能假装成功
-        current = before;
-        return { status: 'write-failed' };
+      try {
+        return await coordination.runExclusive((): TrashReserveOutcome => {
+          // 锁内重读：别的标签页可能刚写过，本地镜像不可信
+          const fresh = reload();
+          if (fresh.status !== 'ok') return { status: 'unavailable' };
+          const result = reserveTrashPending(current, record);
+          /*
+           * `exists` 必须原样返回。调用方（Provider）会把它翻成"拒绝"：
+           * 同一个 opId 已经有一次没有结论的恢复，再发一次就是重复副作用。
+           */
+          if (result.status === 'exists') return { status: 'exists' };
+          if (result.status === 'full') return { status: 'full' };
+          if (!writeTrashLedger(storage, result.records)) return { status: 'write-failed' };
+          current = result.records;
+          return { status: 'reserved' };
+        });
+      } catch {
+        return { status: 'unavailable' };
       }
-      return { status: 'reserved' };
     },
 
-    release(target) {
-      if (readStatus !== 'ok') return { status: 'unavailable' };
-      const next = removeTrashPending(current, target);
-      if (next === current) return { status: 'unchanged' };
-      /*
-       * 释放与预留的失败语义不同：这里是"结论已经有了"（终态 / 明确拒绝），
-       * 内存解除是安全的；落盘失败只会让重启后多拦一次，方向安全。
-       */
-      return commit(next) ? { status: 'changed' } : { status: 'write-failed' };
+    async release(target) {
+      if (!coordination.supported) return { status: 'unavailable' };
+      try {
+        return await coordination.runExclusive((): TrashMutationOutcome => {
+          const fresh = reload();
+          if (fresh.status !== 'ok') return { status: 'unavailable' };
+          const next = removeTrashPending(current, target);
+          if (next === current) return { status: 'unchanged' };
+          /*
+           * 释放的失败语义与预留不同：这里是"结论已经有了"（终态 / 明确拒绝），
+           * 内存解除是安全的；落盘失败只会让重启后多拦一次，方向安全。
+           */
+          if (!writeTrashLedger(storage, next)) return { status: 'write-failed' };
+          current = next;
+          return { status: 'changed' };
+        });
+      } catch {
+        return { status: 'unavailable' };
+      }
     },
 
-    reconcile(input) {
-      if (readStatus !== 'ok') return { status: 'unavailable' };
-      const next = reconcileTrashPending(current, input);
-      if (next === current) return { status: 'unchanged' };
-      return commit(next) ? { status: 'changed' } : { status: 'write-failed' };
+    async reconcile(input) {
+      if (!coordination.supported) return { status: 'unavailable' };
+      try {
+        return await coordination.runExclusive((): TrashMutationOutcome => {
+          const fresh = reload();
+          if (fresh.status !== 'ok') return { status: 'unavailable' };
+          const next = reconcileTrashPending(current, input);
+          if (next === current) return { status: 'unchanged' };
+          if (!writeTrashLedger(storage, next)) return { status: 'write-failed' };
+          current = next;
+          return { status: 'changed' };
+        });
+      } catch {
+        return { status: 'unavailable' };
+      }
     },
   };
 }

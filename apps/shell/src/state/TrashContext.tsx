@@ -31,8 +31,12 @@ import {
 } from './trash-dialog.ts';
 import {
   createTrashLedgerStore,
+  createWebLockCoordination,
+  trashReserveAuthorizes,
   pendingIdsOf,
   readTrashLedger,
+  TRASH_LEDGER_KEY,
+  type LockManagerLike,
   type TrashPendingRecord,
 } from './trash-ledger.ts';
 import type { StorageLike } from './workspace-persistence.ts';
@@ -119,7 +123,24 @@ export function TrashProvider({ children }: { children: ReactNode }) {
    */
   const storage = useMemo(() => safeBrowserStorage(), []);
   const ledgerRead = useMemo(() => readTrashLedger(storage), [storage]);
-  const ledgerStore = useMemo(() => createTrashLedgerStore(storage, ledgerRead), [storage, ledgerRead]);
+  /**
+   * 跨标签页互斥（R1.2.1-02）。
+   *
+   * 每个标签页有各自的 store，但共享同一份 localStorage。没有 `navigator.locks`
+   * 就无法保证"读-改-写"不交错，那种情况下**整体关闭恢复**（fail-closed），
+   * 而不是退回会丢记录的写法。
+   */
+  const coordination = useMemo(() => {
+    const locks =
+      typeof navigator === 'undefined'
+        ? null
+        : ((navigator as Navigator & { locks?: LockManagerLike }).locks ?? null);
+    return createWebLockCoordination(locks);
+  }, []);
+  const ledgerStore = useMemo(
+    () => createTrashLedgerStore(storage, ledgerRead, coordination),
+    [storage, ledgerRead, coordination],
+  );
   const [ledger, setLedger] = useState<readonly TrashPendingRecord[]>(() => ledgerStore.records());
   const [ledgerWriteFailed, setLedgerWriteFailed] = useState(false);
   /** 把 store 的最新记录同步到渲染镜像（store 自己是唯一真相）。 */
@@ -148,14 +169,17 @@ export function TrashProvider({ children }: { children: ReactNode }) {
            * 正常情况下这条早在 POST 之前就预留过了（R1.2-03），这里是幂等的兜底：
            * 万一有路径还没预留（或预留后又被释放），至少不要漏记。
            */
-          const outcome = ledgerStore.reserve({
-            workspaceKey,
-            projectId: action.projectId,
-            opId: action.opId,
-            createdAt: new Date().toISOString(),
-          });
-          if (outcome.status === 'reserved') syncLedger();
-          else if (outcome.status !== 'exists') markLedgerDegraded();
+          void ledgerStore
+            .reserve({
+              workspaceKey,
+              projectId: action.projectId,
+              opId: action.opId,
+              createdAt: new Date().toISOString(),
+            })
+            .then((outcome) => {
+              if (outcome.status === 'reserved') syncLedger();
+              else if (outcome.status !== 'exists') markLedgerDegraded();
+            });
         }
       }
       workspaceDispatch(action);
@@ -211,21 +235,32 @@ export function TrashProvider({ children }: { children: ReactNode }) {
        * 返回 false 时控制器一个请求都不发：宁可这次不恢复，也不要留下一次
        * "关掉页面就再也查不到"的磁盘副作用。
        */
-      reservePending: (target) => {
-        const outcome = ledgerStore.reserve({
+      reservePending: async (target) => {
+        const outcome = await ledgerStore.reserve({
           workspaceKey: target.workspaceKey,
           projectId: target.projectId,
           opId: target.opId,
           createdAt: new Date().toISOString(),
         });
-        if (outcome.status === 'reserved') {
+        if (trashReserveAuthorizes(outcome)) {
           syncLedger();
           markLedgerHealthy();
           return { ok: true as const };
         }
+        /*
+         * R1.2.1-01：`exists` 不是授权。
+         *
+         * 台账里已经有同一个 opId，说明上一次恢复**还没有结论**（UNKNOWN、或列表还没
+         * 确认到终态）。这时再发一次 POST 就是第二次真实的磁盘移动，而界面上那条
+         * 记录也正是靠这条台账才被禁用。所以这里必须明确拒绝，而不是"已经记过了，
+         * 继续吧"。
+         */
         if (outcome.status === 'exists') {
-          markLedgerHealthy();
-          return { ok: true as const };
+          return {
+            ok: false as const,
+            message:
+              '这条记录上一次恢复的结果还没有确认，已取消本次恢复（不会重复发送操作）。请先刷新回收区，等这条记录有了结论再试。',
+          };
         }
         if (outcome.status === 'invalid') {
           return { ok: false as const, message: '工作区身份无效，已取消这次恢复（未发送请求）。' };
@@ -244,8 +279,8 @@ export function TrashProvider({ children }: { children: ReactNode }) {
         };
       },
       /** 只有明确零副作用（REJECTED）才走到这里；失败只降级提示，不回滚（结论仍然可靠）。 */
-      releasePending: (target) => {
-        const outcome = ledgerStore.release({
+      releasePending: async (target) => {
+        const outcome = await ledgerStore.release({
           workspaceKey: target.workspaceKey,
           projectId: target.projectId,
           opIds: [target.opId],
@@ -333,15 +368,40 @@ export function TrashProvider({ children }: { children: ReactNode }) {
     if (!state.workspaceKey || !projectId) return;
     const bucket = state.trashByProject[projectId];
     if (!bucket || !bucket.loaded || bucket.loading || bucket.errorCode !== null) return;
-    const outcome = ledgerStore.reconcile({
-      workspaceKey: state.workspaceKey,
-      projectId,
-      entries: bucket.entries,
-      loaded: true,
-    });
-    if (outcome.status === 'changed' || outcome.status === 'write-failed') syncLedger();
-    if (outcome.status === 'write-failed') markLedgerDegraded();
+    let cancelled = false;
+    void ledgerStore
+      .reconcile({
+        workspaceKey: state.workspaceKey,
+        projectId,
+        entries: bucket.entries,
+        loaded: true,
+      })
+      .then((outcome) => {
+        // 组件已卸载 / 依赖已变：结果对当前界面没有意义（写盘已在锁内完成）
+        if (cancelled) return;
+        if (outcome.status === 'changed' || outcome.status === 'write-failed') syncLedger();
+        if (outcome.status === 'write-failed') markLedgerDegraded();
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [ledgerStore, state.workspaceKey, state.trashByProject, projectId, syncLedger, markLedgerDegraded]);
+
+  /**
+   * 别的标签页改了台账 → 同步本页镜像与界面（R1.2.1-02）。
+   *
+   * `storage` 事件只是**通知**，不是锁：真正的并发安全在 store 的锁内重读。
+   * 这里只负责让另一个标签页刚写进去的「待核对」立刻在本页也显示为禁用。
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key !== null && event.key !== TRASH_LEDGER_KEY) return;
+      if (ledgerStore.refresh()) syncLedger();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [ledgerStore, syncLedger]);
 
   const badge = trashBadgeCount(projectTrash, state.mode, projectId);
 

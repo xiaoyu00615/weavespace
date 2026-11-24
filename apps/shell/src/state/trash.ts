@@ -492,11 +492,13 @@ export interface TrashHost {
    * 这中间窗口足够长到用户直接关掉页面。那时如果台账里还没有这条记录，
    * 重启后列表大概率仍返回 `stored`，界面就会重新给出「恢复」——而磁盘可能已经动过。
    *
-   * 失败（满仓 / 存储写不进去）时返回原因，调用方**一个请求都不发**。
+   * 失败（满仓 / 已存在 / 存储写不进去 / 无跨标签页协调能力）时返回原因，
+   * 调用方**一个请求都不发**。**只有 `ok: true` 是授权**；实现方不得把"已存在"
+   * 当成可以继续（R1.2.1-01）。
    */
-  reservePending(target: TrashPendingTarget): { readonly ok: true } | { readonly ok: false; readonly message: string };
+  reservePending(target: TrashPendingTarget): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }>;
   /** 明确零副作用（REJECTED）时释放预留；其余情况一律保留。 */
-  releasePending(target: TrashPendingTarget): void;
+  releasePending(target: TrashPendingTarget): Promise<void>;
   /** Shell 侧本地阻断（活动标签 / 草稿 / 保存中 / 结果未知）。 */
   blockers(projectId: string, path: string): readonly string[];
   /** 回收成功 / 结果未知：只刷新原文件的父层，不递归、不碰其他项目。 */
@@ -849,7 +851,8 @@ export function createTrashController(host: TrashHost): TrashController {
           projectId,
           opId: entry.opId,
         };
-        const reserved = host.reservePending(target);
+        // 顺序不能反：拿到锁 → 重读 → 校验 → 写盘成功 → 才是授权 → 才发 POST
+        const reserved = await host.reservePending(target);
         if (!reserved.ok) return { status: 'rejected', message: reserved.message };
 
         host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: true, scope });
@@ -901,7 +904,7 @@ export function createTrashController(host: TrashHost): TrashController {
            * 释放用的是**发起时的身份快照**，不会碰到别的工作区的同 opId。
            */
           if (outcome.status === 'REJECTED') {
-            host.releasePending(target);
+            await host.releasePending(target);
           }
           return settled.result;
         } finally {

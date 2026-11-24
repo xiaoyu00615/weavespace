@@ -35,6 +35,7 @@ import type { TrashEntryDto, TrashEntryState } from '../../apps/shell/src/client
 import type { TrashProjectState, WorkspaceState } from '../../apps/shell/src/state/types.ts';
 import {
   addTrashPending,
+  createInlineCoordination,
   createTrashLedgerStore,
   encodeTrashLedger,
   MAX_TRASH_LEDGER_BYTES,
@@ -47,6 +48,7 @@ import {
   TRASH_LEDGER_VERSION,
   trashLedgerBlockMessage,
   writeTrashLedger,
+  type TrashLedgerCoordination,
   type TrashPendingRecord,
 } from '../../apps/shell/src/state/trash-ledger.ts';
 import type { StorageLike } from '../../apps/shell/src/state/workspace-persistence.ts';
@@ -775,13 +777,24 @@ const pendingOf = (opId: string, overrides: Partial<TrashPendingRecord> = {}): T
   ...overrides,
 });
 
-test('P2-02-R1.2 台账原子性：同一 tick 连续两次预留都不丢（内存与 localStorage 一致）', () => {
-  const { storage, ctl } = storageWithFailure();
-  const first = createTrashLedgerStore(storage, readTrashLedger(storage));
+/** 单标签页串行协调：store 现在必须显式给出"谁能保证互斥"。 */
+function inline(): TrashLedgerCoordination {
+  return createInlineCoordination();
+}
+function newStore(storage: StorageLike) {
+  return createTrashLedgerStore(storage, readTrashLedger(storage), inline());
+}
 
-  // 模拟两条 UNKNOWN 在同一次 React 提交前先后到达：中间**没有**重新渲染
-  assert.equal(first.reserve(pendingOf('op-atomic-a01')).status, 'reserved');
-  assert.equal(first.reserve(pendingOf('op-atomic-b02')).status, 'reserved');
+test('P2-02-R1.2 台账原子性：并发两次预留都不丢（内存与 localStorage 一致）', async () => {
+  const { storage, ctl } = storageWithFailure();
+  const first = newStore(storage);
+
+  // 两条 UNKNOWN 在同一次 React 提交前先后到达：中间**没有**重新渲染
+  const [a, b] = await Promise.all([
+    first.reserve(pendingOf('op-atomic-a01')),
+    first.reserve(pendingOf('op-atomic-b02')),
+  ]);
+  assert.deepEqual([a.status, b.status], ['reserved', 'reserved']);
 
   assert.deepEqual(first.records().map((record) => record.opId), ['op-atomic-a01', 'op-atomic-b02']);
 
@@ -794,16 +807,16 @@ test('P2-02-R1.2 台账原子性：同一 tick 连续两次预留都不丢（内
   );
 
   // 模拟重新初始化（页面重启）：两条都还在待核对
-  const reopened = createTrashLedgerStore(storage, readTrashLedger(storage));
+  const reopened = newStore(storage);
   assert.deepEqual(reopened.records().map((record) => record.opId), ['op-atomic-a01', 'op-atomic-b02']);
 
-  // 重复预留是幂等的，不重复占位
-  assert.equal(first.reserve(pendingOf('op-atomic-a01')).status, 'exists');
+  // 同一个 opId 再来一次：exists（**不是**授权，见套件 96 的 Controller 闸门用例）
+  assert.equal((await first.reserve(pendingOf('op-atomic-a01'))).status, 'exists');
   assert.equal(first.records().length, 2);
 
-  // 落盘失败 → 内存回滚，绝不假装保护生效
+  // 落盘失败 → 内存不动，绝不假装保护生效
   ctl.failWrites = true;
-  assert.equal(first.reserve(pendingOf('op-atomic-c03')).status, 'write-failed');
+  assert.equal((await first.reserve(pendingOf('op-atomic-c03'))).status, 'write-failed');
   assert.deepEqual(first.records().map((record) => record.opId), ['op-atomic-a01', 'op-atomic-b02']);
   ctl.failWrites = false;
   const afterFailure = readTrashLedger(storage);
@@ -814,12 +827,12 @@ test('P2-02-R1.2 台账原子性：同一 tick 连续两次预留都不丢（内
   );
 });
 
-test('P2-02-R1.2 容量：满仓不淘汰，最多 64 条，第 65 条被拒且第一条仍在', () => {
+test('P2-02-R1.2 容量：满仓不淘汰，最多 64 条，第 65 条被拒且第一条仍在', async () => {
   const { storage } = storageWithFailure();
-  const store = createTrashLedgerStore(storage, readTrashLedger(storage));
+  const store = newStore(storage);
 
   for (let i = 0; i < MAX_TRASH_PENDING; i += 1) {
-    assert.equal(store.reserve(pendingOf(`op-cap-${String(i).padStart(8, '0')}`)).status, 'reserved');
+    assert.equal((await store.reserve(pendingOf(`op-cap-${String(i).padStart(8, '0')}`))).status, 'reserved');
   }
   assert.equal(store.records().length, MAX_TRASH_PENDING);
   assert.equal(store.status(), 'full');
@@ -831,7 +844,7 @@ test('P2-02-R1.2 容量：满仓不淘汰，最多 64 条，第 65 条被拒且�
   assert.equal(stored.status === 'ok' ? stored.records.length : -1, MAX_TRASH_PENDING);
 
   // 第 65 条：拒绝，且**不淘汰**最早那条
-  assert.equal(store.reserve(pendingOf('op-cap-overflow')).status, 'full');
+  assert.equal((await store.reserve(pendingOf('op-cap-overflow'))).status, 'full');
   assert.equal(store.records().length, MAX_TRASH_PENDING);
   assert.equal(store.records()[0].opId, 'op-cap-00000000', '第一条不得被挤掉');
   assert.equal(
@@ -844,28 +857,31 @@ test('P2-02-R1.2 容量：满仓不淘汰，最多 64 条，第 65 条被拒且�
   assert.doesNotMatch(store.blockMessage() ?? '', /损坏/);
 
   // 解除一条后重新获得一个位置
-  store.release({ workspaceKey: 'a1b2c3d4e5f60718', projectId: 'project-001', opIds: ['op-cap-00000000'] });
+  await store.release({ workspaceKey: 'a1b2c3d4e5f60718', projectId: 'project-001', opIds: ['op-cap-00000000'] });
   assert.equal(store.status(), 'ok');
   assert.equal(store.records().length, MAX_TRASH_PENDING - 1);
-  assert.equal(store.reserve(pendingOf('op-cap-reuse001')).status, 'reserved');
+  assert.equal((await store.reserve(pendingOf('op-cap-reuse001'))).status, 'reserved');
   assert.equal(store.records().length, MAX_TRASH_PENDING);
 });
 
-test('P2-02-R1.2 容量：62 条时两个并发恢复各占一位，都 UNKNOWN 也不丢记录', () => {
+test('P2-02-R1.2 容量：62 条时两个并发恢复各占一位，都 UNKNOWN 也不丢记录', async () => {
   const { storage } = storageWithFailure();
-  const store = createTrashLedgerStore(storage, readTrashLedger(storage));
+  const store = newStore(storage);
   for (let i = 0; i < MAX_TRASH_PENDING - 2; i += 1) {
-    store.reserve(pendingOf(`op-pre-${String(i).padStart(8, '0')}`));
+    await store.reserve(pendingOf(`op-pre-${String(i).padStart(8, '0')}`));
   }
   assert.equal(store.records().length, MAX_TRASH_PENDING - 2);
 
-  // 两个恢复在同一个 tick 里先后预留（控制器按 opId 分键，不互相阻塞）
-  assert.equal(store.reserve(pendingOf('op-race-a00001')).status, 'reserved');
-  assert.equal(store.reserve(pendingOf('op-race-b00002')).status, 'reserved');
+  // 两个恢复同时申请（控制器按 opId 分键，不互相阻塞）
+  const [a, b] = await Promise.all([
+    store.reserve(pendingOf('op-race-a00001')),
+    store.reserve(pendingOf('op-race-b00002')),
+  ]);
+  assert.deepEqual([a.status, b.status], ['reserved', 'reserved']);
   assert.equal(store.records().length, MAX_TRASH_PENDING);
 
   // 两个都 UNKNOWN：列表里都还是 stored（不是终态），台账必须一条不少
-  const reconciled = store.reconcile({
+  const reconciled = await store.reconcile({
     workspaceKey: 'a1b2c3d4e5f60718',
     projectId: 'project-001',
     entries: store.records().map((record) => entry({ opId: record.opId, state: 'stored' })),
@@ -879,17 +895,23 @@ test('P2-02-R1.2 容量：62 条时两个并发恢复各占一位，都 UNKNOWN 
   );
 });
 
-test('P2-02-R1.2 容量：63 条时两个恢复只有一个能预留，另一个必须被挡', () => {
+test('P2-02-R1.2 容量：63 条时两个恢复只有一个能预留，另一个必须被挡', async () => {
   const { storage } = storageWithFailure();
-  const store = createTrashLedgerStore(storage, readTrashLedger(storage));
+  const store = newStore(storage);
   for (let i = 0; i < MAX_TRASH_PENDING - 1; i += 1) {
-    store.reserve(pendingOf(`op-last-${String(i).padStart(8, '0')}`));
+    await store.reserve(pendingOf(`op-last-${String(i).padStart(8, '0')}`));
   }
-  assert.equal(store.reserve(pendingOf('op-last-winner')).status, 'reserved');
-  assert.equal(store.reserve(pendingOf('op-last-loser0')).status, 'full', '最后一个位置只能给一个请求');
+  const [winner, loser] = await Promise.all([
+    store.reserve(pendingOf('op-last-winner')),
+    store.reserve(pendingOf('op-last-loser0')),
+  ]);
+  // 只有一个能拿到最后一个位置：并发下也绝不出现两个 reserved
+  assert.deepEqual([winner.status, loser.status].sort(), ['full', 'reserved']);
   assert.equal(store.records().length, MAX_TRASH_PENDING);
+  // 谁赢不确定，但输的那个一定不在台账里
+  const loserOpId = winner.status === 'full' ? 'op-last-winner' : 'op-last-loser0';
   assert.equal(
-    store.records().some((record) => record.opId === 'op-last-loser0'),
+    store.records().some((record) => record.opId === loserOpId),
     false,
   );
 });
@@ -905,7 +927,8 @@ test('P2-02-R1.2 台账：写盘前按实际字节校验，绝不写入下次必
     createdAt: '2026-11-24T00:00:00.000Z',
   }));
   const encoded = encodeTrashLedger(bulky);
-  assert.ok(encoded.length > MAX_TRASH_LEDGER_BYTES, `夹具必须真的超限（${encoded.length}）`);
+  const encodedBytes = new TextEncoder().encode(encoded).byteLength;
+  assert.ok(encodedBytes > MAX_TRASH_LEDGER_BYTES, `夹具必须真的超限（${encodedBytes} 字节）`);
 
   assert.equal(writeTrashLedger(storage, bulky), false, '超限必须拒写');
   assert.equal(data.has(TRASH_LEDGER_KEY), false, '不能留下一条下次必判 corrupt 的数据');

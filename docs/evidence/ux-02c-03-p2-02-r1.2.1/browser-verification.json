@@ -1,0 +1,186 @@
+{
+  "run": "p2-02-r1.2.1",
+  "checks": {
+    "两个标签页共享同一份 63 条台账": true,
+    "两个标签页并发申请：只有一个发出副作用 POST": true,
+    "最终台账恰好 64 条（没有互相覆盖）": true,
+    "只有拿到授权的那一条留在台账里": true,
+    "两个标签页都通过同一把锁（weavespace-trash-ledger-v1）": true,
+    "满仓后至少一个标签页明确显示「已满」": true,
+    "另一个标签页里同一个 opId 已显示「待核对」并禁用": true,
+    "强制点击也不产生第二个副作用 POST": true,
+    "赢家的 POST 被挂起（证明确实只发了一次）": true,
+    "成功恢复后该 opId 从台账清除": true,
+    "重载后仍然「待核对」且禁用": true,
+    "重启后强制点击也不会再发 POST": true,
+    "构造的台账字符数未超限、UTF-8 字节数超限": true,
+    "按字节判定的超限台账被判「已损坏」并关闭恢复": true,
+    "损坏时绝不覆盖原字节（没有恢复成空台账）": true,
+    "损坏时任何点击都不产生 POST": true,
+    "还原台账后不再显示「已损坏」": true,
+    "没有 Web Locks 时面板说明\"无法跨标签页协调\"并关闭恢复": true,
+    "没有 Web Locks 时任何行都不提供恢复按钮": true,
+    "没有 Web Locks 时点击零 POST": true
+  },
+  "detail": {
+    "opIds": {
+      "q.md": "op-ade706ab-b09e-4fc3-aab0-1cb2ca7c8c3b",
+      "p.md": "op-4b925ca5-1902-4776-b9a5-48b3e802cbb7"
+    },
+    "beforeRace": {
+      "ledger": 63,
+      "p1": 0,
+      "p2": 0
+    },
+    "race": {
+      "posts": 1,
+      "total": 64,
+      "real": [
+        "op-4b925ca5-1902-4776-b9a5-48b3e802cbb7"
+      ],
+      "lockCallsP1": [
+        {
+          "name": "weavespace-trash-ledger-v1",
+          "mode": "exclusive"
+        },
+        {
+          "name": "weavespace-trash-ledger-v1",
+          "mode": "exclusive"
+        }
+      ],
+      "lockCallsP2": [
+        {
+          "name": "weavespace-trash-ledger-v1",
+          "mode": "exclusive"
+        }
+      ]
+    },
+    "两个标签页并发申请：只有一个发出副作用 POST": {
+      "posts": 1
+    },
+    "最终台账恰好 64 条（没有互相覆盖）": 64,
+    "只有拿到授权的那一条留在台账里": [
+      {
+        "workspaceKey": "c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+        "projectId": "proj-a",
+        "opId": "op-4b925ca5-1902-4776-b9a5-48b3e802cbb7",
+        "createdAt": "2026-11-24T17:10:58.864Z"
+      }
+    ],
+    "两个标签页都通过同一把锁（weavespace-trash-ledger-v1）": {
+      "p1": [
+        {
+          "name": "weavespace-trash-ledger-v1",
+          "mode": "exclusive"
+        },
+        {
+          "name": "weavespace-trash-ledger-v1",
+          "mode": "exclusive"
+        }
+      ],
+      "p2": [
+        {
+          "name": "weavespace-trash-ledger-v1",
+          "mode": "exclusive"
+        }
+      ]
+    },
+    "winner": {
+      "winnerName": "p.md",
+      "winnerOpId": "op-4b925ca5-1902-4776-b9a5-48b3e802cbb7"
+    },
+    "fullBanner": {
+      "p1": true,
+      "p2": true
+    },
+    "watchedRow": {
+      "name": "p.md",
+      "badge": "待核对",
+      "button": "待核对",
+      "disabled": true,
+      "restorable": false
+    },
+    "另一个标签页里同一个 opId 已显示「待核对」并禁用": {
+      "name": "p.md",
+      "badge": "待核对",
+      "button": "待核对",
+      "disabled": true,
+      "restorable": false
+    },
+    "强制点击也不产生第二个副作用 POST": {
+      "before": 0,
+      "after": 0
+    },
+    "held": [
+      {
+        "requestId": "interception-job-2.0",
+        "opId": "op-4b925ca5-1902-4776-b9a5-48b3e802cbb7"
+      }
+    ],
+    "赢家的 POST 被挂起（证明确实只发了一次）": [
+      {
+        "requestId": "interception-job-2.0",
+        "opId": "op-4b925ca5-1902-4776-b9a5-48b3e802cbb7"
+      }
+    ],
+    "成功恢复后该 opId 从台账清除": [],
+    "sOpId": "op-dec10fdb-2aad-4f08-b2ea-3995d56a3118",
+    "afterReload": {
+      "items": [
+        {
+          "name": "s.md",
+          "badge": "待核对",
+          "button": "待核对",
+          "disabled": true,
+          "restorable": false
+        },
+        {
+          "name": "q.md",
+          "badge": "可恢复",
+          "button": "",
+          "disabled": null,
+          "restorable": false
+        },
+        {
+          "name": "p.md",
+          "badge": "已恢复",
+          "button": "",
+          "disabled": null,
+          "restorable": false
+        }
+      ],
+      "ledger": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000000\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000001\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000002\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000003\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000004\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000005\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000006\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000007\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000008\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000009\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000010\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000011\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000012\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000013\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000014\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000015\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000016\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000017\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000018\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000019\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000020\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000021\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000022\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000023\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000024\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000025\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000026\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000027\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000028\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000029\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000030\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000031\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000032\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000033\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000034\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000035\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000036\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000037\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000038\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000039\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000040\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000041\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000042\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000043\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000044\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000045\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000046\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000047\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000048\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000049\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000050\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000051\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000052\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000053\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000054\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000055\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000056\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000057\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000058\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000059\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000060\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000061\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-other\",\"opId\":\"op-forged-00000062\",\"createdAt\":\"2026-11-25T00:00:00.000Z\"},{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-a\",\"opId\":\"op-dec10fdb-2aad-4f08-b2ea-3995d56a3118\",\"createdAt\":\"2026-11-24T17:11:09.446Z\"}]}"
+    },
+    "重载后仍然「待核对」且禁用": {
+      "name": "s.md",
+      "badge": "待核对",
+      "button": "待核对",
+      "disabled": true,
+      "restorable": false
+    },
+    "重启后强制点击也不会再发 POST": {
+      "before": 2,
+      "after": 2
+    },
+    "wide": {
+      "chars": 6035,
+      "bytes": 18035
+    },
+    "构造的台账字符数未超限、UTF-8 字节数超限": {
+      "chars": 6035,
+      "bytes": 18035
+    },
+    "corruptView": {
+      "text": "回收区 冒烟项目 · 3 条记录 ⟳ ← 本机的「待核对」记录已损坏，无法确认哪些恢复还没有结论；为避免重复恢复，回收区的恢复操作暂时关闭。请不要重置或删除本站数据（会连同这条保护一起删除），等待后续的核对与修复流程。 s.md 可恢复 原始位置：s.md 2026-11-25 01:11 · 4 B 暂时不能恢复：请先看回收区顶部的说明。 不可恢复 q.md 可恢复 原始位置：q.md 2026",
+      "rawHead": "{\"version\":1,\"records\":[],\"pad\":\"汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉"
+    },
+    "restoredView": {
+      "text": "回收区 冒烟项目 · 3 条记录 ⟳ ← 本机的「待核对」记录已满（64 条），为避免再产生无法追踪的恢复，恢复操作暂时关闭。请先刷新回收区核对已有记录，等它们有了结论再试。 s.md 待核对 原始位置：s.md 2026-11-25 01:11 · 4 B 暂时不能恢复：请先看回收区顶部的说明。 待核对 q.md 可"
+    },
+    "noLocks": {
+      "text": "回收区 冒烟项目 · 3 条记录 ⟳ ← 当前浏览器没有提供跨标签页的数据协调能力（Web Locks），无法安全地记录「待核对」状态；为避免重复恢复，回收区的恢复操作暂时关闭。请使用较新的浏览器。 s.md 待核对 原始位置：s.md 2026-11-25 01:11 · 4 B 暂时不能恢复：请先看回收区顶部的说明。 待核对 q.md 可恢复 原始位置：q.md 2026-11-25 01:10 · 4 B 暂时不能恢复：请先看回收",
+      "hasLocks": "undefined"
+    }
+  },
+  "failed": []
+}
