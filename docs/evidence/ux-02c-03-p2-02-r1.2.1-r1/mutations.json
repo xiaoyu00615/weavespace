@@ -1,0 +1,100 @@
+{
+  "baselineSha": "57a37205ba0edcff1b8c282dda91925815954567e20679e652ab2cca377b2a06",
+  "results": [
+    {
+      "id": "A",
+      "desc": "把外部删除当作空台账（采纳空集合、不标记失效）",
+      "mutatedSha": "6930bb35a6c8",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [
+          "not ok 52 - P2-02-R1.2.1-R1 台账被外部删除：绕过界面直接调 Controller，零 POST/GET/query"
+        ],
+        "98": [
+          "not ok 18 - P2-02-R1.2.1-R1 外部 removeItem：保留内存待核对、状态失效、写操作全关、不重建",
+          "not ok 19 - P2-02-R1.2.1-R1 外部 localStorage.clear：event.key === null 同样进入失效保护",
+          "not ok 20 - P2-02-R1.2.1-R1 删除之后再写入空台账：本页仍保持失效，refresh 不得解除"
+        ]
+      }
+    },
+    {
+      "id": "B",
+      "desc": "删除事件后清空内存记录（仍然标记失效）",
+      "mutatedSha": "62354a56e8ba",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [
+          "not ok 52 - P2-02-R1.2.1-R1 台账被外部删除：绕过界面直接调 Controller，零 POST/GET/query"
+        ],
+        "98": [
+          "not ok 18 - P2-02-R1.2.1-R1 外部 removeItem：保留内存待核对、状态失效、写操作全关、不重建",
+          "not ok 19 - P2-02-R1.2.1-R1 外部 localStorage.clear：event.key === null 同样进入失效保护",
+          "not ok 20 - P2-02-R1.2.1-R1 删除之后再写入空台账：本页仍保持失效，refresh 不得解除"
+        ]
+      }
+    },
+    {
+      "id": "C",
+      "desc": "key === null（localStorage.clear）不做特殊处理",
+      "mutatedSha": "622dcbb71240",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [
+          "not ok 19 - P2-02-R1.2.1-R1 外部 localStorage.clear：event.key === null 同样进入失效保护"
+        ]
+      }
+    },
+    {
+      "id": "D",
+      "desc": "reserve 仅在 reserved 时同步镜像",
+      "mutatedSha": "9d6379c91f01",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [
+          "not ok 51 - P2-02-R1.2.1-R1 恢复：另一个页面刚写入同 opId（本页尚未收到事件）→ 零 POST 且镜像立即同步"
+        ],
+        "98": []
+      }
+    },
+    {
+      "id": "E",
+      "desc": "refresh 只比较记录签名（沿用旧实现）",
+      "mutatedSha": "b1b04a35e6e0",
+      "bitten": true,
+      "failures": {
+        "95": [
+          "not ok 32 - P2-02-R1.2.1-R1 台账：记录集合没变、只有状态变坏时 refresh 必须返回\"有变化\""
+        ],
+        "96": [],
+        "98": [
+          "not ok 21 - P2-02-R1.2.1-R1 外部写入非法 JSON：保留内存记录、进入 corrupt、不覆盖原始字节"
+        ]
+      }
+    },
+    {
+      "id": "F",
+      "desc": "非 ok 状态一律不通知 React",
+      "mutatedSha": "9eb3584d44af",
+      "bitten": true,
+      "failures": {
+        "95": [
+          "not ok 32 - P2-02-R1.2.1-R1 台账：记录集合没变、只有状态变坏时 refresh 必须返回\"有变化\""
+        ],
+        "96": [
+          "not ok 52 - P2-02-R1.2.1-R1 台账被外部删除：绕过界面直接调 Controller，零 POST/GET/query"
+        ],
+        "98": [
+          "not ok 18 - P2-02-R1.2.1-R1 外部 removeItem：保留内存待核对、状态失效、写操作全关、不重建",
+          "not ok 19 - P2-02-R1.2.1-R1 外部 localStorage.clear：event.key === null 同样进入失效保护",
+          "not ok 20 - P2-02-R1.2.1-R1 删除之后再写入空台账：本页仍保持失效，refresh 不得解除",
+          "not ok 21 - P2-02-R1.2.1-R1 外部写入非法 JSON：保留内存记录、进入 corrupt、不覆盖原始字节"
+        ]
+      }
+    }
+  ]
+}

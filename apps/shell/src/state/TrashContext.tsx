@@ -5,7 +5,16 @@
  * 在合适的时机触发读取、把"该画什么"算好交给组件。
  * **判断逻辑一律不在组件里**，否则 `.tsx` 无法被测试覆盖。
  */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import type { ReactNode } from 'react';
 import type { TrashEntryDto } from '../client/client-api.ts';
 import { parentDirOfEntry } from '../../../../packages/storage/entry-name.ts';
@@ -35,9 +44,7 @@ import {
   trashReserveAuthorizes,
   pendingIdsOf,
   readTrashLedger,
-  TRASH_LEDGER_KEY,
   type LockManagerLike,
-  type TrashPendingRecord,
 } from './trash-ledger.ts';
 import type { StorageLike } from './workspace-persistence.ts';
 import { useWorkspace } from './WorkspaceContext.tsx';
@@ -141,12 +148,20 @@ export function TrashProvider({ children }: { children: ReactNode }) {
     () => createTrashLedgerStore(storage, ledgerRead, coordination),
     [storage, ledgerRead, coordination],
   );
-  const [ledger, setLedger] = useState<readonly TrashPendingRecord[]>(() => ledgerStore.records());
+  /**
+   * 界面镜像 = store 快照（R1.2.1-R1）。
+   *
+   * 之前是"每个成功分支手写一次 `syncLedger()`"：`exists`、`full`、`write-failed`
+   * 这些被拒绝的分支不会同步，但 store 在锁内重读时已经拿到了别的页面写的记录，
+   * 于是出现"Store 正确、界面还显示可恢复"。改成订阅后，**任何**状态或记录变化
+   * 都会重画，根本不给"漏掉某个分支"的机会。
+   */
+  const ledgerSnapshot = useSyncExternalStore(
+    ledgerStore.subscribe,
+    ledgerStore.snapshot,
+    ledgerStore.snapshot,
+  );
   const [ledgerWriteFailed, setLedgerWriteFailed] = useState(false);
-  /** 把 store 的最新记录同步到渲染镜像（store 自己是唯一真相）。 */
-  const syncLedger = useCallback(() => {
-    setLedger(ledgerStore.records());
-  }, [ledgerStore]);
   const markLedgerDegraded = useCallback(() => setLedgerWriteFailed(true), []);
   /** 一次成功的写盘说明降级只是暂时的：把提示收掉（否则会一直挂着吓人）。 */
   const markLedgerHealthy = useCallback(() => setLedgerWriteFailed(false), []);
@@ -177,14 +192,14 @@ export function TrashProvider({ children }: { children: ReactNode }) {
               createdAt: new Date().toISOString(),
             })
             .then((outcome) => {
-              if (outcome.status === 'reserved') syncLedger();
-              else if (outcome.status !== 'exists') markLedgerDegraded();
+              // 镜像由 store 的订阅自动同步；这里只关心"保护是否降级"
+              if (outcome.status !== 'reserved' && outcome.status !== 'exists') markLedgerDegraded();
             });
         }
       }
       workspaceDispatch(action);
     },
-    [ledgerStore, markLedgerDegraded, syncLedger, workspaceDispatch],
+    [ledgerStore, markLedgerDegraded, workspaceDispatch],
   );
 
   const tracker = useIdentityTracker(state.mode, state.workspaceMode, state.workspaceKey);
@@ -243,7 +258,6 @@ export function TrashProvider({ children }: { children: ReactNode }) {
           createdAt: new Date().toISOString(),
         });
         if (trashReserveAuthorizes(outcome)) {
-          syncLedger();
           markLedgerHealthy();
           return { ok: true as const };
         }
@@ -285,7 +299,6 @@ export function TrashProvider({ children }: { children: ReactNode }) {
           projectId: target.projectId,
           opIds: [target.opId],
         });
-        if (outcome.status === 'changed' || outcome.status === 'write-failed') syncLedger();
         if (outcome.status === 'write-failed') markLedgerDegraded();
         else if (outcome.status === 'changed') markLedgerHealthy();
       },
@@ -334,12 +347,12 @@ export function TrashProvider({ children }: { children: ReactNode }) {
 
   /** 台账里属于当前工作区+项目的待核对 opId（与内存集合取并集展示）。 */
   const pendingFromLedger = useMemo(
-    () => pendingIdsOf(ledger, state.workspaceKey, projectId),
-    [ledger, state.workspaceKey, projectId],
+    () => pendingIdsOf(ledgerSnapshot.records, state.workspaceKey, projectId),
+    [ledgerSnapshot, state.workspaceKey, projectId],
   );
 
-  // 每次渲染重算：容量用尽（full）与读写状态都算"此刻能不能恢复"
-  const ledgerBlocked = ledgerStore.blockMessage();
+  // 能不能恢复只看快照：full / corrupt / unavailable / invalidated 都在里面
+  const ledgerBlocked = ledgerSnapshot.blockMessage;
   const ledgerWarning = ledgerWriteFailed
     ? '「待核对」记录没能写入本机存储：本次会话内仍然禁用，但重开应用后可能失去保护；请尽快核对并恢复浏览器存储。'
     : null;
@@ -379,29 +392,30 @@ export function TrashProvider({ children }: { children: ReactNode }) {
       .then((outcome) => {
         // 组件已卸载 / 依赖已变：结果对当前界面没有意义（写盘已在锁内完成）
         if (cancelled) return;
-        if (outcome.status === 'changed' || outcome.status === 'write-failed') syncLedger();
+        // 镜像同步由订阅负责；这里只需要把"没落盘"如实告诉用户
         if (outcome.status === 'write-failed') markLedgerDegraded();
       });
     return () => {
       cancelled = true;
     };
-  }, [ledgerStore, state.workspaceKey, state.trashByProject, projectId, syncLedger, markLedgerDegraded]);
+  }, [ledgerStore, state.workspaceKey, state.trashByProject, projectId, markLedgerDegraded]);
 
   /**
-   * 别的标签页改了台账 → 同步本页镜像与界面（R1.2.1-02）。
+   * 别的标签页改了台账 → 同步本页镜像与界面（R1.2.1-02 / R1.2.1-R1）。
    *
    * `storage` 事件只是**通知**，不是锁：真正的并发安全在 store 的锁内重读。
-   * 这里只负责让另一个标签页刚写进去的「待核对」立刻在本页也显示为禁用。
+   * 删除 / 清空（`newValue === null`，或 `clear()` 的 `key === null`）必须按
+   * "保护被破坏"处理，**不能**当成"台账现在是空的"——store 内部会进入失效保护，
+   * 这里只负责把事件原样交给它（并保留内存记录）。
    */
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onStorage = (event: StorageEvent): void => {
-      if (event.key !== null && event.key !== TRASH_LEDGER_KEY) return;
-      if (ledgerStore.refresh()) syncLedger();
+      ledgerStore.applyExternalEvent({ key: event.key, newValue: event.newValue });
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [ledgerStore, syncLedger]);
+  }, [ledgerStore]);
 
   const badge = trashBadgeCount(projectTrash, state.mode, projectId);
 

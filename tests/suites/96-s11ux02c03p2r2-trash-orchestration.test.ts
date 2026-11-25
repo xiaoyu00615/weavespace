@@ -35,8 +35,11 @@ import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/work
 import {
   createInlineCoordination,
   createTrashLedgerStore,
+  encodeTrashLedger,
   MAX_TRASH_PENDING,
+  TRASH_LEDGER_KEY,
   trashReserveAuthorizes,
+  type TrashLedgerSnapshot,
   type TrashPendingRecord,
 } from '../../apps/shell/src/state/trash-ledger.ts';
 import type { StorageLike } from '../../apps/shell/src/state/workspace-persistence.ts';
@@ -96,6 +99,16 @@ interface Harness {
   setLedgerWriteFails(value: boolean): void;
   /** 模拟 Provider 用一次成功列表收敛台账。 */
   reconcileLedger(entries: readonly TrashEntryDto[]): Promise<string>;
+  /** 另一个标签页直接写持久层：本页 store 的镜像因此保持过期。 */
+  seedExternally(records: readonly TrashPendingRecord[]): void;
+  /** 另一个标签页删除整条台账并送达 storage 事件（newValue === null）。 */
+  externalDelete(): boolean;
+  /** 台账闸文案：与 Provider 的 `restoreGate` 同源。 */
+  gate(): string | null;
+  /** 模拟 React 镜像：订阅 store 后保存的最后一份快照。 */
+  mirror(): TrashLedgerSnapshot;
+  /** 订阅者被通知了多少次。 */
+  mirrorUpdates(): number;
 }
 
 /**
@@ -138,6 +151,17 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
   const storage = memoryStorage();
   // 单标签页串行即可：跨标签页的互斥由套件 98 用两个 store 共享锁来证明
   const ledgerStore = createTrashLedgerStore(storage, { status: 'ok', records: [] }, createInlineCoordination());
+
+  /**
+   * 模拟 Provider 的 `useSyncExternalStore`：订阅 → 每次通知都换成最新快照。
+   * 与真实 React 的差别只有"何时重画"，"看到的是哪一版数据"完全一致。
+   */
+  let mirror = ledgerStore.snapshot();
+  let mirrorUpdates = 0;
+  ledgerStore.subscribe(() => {
+    mirror = ledgerStore.snapshot();
+    mirrorUpdates += 1;
+  });
 
   /**
    * 端口分两层：`rawPort` 是行为，`wrapped` 只负责计数。
@@ -299,6 +323,16 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
       });
       return outcome.status;
     },
+    seedExternally(records) {
+      storage.setItem(TRASH_LEDGER_KEY, encodeTrashLedger(records));
+    },
+    externalDelete() {
+      storage.removeItem(TRASH_LEDGER_KEY);
+      return ledgerStore.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: null });
+    },
+    gate: () => ledgerStore.blockMessage(),
+    mirror: () => mirror,
+    mirrorUpdates: () => mirrorUpdates,
     opIds,
   };
 }
@@ -1360,4 +1394,80 @@ test('P2-02-R1.2.1 恢复：成功对账解除待核对后，允许新的合法�
   const again = await h.controller.restore(PROJ, entry());
   assert.equal(again.status, 'applied');
   assert.equal(h.calls.restore, 2, '解除之后才允许再次恢复');
+});
+
+/* ================================================================== */
+/* R1.2.1-R1：Store 是权威、界面只是镜像                                  */
+/* ================================================================== */
+
+test('P2-02-R1.2.1-R1 恢复：另一个页面刚写入同 opId（本页尚未收到事件）→ 零 POST 且镜像立即同步', async () => {
+  const h = makeHarness();
+
+  // 另一个标签页写进同一份 localStorage；本页的 storage 事件还没送达
+  h.seedExternally([
+    {
+      workspaceKey: 'a1b2c3d4e5f60718',
+      projectId: PROJ,
+      opId: OP,
+      createdAt: '2026-11-24T00:00:00.000Z',
+    },
+  ]);
+  assert.deepEqual(h.mirror().records, [], '前提：本页镜像此刻还是空的');
+
+  const updatesBefore = h.mirrorUpdates();
+  const result = await h.controller.restore(PROJ, entry());
+
+  assert.equal(result.status, 'rejected');
+  assert.equal(h.calls.restore, 0, 'exists 不是授权');
+  assert.deepEqual(h.mirror().records.map((record) => record.opId), [OP], '拒绝的同时必须把 Store 的最新记录同步到界面');
+  assert.ok(h.mirrorUpdates() > updatesBefore, '必须真的通知过订阅者（否则 React 不会重画）');
+  assert.equal(h.mirror().status, 'ok');
+});
+
+test('P2-02-R1.2.1-R1 台账被外部删除：绕过界面直接调 Controller，零 POST/GET/query', async () => {
+  const h = makeHarness();
+  await h.host.reservePending({ workspaceKey: 'a1b2c3d4e5f60718', projectId: PROJ, opId: OP });
+  assert.equal(h.gate(), null);
+
+  // 另一个页面 removeItem + storage 事件（newValue === null）
+  assert.equal(h.externalDelete(), true);
+  const gate = h.gate();
+  assert.ok(gate, '失效之后必须有一句可展示的关闭原因');
+  assert.match(gate ?? '', /删除|失效/);
+  h.setRestoreGate(gate);
+
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'rejected');
+  assert.equal(h.calls.restore, 0, '强制绕过 UI 也不许发副作用请求');
+  assert.equal(h.calls.list, 0);
+  assert.equal(h.calls.query, 0);
+  assert.deepEqual(h.mirror().records.map((record) => record.opId), [OP], '记录仍在内存里，界面仍显示待核对');
+});
+
+test('P2-02-R1.2.1-R1 镜像：release / reconcile 锁内读到别的页面记录后同样要同步（哪怕结论是 unchanged）', async () => {
+  const h = makeHarness();
+  // 别的页面写的、属于另一个项目的记录：本次 release/reconcile 不会动它，只会读进来
+  const foreign = {
+    workspaceKey: 'a1b2c3d4e5f60718',
+    projectId: 'project-other',
+    opId: 'op-foreign-0001',
+    createdAt: '2026-11-24T00:00:00.000Z',
+  };
+  h.seedExternally([foreign]);
+  assert.deepEqual(h.mirror().records, []);
+
+  assert.equal(await h.reconcileLedger([entry()]), 'unchanged');
+  assert.deepEqual(h.mirror().records.map((record) => record.opId), ['op-foreign-0001'], 'reconcile 也要同步');
+
+  h.seedExternally([foreign, { ...foreign, projectId: 'project-other2', opId: 'op-foreign-0002' }]);
+  await h.host.releasePending({
+    workspaceKey: 'a1b2c3d4e5f60718',
+    projectId: PROJ,
+    opId: 'op-not-there-01',
+  });
+  assert.deepEqual(
+    h.mirror().records.map((record) => record.opId),
+    ['op-foreign-0001', 'op-foreign-0002'],
+    'release 即使返回 unchanged 也要同步锁内读到的记录',
+  );
 });

@@ -1,0 +1,20 @@
+=== typecheck ===
+> weavespace@0.0.0-p0 typecheck
+> tsc -p tsconfig.json
+
+=== typecheck:apps ===
+> tsc -p tsconfig.json
+
+
+> weavespace-server@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+=== build:shell ===
+computing gzip size...
+dist/index.html                   0.44 kB │ gzip:   0.33 kB
+dist/assets/index-BZQ0k3_1.css   23.51 kB │ gzip:   4.91 kB
+dist/assets/index-AyZ9GDFi.js   448.83 kB │ gzip: 136.29 kB
+
+[32m✓ built in 1.57s[39m
+=== git diff --check ===
+diff-check-exit=0

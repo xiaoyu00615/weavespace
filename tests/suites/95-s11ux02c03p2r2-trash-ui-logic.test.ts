@@ -1058,3 +1058,32 @@ test('P2-02-R1.2 reducer：同一工作区切项目后，旧项目的在途仍�
   });
   assert.deepEqual(state.trashByProject['project-a'].busyOpIds, [], '切项目不影响原来那条的收尾');
 });
+
+/* ================================================================== */
+/* R1.2.1-R1：台账状态变化也必须通知界面（不能只比记录签名）              */
+/* ================================================================== */
+
+test('P2-02-R1.2.1-R1 台账：记录集合没变、只有状态变坏时 refresh 必须返回"有变化"', async () => {
+  const { storage } = storageWithFailure();
+  const store = newStore(storage);
+  assert.equal((await store.reserve(pendingOf('op-status-0001'))).status, 'reserved');
+  assert.equal(store.status(), 'ok');
+  assert.equal(store.refresh(), false, '什么都没变时不该有信号');
+
+  // 外部把台账写坏：记录集合（在内存里）仍然是那一条，变化的是 readStatus
+  storage.setItem(TRASH_LEDGER_KEY, '{"version":1,"records":[{"workspaceKey":');
+  assert.equal(store.refresh(), true, '状态从 ok 变成 corrupt 也必须通知界面');
+  assert.equal(store.status(), 'corrupt');
+  assert.deepEqual(store.records().map((record) => record.opId), ['op-status-0001'], '非 ok 不得丢弃已知记录');
+  assert.match(store.blockMessage() ?? '', /损坏/);
+
+  // 同一个损坏状态再刷一次：没有新变化
+  assert.equal(store.refresh(), false);
+});
+
+test('P2-02-R1.2.1-R1 文案：外部删除导致的失效有独立说明，且不引导用户清空数据', () => {
+  const message = trashLedgerBlockMessage('invalidated') ?? '';
+  assert.match(message, /删除|失效/);
+  assert.match(message, /恢复/);
+  assert.doesNotMatch(message, /清除本应用数据/);
+});

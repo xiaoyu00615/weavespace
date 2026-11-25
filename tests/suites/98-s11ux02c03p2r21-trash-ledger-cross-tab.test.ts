@@ -344,3 +344,126 @@ test('P2-02-R1.2.1 跨标签页：storage 事件用 refresh 同步镜像（只�
   // refresh 不写盘：A 刚写的记录不会被"空镜像"覆盖
   assert.deepEqual(storedIds(storage), ['op-sync-0001']);
 });
+
+/* ================================================================== */
+/* 六、R1.2.1-R1：台账被外部删除 / 清空 / 写坏                           */
+/* ================================================================== */
+
+/** 已有 UNKNOWN 的两个标签页：A 写入、B 同步（这就是"另一个页面已经知道这条"）。 */
+async function twoTabsWithUnknown(opId = 'op-known-0001') {
+  const storage = sharedStorage();
+  const { tabA, tabB } = twoTabs(storage, createInlineCoordination());
+  assert.equal((await tabA.reserve(record(opId))).status, 'reserved');
+  assert.equal(tabB.refresh(), true);
+  assert.deepEqual(tabB.records().map((item) => item.opId), [opId]);
+  return { storage, tabA, tabB };
+}
+
+test('P2-02-R1.2.1-R1 首次启动：没有台账是合法的空台账，不是损坏', () => {
+  const storage = sharedStorage();
+  const store = createTrashLedgerStore(storage, readTrashLedger(storage), createInlineCoordination());
+
+  assert.equal(store.status(), 'ok');
+  assert.deepEqual(store.records(), []);
+  assert.equal(store.blockMessage(), null);
+  assert.equal(store.snapshot().version, 0, '第一次读到空台账不算一次变化');
+});
+
+test('P2-02-R1.2.1-R1 外部 removeItem：保留内存待核对、状态失效、写操作全关、不重建', async () => {
+  const { storage, tabB } = await twoTabsWithUnknown('op-ext-del-01');
+
+  // 另一个页面把整条台账删掉：下次读取看起来就是"干净的首次使用"
+  storage.removeItem(TRASH_LEDGER_KEY);
+  const changed = tabB.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: null });
+
+  assert.equal(changed, true, '必须通知界面重画');
+  assert.equal(tabB.status(), 'invalidated');
+  assert.deepEqual(tabB.records().map((item) => item.opId), ['op-ext-del-01'], '内存记录一条都不许丢');
+  assert.match(tabB.blockMessage() ?? '', /删除|失效/);
+
+  // 三个写路径全部拒绝：既不写盘，也不"重建"一份空台账
+  assert.equal((await tabB.reserve(record('op-ext-del-02'))).status, 'unavailable');
+  assert.equal(
+    (await tabB.release({ workspaceKey: WS, projectId: 'project-001', opIds: ['op-ext-del-01'] })).status,
+    'unavailable',
+  );
+  assert.equal(
+    (await tabB.reconcile({ workspaceKey: WS, projectId: 'project-001', entries: [], loaded: true })).status,
+    'unavailable',
+  );
+  assert.equal(storage.data.has(TRASH_LEDGER_KEY), false, '不许自动重建空台账');
+});
+
+test('P2-02-R1.2.1-R1 外部 localStorage.clear：event.key === null 同样进入失效保护', async () => {
+  const { storage, tabB } = await twoTabsWithUnknown('op-ext-clr-01');
+  storage.setItem('ws:workspace:v1:keep', '{"version":1}');
+
+  // clear() 的 storage 事件是 key === null / newValue === null
+  storage.data.clear();
+  assert.equal(tabB.applyExternalEvent({ key: null, newValue: null }), true);
+
+  assert.equal(tabB.status(), 'invalidated');
+  assert.deepEqual(tabB.records().map((item) => item.opId), ['op-ext-clr-01']);
+  assert.match(tabB.blockMessage() ?? '', /删除|失效/);
+  assert.equal((await tabB.reserve(record('op-ext-clr-02'))).status, 'unavailable');
+  assert.equal(storage.data.has(TRASH_LEDGER_KEY), false, '不许自动重建空台账');
+});
+
+test('P2-02-R1.2.1-R1 删除之后再写入空台账：本页仍保持失效，refresh 不得解除', async () => {
+  const { storage, tabA, tabB } = await twoTabsWithUnknown('op-ext-late1');
+  storage.removeItem(TRASH_LEDGER_KEY);
+  assert.equal(tabB.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: null }), true);
+  assert.equal(tabB.status(), 'invalidated');
+
+  // 别的页面又写了一份"合法但为空"的台账（或用户手动重建）
+  const empty = encodeTrashLedger([]);
+  storage.setItem(TRASH_LEDGER_KEY, empty);
+  assert.equal(
+    tabB.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: empty }),
+    false,
+    '失效之后普通 storage 事件不得再改动本页状态',
+  );
+  assert.equal(tabB.refresh(), false, 'refresh 也不能把失效保护解除');
+  assert.equal(tabB.status(), 'invalidated');
+  assert.deepEqual(tabB.records().map((item) => item.opId), ['op-ext-late1'], '内存记录仍然保留');
+  assert.equal((await tabB.reserve(record('op-ext-late2'))).status, 'unavailable');
+
+  // 另一个仍然健康的页面（A）读到的是"空台账"：这是它自己的视角，本页不跟
+  assert.deepEqual(storedIds(storage), []);
+  assert.equal(tabA.status(), 'ok');
+});
+
+test('P2-02-R1.2.1-R1 外部写入非法 JSON：保留内存记录、进入 corrupt、不覆盖原始字节', async () => {
+  const { storage, tabB } = await twoTabsWithUnknown('op-ext-bad-01');
+  const broken = '{"version":1,"records":[{"workspaceKey":';
+  storage.setItem(TRASH_LEDGER_KEY, broken);
+
+  assert.equal(tabB.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: broken }), true, '状态变了就要通知');
+  assert.equal(tabB.status(), 'corrupt');
+  assert.deepEqual(tabB.records().map((item) => item.opId), ['op-ext-bad-01'], '内存记录仍然保留');
+  assert.match(tabB.blockMessage() ?? '', /损坏/);
+  assert.equal(storage.data.get(TRASH_LEDGER_KEY), broken, '原始损坏数据不得被覆盖');
+  assert.equal((await tabB.reserve(record('op-ext-bad-02'))).status, 'unavailable');
+});
+
+test('P2-02-R1.2.1-R1 无关 key 的 storage 事件不影响台账', async () => {
+  const { tabB } = await twoTabsWithUnknown('op-ext-irr-01');
+
+  assert.equal(tabB.applyExternalEvent({ key: 'ws:workspace:v1:abc', newValue: null }), false);
+  assert.equal(tabB.applyExternalEvent({ key: 'something-else', newValue: '{"broken' }), false);
+  assert.equal(tabB.status(), 'ok');
+  assert.deepEqual(tabB.records().map((item) => item.opId), ['op-ext-irr-01']);
+  assert.equal((await tabB.reserve(record('op-ext-irr-02'))).status, 'reserved');
+});
+
+test('P2-02-R1.2.1-R1 删除事件尚未到达：reserve 不得把已知记录覆盖成"只剩新的这一条"', async () => {
+  const { storage, tabB } = await twoTabsWithUnknown('op-ext-race1');
+
+  // 模拟"删除已经发生但 storage 事件还没送达这一帧"
+  storage.removeItem(TRASH_LEDGER_KEY);
+  const outcome = await tabB.reserve(record('op-ext-race2'));
+
+  assert.equal(outcome.status, 'unavailable', '持久层突然变空时不能当它是首次使用');
+  assert.deepEqual(tabB.records().map((item) => item.opId), ['op-ext-race1'], '内存记录必须保住');
+  assert.equal(storage.data.has(TRASH_LEDGER_KEY), false, '更不能拿一份"只剩新记录"的台账覆盖删除现场');
+});

@@ -1,0 +1,7310 @@
+
+> weavespace@0.0.0-p0 test:p0
+> node tests/run-all.ts
+
+[p0] runId=22648 suites=99
+[p0] loading 00-observability.test.ts
+[p0] loading 01-storage-path.test.ts
+[p0] loading 02-plugin-lifecycle.test.ts
+[p0] loading 03-plugin-crash.test.ts
+[p0] loading 04-session-shared.test.ts
+[p0] loading 05-save-commit.test.ts
+[p0] loading 06-save-conflict.test.ts
+[p0] loading 07-save-failure.test.ts
+[p0] loading 08-idempotency.test.ts
+[p0] loading 09-unauthorized.test.ts
+[p0] loading 10-recovery.test.ts
+[p0] loading 11-architecture.test.ts
+[p0] loading 12-contract.test.ts
+[p0] loading 13-p0-1a.test.ts
+[p0] loading 14-s4-path-security.test.ts
+TAP version 13
+# Subtest: CT-12 日志记录包含 UTC 时间戳、traceId、operationId、module、errorCode
+ok 1 - CT-12 日志记录包含 UTC 时间戳、traceId、operationId、module、errorCode
+  ---
+  duration_ms: 90.4621
+  type: 'test'
+  ...
+# Subtest: CT-12 日志文件为逐行 JSONL，可被外部工具解析
+ok 2 - CT-12 日志文件为逐行 JSONL，可被外部工具解析
+  ---
+  duration_ms: 11.0423
+  type: 'test'
+  ...
+# Subtest: CT-12 耗时使用单调计时器且非负
+ok 3 - CT-12 耗时使用单调计时器且非负
+  ---
+  duration_ms: 1.3295
+  type: 'test'
+  ...
+# Subtest: STORAGE-01 根内相对路径可解析
+ok 4 - STORAGE-01 根内相对路径可解析
+  ---
+  duration_ms: 1.1702
+  type: 'test'
+  ...
+# Subtest: STORAGE-02 拒绝 .. 逃逸
+ok 5 - STORAGE-02 拒绝 .. 逃逸
+  ---
+  duration_ms: 0.4896
+  type: 'test'
+  ...
+# Subtest: STORAGE-03 拒绝绝对路径输入
+ok 6 - STORAGE-03 拒绝绝对路径输入
+  ---
+  duration_ms: 0.2397
+  type: 'test'
+  ...
+[p0] loading 15-s4r-root-identity.test.ts
+[p0] loading 16-s4r-stat-semantics.test.ts
+[p0] loading 17-s5-encoding-integrity.test.ts
+[p0] loading 18-s8-resource-identity.test.ts
+[p0] loading 19-s9a-markdown.test.ts
+[p0] loading 20-s9b-live-file.test.ts
+[p0] loading 21-s10a-capability.test.ts
+[p0] loading 22-s10a-hardening.test.ts
+[p0] loading 23-s11a-g0-root-continuity.test.ts
+# Subtest: STORAGE-04 写入与读取往返一致，内容版本随内容变化
+ok 7 - STORAGE-04 写入与读取往返一致，内容版本随内容变化
+  ---
+  duration_ms: 1494.1962
+  type: 'test'
+  ...
+[p0] loading 24-s11a-g0-r1-host-mapping.test.ts
+[p0] loading 25-s11a-g1-project-registry.test.ts
+[p0] loading 26-s11a-g1-host-isolation.test.ts
+[p0] loading 27-s11a-g1r1-command-identity.test.ts
+[p0] loading 28-s11a-g2-workspace-state.test.ts
+[p0] loading 29-s11a-g2-client-workflows.test.ts
+[p0] loading 30-s11a-g2r1-open-safety.test.ts
+[p0] loading 31-s11b-quick-file.test.ts
+[p0] loading 32-s11c-persistence-contract.test.ts
+[p0] loading 33-s11c-restore-workflows.test.ts
+[p0] loading 34-s11c-r1-write-gate.test.ts
+[p0] loading 35-s11c-r1-unsaved-contract.test.ts
+[p0] loading 36-s11c-r1-interaction-guard.test.ts
+[p0] loading 37-s11c-r1-workspace-identity.test.ts
+[p0] loading 38-s11c-r2-load-cancellation.test.ts
+[p0] loading 39-s11ux00-host-startup-args.test.ts
+[p0] loading 40-s11ux01a-file-refresh.test.ts
+[p0] loading 41-s11ux02a-r1-tree-guides.test.ts
+[p0] loading 42-s11ux02b01-project-runtime.test.ts
+[p0] loading 43-s11ux02b01r1-boundaries.test.ts
+[p0] loading 44-s11ux02b02-project-store.test.ts
+[p0] loading 45-s11ux02b02r1-store-hardening.test.ts
+[p0] loading 46-s11ux02b02r2-commit-evidence.test.ts
+[p0] loading 47-s11ux02b03-folder-picker.test.ts
+[p0] loading 48-s11ux02b03-picker-adapters.test.ts
+[p0] loading 49-s11ux02b03r1-fixes.test.ts
+[p0] loading 50-s11ux02btree-tree-contract.test.ts
+# Subtest: STORAGE-05 创建语义：expectedVersion=null 且文件已存在 → CONFLICT
+ok 8 - STORAGE-05 创建语义：expectedVersion=null 且文件已存在 → CONFLICT
+  ---
+  duration_ms: 212.3762
+  type: 'test'
+  ...
+# Subtest: STORAGE-06 越界写入被拒绝且不产生文件
+ok 9 - STORAGE-06 越界写入被拒绝且不产生文件
+  ---
+  duration_ms: 7.5829
+  type: 'test'
+  ...
+[p0] loading 51-s11ux02btree-shell-tree.test.ts
+[p0] loading 52-s11ux02btreer1-fixes.test.ts
+[p0] loading 53-s11ux02btreer2-integration.test.ts
+[p0] loading 54-s11ux02b04a-add-project.test.ts
+[p0] loading 55-s11ux02btree-tree01-firstload.test.ts
+[p0] loading 56-s11ux02b04b-removal-api.test.ts
+[p0] loading 57-s11ux02b04b-remove-orchestration.test.ts
+[p0] loading 58-s11ux02b04br1-identity-sync.test.ts
+[p0] loading 59-s11ux02b04br2-identity-window.test.ts
+[p0] loading 60-s11ux02b04br2-local-guard-and-singleton.test.ts
+[p0] loading 61-s11ux02b04br2e-final-edges.test.ts
+[p0] loading 62-s11ux02b05-concurrency.test.ts
+[p0] loading 63-s11ux02b05-project-lifecycle.test.ts
+[p0] loading 64-s11ux02b05-multi-project-editing.test.ts
+[p0] loading 65-s11ux02b05-tree-integration.test.ts
+[p0] loading 66-s11ux02b05-persistence-recovery.test.ts
+[p0] loading 67-s11ux02b05-security.test.ts
+[p0] loading 68-s11ux02b05e-identity-interleave.test.ts
+[p0] loading 69-s11ux02c01-create-host.test.ts
+[p0] loading 70-s11ux02c01-create-shell.test.ts
+[p0] loading 71-s11ux02c01r1-interaction.test.ts
+[p0] loading 72-s11ux02c02-structure-host.test.ts
+[p0] loading 73-s11ux02c02-structure-shell.test.ts
+[p0] loading 74-s11ux02c02r1-view-barrier-reservation.test.ts
+[p0] loading 75-s11ux02c02r11-page-instance.test.ts
+[p0] loading 76-s11ux02c02r11-shell-host-integration.test.ts
+[p0] loading 77-s11ux02c02r12-page-instance-storage.test.ts
+[p0] loading 78-s11ux02c02r12-reservation-rename.test.ts
+[p0] loading 79-s11ux02c02r12-restore-takeover.test.ts
+[p0] loading 80-s11ux02c02r13-restore-reclaim.test.ts
+[p0] loading 81-s11ux02c02r13-reclaim-batching.test.ts
+[p0] loading 82-s11ux02c03p1-visibility-host.test.ts
+[p0] loading 83-s11ux02c03p1-visibility-tree.test.ts
+[p0] loading 84-s11ux02c03p1-visibility-shell.test.ts
+[p0] loading 85-s11ux02c03p1-visibility-drafts.test.ts
+[p0] loading 86-s11ux02c03p1r1-visibility-fixes.test.ts
+[p0] loading 87-s11ux02c03p2-trash-host.test.ts
+[p0] loading 88-s11ux02c03p2-trash-guards.test.ts
+[p0] loading 89-s11ux02c03p2-trash-crash.test.ts
+[p0] loading 90-s11ux02c03p2r1-trash-provider-safety.test.ts
+[p0] loading 91-s11ux02c03p2r1-trash-concurrency.test.ts
+[p0] loading 92-s11ux02c03p2r1-trash-reconcile.test.ts
+[p0] loading 93-s11ux02c03p2r2-trash-provider-hardening.test.ts
+[p0] loading 94-s11ux02c03p2r2-trash-host-replay.test.ts
+[p0] loading 95-s11ux02c03p2r2-trash-ui-logic.test.ts
+[p0] loading 96-s11ux02c03p2r2-trash-orchestration.test.ts
+[p0] loading 97-s11ux02c03p2r2-trash-shell-e2e.test.ts
+[p0] loading 98-s11ux02c03p2r21-trash-ledger-cross-tab.test.ts
+# Subtest: STORAGE-07 list 递归返回相对路径并按字典序排列
+ok 10 - STORAGE-07 list 递归返回相对路径并按字典序排列
+  ---
+  duration_ms: 313.5702
+  type: 'test'
+  ...
+# Subtest: CT-01 Markdown 插件：校验 → 注册 → 激活，记录 UTC 时间与耗时
+ok 11 - CT-01 Markdown 插件：校验 → 注册 → 激活，记录 UTC 时间与耗时
+  ---
+  duration_ms: 9.3303
+  type: 'test'
+  ...
+# Subtest: CT-01b 重复插件 id 被拒绝，且不覆盖已有记录
+ok 12 - CT-01b 重复插件 id 被拒绝，且不覆盖已有记录
+  ---
+  duration_ms: 7.0608
+  type: 'test'
+  ...
+# Subtest: CT-01c apiVersion 不支持 → BLOCKED_DEPENDENCY，Core 仍健康
+ok 13 - CT-01c apiVersion 不支持 → BLOCKED_DEPENDENCY，Core 仍健康
+  ---
+  duration_ms: 4.6814
+  type: 'test'
+  ...
+# Subtest: CT-01d 清单非法 → ERR_PLUGIN_INVALID_MANIFEST 并给出字段级原因
+ok 14 - CT-01d 清单非法 → ERR_PLUGIN_INVALID_MANIFEST 并给出字段级原因
+  ---
+  duration_ms: 4.2299
+  type: 'test'
+  ...
+# Subtest: CT-08 插件激活抛错 → QUARANTINED，其他插件与 Core 不受影响
+ok 15 - CT-08 插件激活抛错 → QUARANTINED，其他插件与 Core 不受影响
+  ---
+  duration_ms: 30.5513
+  type: 'test'
+  ...
+# Subtest: CT-08b 存在未保存内容时停用插件被拒绝，插件保持 ACTIVE
+ok 16 - CT-08b 存在未保存内容时停用插件被拒绝，插件保持 ACTIVE
+  ---
+  duration_ms: 22.5029
+  type: 'test'
+  ...
+# Subtest: CT-02 两个视图共享同一 Session，编辑只产生一份缓冲
+ok 17 - CT-02 两个视图共享同一 Session，编辑只产生一份缓冲
+  ---
+  duration_ms: 16.4837
+  type: 'test'
+  ...
+# Subtest: CT-02b 关闭一个视图不影响另一个视图与未保存缓冲
+ok 18 - CT-02b 关闭一个视图不影响另一个视图与未保存缓冲
+  ---
+  duration_ms: 15.3761
+  type: 'test'
+  ...
+# Subtest: CT-02c 关闭最后一个带未保存内容的视图被拒绝（DATA-002）
+ok 19 - CT-02c 关闭最后一个带未保存内容的视图被拒绝（DATA-002）
+  ---
+  duration_ms: 12.3189
+  type: 'test'
+  ...
+# Subtest: CT-02d 不同 resourceId 即使是同一路径也各自独立会话（单会话按资源划分）
+ok 20 - CT-02d 不同 resourceId 即使是同一路径也各自独立会话（单会话按资源划分）
+  ---
+  duration_ms: 16.8449
+  type: 'test'
+  ...
+# Subtest: CT-02e 独立 DocumentService 实例（模拟另一客户端）不共享内存会话
+ok 21 - CT-02e 独立 DocumentService 实例（模拟另一客户端）不共享内存会话
+  ---
+  duration_ms: 29.3877
+  type: 'test'
+  ...
+# Subtest: CT-03 保存提交：磁盘内容与版本正确，会话回到 CLEAN
+ok 22 - CT-03 保存提交：磁盘内容与版本正确，会话回到 CLEAN
+  ---
+  duration_ms: 24.7283
+  type: 'test'
+  ...
+# Subtest: CT-03b 保存事件序列为 SAVE_STARTED → SAVE_COMMITTED，并带 UTC 时间与耗时
+ok 23 - CT-03b 保存事件序列为 SAVE_STARTED → SAVE_COMMITTED，并带 UTC 时间与耗时
+  ---
+  duration_ms: 21.0087
+  type: 'test'
+  ...
+# Subtest: CT-03c 通过 Command Bus 保存（含权限）返回 APPLIED 与 resultingVersion
+ok 24 - CT-03c 通过 Command Bus 保存（含权限）返回 APPLIED 与 resultingVersion
+  ---
+  duration_ms: 32.1929
+  type: 'test'
+  ...
+# Subtest: CT-03e 经 Command Bus 的保存事件携带请求 traceId（可端到端排障）
+ok 25 - CT-03e 经 Command Bus 的保存事件携带请求 traceId（可端到端排障）
+  ---
+  duration_ms: 28.9723
+  type: 'test'
+  ...
+# Subtest: CT-03d 日志不是成功来源：无保存动作时不得出现 SAVE_COMMITTED
+ok 26 - CT-03d 日志不是成功来源：无保存动作时不得出现 SAVE_COMMITTED
+  ---
+  duration_ms: 11.4612
+  type: 'test'
+  ...
+# Subtest: CT-04 外部修改后保存 → CONFLICT，磁盘保留外部内容，会话保持 dirty
+ok 27 - CT-04 外部修改后保存 → CONFLICT，磁盘保留外部内容，会话保持 dirty
+  ---
+  duration_ms: 24.3095
+  type: 'test'
+  ...
+# Subtest: CT-04b 冲突事件含 baseVersion 与 diskVersion，可据 traceId 排障
+ok 28 - CT-04b 冲突事件含 baseVersion 与 diskVersion，可据 traceId 排障
+  ---
+  duration_ms: 16.273
+  type: 'test'
+  ...
+# Subtest: CT-04c 客户端 expectedVersion 过期 → 命令层直接 REJECTED（写前版本校验）
+ok 29 - CT-04c 客户端 expectedVersion 过期 → 命令层直接 REJECTED（写前版本校验）
+  ---
+  duration_ms: 19.4644
+  type: 'test'
+  ...
+# Subtest: CT-04d 冲突后基于新磁盘版本可显式重存（用户裁决后），不自动重试
+ok 30 - CT-04d 冲突后基于新磁盘版本可显式重存（用户裁决后），不自动重试
+  ---
+  duration_ms: 17.7184
+  type: 'test'
+  ...
+# Subtest: CT-06 写盘前 IO 异常 → FAILED / ERR_STORAGE_IO，磁盘不变，dirty 保留
+ok 31 - CT-06 写盘前 IO 异常 → FAILED / ERR_STORAGE_IO，磁盘不变，dirty 保留
+  ---
+  duration_ms: 17.2087
+  type: 'test'
+  ...
+# Subtest: CT-05 权限拒绝 → 无持久化副作用，错误码 ERR_PERMISSION_DENIED
+ok 32 - CT-05 权限拒绝 → 无持久化副作用，错误码 ERR_PERMISSION_DENIED
+  ---
+  duration_ms: 15.6294
+  type: 'test'
+  ...
+# Subtest: CT-05b 真实文件系统只读属性：保存要么成功要么给出权限错误，不得静默
+ok 33 - CT-05b 真实文件系统只读属性：保存要么成功要么给出权限错误，不得静默
+  ---
+  duration_ms: 24.4082
+  type: 'test'
+  ...
+# Subtest: CT-06b 已落盘但确认丢失 → UNKNOWN，不自动标 CLEAN，reconcile 判定 APPLIED
+ok 34 - CT-06b 已落盘但确认丢失 → UNKNOWN，不自动标 CLEAN，reconcile 判定 APPLIED
+  ---
+  duration_ms: 23.864
+  type: 'test'
+  ...
+# Subtest: CT-06c 经 Command Bus 的 UNKNOWN 不写幂等收据（避免错误重放）
+ok 35 - CT-06c 经 Command Bus 的 UNKNOWN 不写幂等收据（避免错误重放）
+  ---
+  duration_ms: 25.9278
+  type: 'test'
+  ...
+# Subtest: CT-07 同一 idempotencyKey 重复保存 → 只产生一次副作用，第二次返回原收据
+ok 36 - CT-07 同一 idempotencyKey 重复保存 → 只产生一次副作用，第二次返回原收据
+  ---
+  duration_ms: 37.0969
+  type: 'test'
+  ...
+# Subtest: CT-07b 不同 actor 使用相同 idempotencyKey 不会互相吞并
+ok 37 - CT-07b 不同 actor 使用相同 idempotencyKey 不会互相吞并
+  ---
+  duration_ms: 29.3733
+  type: 'test'
+  ...
+# Subtest: CT-07c 重复 commandId 被拒绝（幂等必须显式使用 idempotencyKey）
+ok 38 - CT-07c 重复 commandId 被拒绝（幂等必须显式使用 idempotencyKey）
+  ---
+  duration_ms: 17.716
+  type: 'test'
+  ...
+# Subtest: CT-07d document.open 的幂等重试返回同一视图（指纹不得含运行期 sessionId）
+ok 39 - CT-07d document.open 的幂等重试返回同一视图（指纹不得含运行期 sessionId）
+  ---
+  duration_ms: 41.5468
+  type: 'test'
+  ...
+# Subtest: CT-09 无写权限的 actor 保存 → REJECTED，磁盘不变，审计含 actorId
+ok 40 - CT-09 无写权限的 actor 保存 → REJECTED，磁盘不变，审计含 actorId
+  ---
+  duration_ms: 18.9867
+  type: 'test'
+  ...
+# Subtest: CT-09b 匿名 actor（空 actorId）一律拒绝，不把匿名视为可信
+ok 41 - CT-09b 匿名 actor（空 actorId）一律拒绝，不把匿名视为可信
+  ---
+  duration_ms: 12.7534
+  type: 'test'
+  ...
+# Subtest: CT-09c 授权范围按目录前缀生效，范围外路径被拒绝（不越权到整项目）
+ok 42 - CT-09c 授权范围按目录前缀生效，范围外路径被拒绝（不越权到整项目）
+  ---
+  duration_ms: 10.8481
+  type: 'test'
+  ...
+# Subtest: CT-09d 撤销授权后立即失效
+ok 43 - CT-09d 撤销授权后立即失效
+  ---
+  duration_ms: 5.8785
+  type: 'test'
+  ...
+# Subtest: CT-10 提交后重启：新服务实例从磁盘读回已提交内容与版本
+ok 44 - CT-10 提交后重启：新服务实例从磁盘读回已提交内容与版本
+  ---
+  duration_ms: 23.3517
+  type: 'test'
+  ...
+# Subtest: CT-10b 未提交的编辑不在磁盘：重启后不得被误认为已保存
+ok 45 - CT-10b 未提交的编辑不在磁盘：重启后不得被误认为已保存
+  ---
+  duration_ms: 14.2748
+  type: 'test'
+  ...
+# Subtest: CT-10c 失败保存后重启：磁盘仍是旧版本，不出现"半成品"
+ok 46 - CT-10c 失败保存后重启：磁盘仍是旧版本，不出现"半成品"
+  ---
+  duration_ms: 20.7933
+  type: 'test'
+  ...
+# Subtest: CT-10d 已提交会话再次保存不需要变更基线（版本链连续）
+ok 47 - CT-10d 已提交会话再次保存不需要变更基线（版本链连续）
+  ---
+  duration_ms: 28.9669
+  type: 'test'
+  ...
+# Subtest: CT-11 新增只读查看器插件：仅靠 manifest + module 即可工作，无需改 Core
+ok 48 - CT-11 新增只读查看器插件：仅靠 manifest + module 即可工作，无需改 Core
+  ---
+  duration_ms: 10.3264
+  type: 'test'
+  ...
+# Subtest: CT-11b 同一扩展名可有多个处理器（扩展名不是独占）
+ok 49 - CT-11b 同一扩展名可有多个处理器（扩展名不是独占）
+  ---
+  duration_ms: 9.7303
+  type: 'test'
+  ...
+# Subtest: CT-11c 静态检查：packages 不 import plugins，插件之间不互相 import
+ok 50 - CT-11c 静态检查：packages 不 import plugins，插件之间不互相 import
+  ---
+  duration_ms: 14.8941
+  type: 'test'
+  ...
+# Subtest: CT-11d 每个模块具备单一公开入口 index.ts 与最小 README（ENG-001/ENG-005）
+ok 51 - CT-11d 每个模块具备单一公开入口 index.ts 与最小 README（ENG-001/ENG-005）
+  ---
+  duration_ms: 1.4955
+  type: 'test'
+  ...
+# Subtest: CT-11e 插件源码不直接访问 fs / 网络（能力边界）
+ok 52 - CT-11e 插件源码不直接访问 fs / 网络（能力边界）
+  ---
+  duration_ms: 1.3533
+  type: 'test'
+  ...
+# Subtest: CONTRACT-01 错误码注册表：键值一致、无重复、前缀统一
+ok 53 - CONTRACT-01 错误码注册表：键值一致、无重复、前缀统一
+  ---
+  duration_ms: 0.2518
+  type: 'test'
+  ...
+# Subtest: CONTRACT-02 信封校验：缺字段/类型错误均给出字段级原因
+ok 54 - CONTRACT-02 信封校验：缺字段/类型错误均给出字段级原因
+  ---
+  duration_ms: 0.2341
+  type: 'test'
+  ...
+# Subtest: CONTRACT-03 合法信封通过校验
+ok 55 - CONTRACT-03 合法信封通过校验
+  ---
+  duration_ms: 0.1206
+  type: 'test'
+  ...
+# Subtest: CONTRACT-04 未知命令 → ERR_COMMAND_UNSUPPORTED，且不产生副作用
+ok 56 - CONTRACT-04 未知命令 → ERR_COMMAND_UNSUPPORTED，且不产生副作用
+  ---
+  duration_ms: 6.1456
+  type: 'test'
+  ...
+# Subtest: CONTRACT-05 写命令缺 expectedVersion → REJECTED（DATA-001 强制版本校验）
+ok 57 - CONTRACT-05 写命令缺 expectedVersion → REJECTED（DATA-001 强制版本校验）
+  ---
+  duration_ms: 5.3204
+  type: 'test'
+  ...
+# Subtest: CONTRACT-06 不存在的会话 → 明确错误码而非抛异常冒泡
+ok 58 - CONTRACT-06 不存在的会话 → 明确错误码而非抛异常冒泡
+  ---
+  duration_ms: 7.3805
+  type: 'test'
+  ...
+# Subtest: CONTRACT-07 命令执行抛错被转为 FAILED，不把内部异常泄漏为崩溃
+ok 59 - CONTRACT-07 命令执行抛错被转为 FAILED，不把内部异常泄漏为崩溃
+  ---
+  duration_ms: 7.2497
+  type: 'test'
+  ...
+# Subtest: P0-1A/S1 带 operationId 的 dispatch 可执行，且 operationId 贯穿审计与保存日志
+ok 60 - P0-1A/S1 带 operationId 的 dispatch 可执行，且 operationId 贯穿审计与保存日志
+  ---
+  duration_ms: 25.6615
+  type: 'test'
+  ...
+# Subtest: P0-1A/S2 保存期间的新编辑不丢失：已写入版本与当前缓冲版本必须可区分
+ok 61 - P0-1A/S2 保存期间的新编辑不丢失：已写入版本与当前缓冲版本必须可区分
+  ---
+  duration_ms: 33.5321
+  type: 'test'
+  ...
+# Subtest: P0-1A/S2b 保存期间无编辑时仍必须回到 CLEAN（防止过度修复）
+ok 62 - P0-1A/S2b 保存期间无编辑时仍必须回到 CLEAN（防止过度修复）
+  ---
+  duration_ms: 19.5636
+  type: 'test'
+  ...
+# Subtest: P0-1A/S3a scope 前缀不得被 .. 穿越：docs 授权不覆盖根下其他文件
+ok 63 - P0-1A/S3a scope 前缀不得被 .. 穿越：docs 授权不覆盖根下其他文件
+  ---
+  duration_ms: 0.3815
+  type: 'test'
+  ...
+# Subtest: P0-1A/S3b 授权路径与 storage 实际解析路径使用同一规范形式（跨层不变量）
+ok 64 - P0-1A/S3b 授权路径与 storage 实际解析路径使用同一规范形式（跨层不变量）
+  ---
+  duration_ms: 5.1864
+  type: 'test'
+  ...
+# Subtest: P0-1A/S3c 非法 scope 不得被接受（授权表本身也要 fail-closed）
+ok 65 - P0-1A/S3c 非法 scope 不得被接受（授权表本身也要 fail-closed）
+  ---
+  duration_ms: 0.5686
+  type: 'test'
+  ...
+# Subtest: P0-1A/S3d 隐式全项目 scope 必须被拒绝：不得因「规范化后变空」扩大为全项目
+ok 66 - P0-1A/S3d 隐式全项目 scope 必须被拒绝：不得因「规范化后变空」扩大为全项目
+  ---
+  duration_ms: 0.5444
+  type: 'test'
+  ...
+# Subtest: P0-1A/S3e 显式全项目 scope（空字符串）仍然正常工作
+ok 67 - P0-1A/S3e 显式全项目 scope（空字符串）仍然正常工作
+  ---
+  duration_ms: 0.2274
+  type: 'test'
+  ...
+# Subtest: S4-01 junction 指向根外已存在文件：read 必须拒绝且不返回根外内容
+ok 68 - S4-01 junction 指向根外已存在文件：read 必须拒绝且不返回根外内容
+  ---
+  duration_ms: 14.914
+  type: 'test'
+  ...
+# Subtest: S4-02 经 junction 创建新文件：writeConditional 必须拒绝且根外不产生文件
+ok 69 - S4-02 经 junction 创建新文件：writeConditional 必须拒绝且根外不产生文件
+  ---
+  duration_ms: 12.7247
+  type: 'test'
+  ...
+# Subtest: S4-03 全部越界尝试之后：根外文件内容与 SHA-256 完全不变
+ok 70 - S4-03 全部越界尝试之后：根外文件内容与 SHA-256 完全不变
+  ---
+  duration_ms: 12.5004
+  type: 'test'
+  ...
+# Subtest: S4-04 经 junction 递归建目录并写文件：根外不得出现任何新对象
+ok 71 - S4-04 经 junction 递归建目录并写文件：根外不得出现任何新对象
+  ---
+  duration_ms: 11.0009
+  type: 'test'
+  ...
+# Subtest: S4-05 多级嵌套目录中的 junction：读取与写入都必须拒绝
+ok 72 - S4-05 多级嵌套目录中的 junction：读取与写入都必须拒绝
+  ---
+  duration_ms: 18.89
+  type: 'test'
+  ...
+# Subtest: S4-06 正常路径与合法创建不受影响（防过度修复）
+ok 73 - S4-06 正常路径与合法创建不受影响（防过度修复）
+  ---
+  duration_ms: 48.0628
+  type: 'test'
+  ...
+# Subtest: S4-07 list 不得穿越 junction 访问根外内容
+ok 74 - S4-07 list 不得穿越 junction 访问根外内容
+  ---
+  duration_ms: 17.3947
+  type: 'test'
+  ...
+# Subtest: S4-08 resolveInsideRoot 必须拒绝 junction 路径与其下的新路径
+ok 75 - S4-08 resolveInsideRoot 必须拒绝 junction 路径与其下的新路径
+  ---
+  duration_ms: 11.6849
+  type: 'test'
+  ...
+# Subtest: S4-09 stat 不得返回根外元数据（不得静默当作“不存在”）
+ok 76 - S4-09 stat 不得返回根外元数据（不得静默当作“不存在”）
+  ---
+  duration_ms: 12.4593
+  type: 'test'
+  ...
+# Subtest: S4-10 目录符号链接指向根外：读取与写入必须拒绝
+ok 77 - S4-10 目录符号链接指向根外：读取与写入必须拒绝
+  ---
+  duration_ms: 16.5934
+  type: 'test'
+  ...
+# Subtest: S4-11 文件符号链接指向根外文件：读取与写入必须拒绝
+ok 78 - S4-11 文件符号链接指向根外文件：读取与写入必须拒绝
+  ---
+  duration_ms: 25.8628
+  type: 'test'
+  ...
+# Subtest: S4-12 绝对路径、UNC、盘符相对与设备路径一律拒绝
+ok 79 - S4-12 绝对路径、UNC、盘符相对与设备路径一律拒绝
+  ---
+  duration_ms: 1.4725
+  type: 'test'
+  ...
+# Subtest: S4-13 指向根内的 junction：保守策略下同样拒绝（可预测，不静默放行）
+ok 80 - S4-13 指向根内的 junction：保守策略下同样拒绝（可预测，不静默放行）
+  ---
+  duration_ms: 28.9775
+  type: 'test'
+  ...
+# Subtest: S4-14 list 显式指定 junction 目录必须拒绝，不得返回根外内容
+ok 81 - S4-14 list 显式指定 junction 目录必须拒绝，不得返回根外内容
+  ---
+  duration_ms: 47.5476
+  type: 'test'
+  ...
+# Subtest: S4-15 正常项目目录中 read/stat/writeConditional/list 既有行为不变
+ok 82 - S4-15 正常项目目录中 read/stat/writeConditional/list 既有行为不变
+  ---
+  duration_ms: 58.9871
+  type: 'test'
+  ...
+# Subtest: S4-16 会话打开后路径变成重解析点：detectExternalChange 必须抛 ERR_PATH_OUTSIDE_ROOT
+ok 83 - S4-16 会话打开后路径变成重解析点：detectExternalChange 必须抛 ERR_PATH_OUTSIDE_ROOT
+  ---
+  duration_ms: 24.2117
+  type: 'test'
+  ...
+# Subtest: S4R-01 根不存在时父级 junction 改向：必须拒绝，A/B 均不得产生文件
+ok 84 - S4R-01 根不存在时父级 junction 改向：必须拒绝，A/B 均不得产生文件
+  ---
+  duration_ms: 16.6058
+  type: 'test'
+  ...
+# Subtest: S4R-02 根已存在时父级 junction 改向：必须拒绝且两侧均无新文件
+ok 85 - S4R-02 根已存在时父级 junction 改向：必须拒绝且两侧均无新文件
+  ---
+  duration_ms: 18.3112
+  type: 'test'
+  ...
+# Subtest: S4R-03 正常根：读写与递归创建仍然可用，物理落点正确
+ok 86 - S4R-03 正常根：读写与递归创建仍然可用，物理落点正确
+  ---
+  duration_ms: 21.5231
+  type: 'test'
+  ...
+# Subtest: S4R-04 根目录自身为 junction：读写正常且边界为真实目标
+ok 87 - S4R-04 根目录自身为 junction：读写正常且边界为真实目标
+  ---
+  duration_ms: 15.5311
+  type: 'test'
+  ...
+# Subtest: S4R-05 根不存在时的初始化：允许创建，落点固定在解析后的根内
+ok 88 - S4R-05 根不存在时的初始化：允许创建，落点固定在解析后的根内
+  ---
+  duration_ms: 21.1475
+  type: 'test'
+  ...
+# Subtest: S4R-06 根路径解析失败（ENAMETOOLONG）：构造即拒绝，不得回退字面路径
+ok 89 - S4R-06 根路径解析失败（ENAMETOOLONG）：构造即拒绝，不得回退字面路径
+  ---
+  duration_ms: 0.8436
+  type: 'test'
+  ...
+# Subtest: S4R-07 根内悬空 junction：拒绝写入且根外目标不被重建
+ok 90 - S4R-07 根内悬空 junction：拒绝写入且根外目标不被重建
+  ---
+  duration_ms: 8.938
+  type: 'test'
+  ...
+# Subtest: S4R-08 悬空 junction 作为多级缺失目录的祖先：构造必须 fail closed
+ok 91 - S4R-08 悬空 junction 作为多级缺失目录的祖先：构造必须 fail closed
+  ---
+  duration_ms: 7.8836
+  type: 'test'
+  ...
+# Subtest: S4R-09 边界漂移优先于版本冲突：必须 FAILED/ERR_PATH_OUTSIDE_ROOT 而非 CONFLICT
+ok 92 - S4R-09 边界漂移优先于版本冲突：必须 FAILED/ERR_PATH_OUTSIDE_ROOT 而非 CONFLICT
+  ---
+  duration_ms: 21.586
+  type: 'test'
+  ...
+# Subtest: S4R2-01 stat 正常缺失返回 exists:false
+ok 93 - S4R2-01 stat 正常缺失返回 exists:false
+  ---
+  duration_ms: 5.2868
+  type: 'test'
+  ...
+# Subtest: S4R2-02 stat 已存在文件返回 exists:true 与内容版本
+ok 94 - S4R2-02 stat 已存在文件返回 exists:true 与内容版本
+  ---
+  duration_ms: 8.5115
+  type: 'test'
+  ...
+# Subtest: S4R2-03 stat 遇到 EBUSY：必须抛 ERR_STORAGE_IO，不得伪装成不存在
+ok 95 - S4R2-03 stat 遇到 EBUSY：必须抛 ERR_STORAGE_IO，不得伪装成不存在
+  ---
+  duration_ms: 772.8787
+  type: 'test'
+  ...
+# Subtest: S4R2-04 read 遇到 EBUSY：必须抛 ERR_STORAGE_IO（与 stat 一致）
+ok 96 - S4R2-04 read 遇到 EBUSY：必须抛 ERR_STORAGE_IO（与 stat 一致）
+  ---
+  duration_ms: 446.0018
+  type: 'test'
+  ...
+# Subtest: S4R2-05 writeConditional 版本读取失败：FAILED 且磁盘内容与 SHA 不变
+ok 97 - S4R2-05 writeConditional 版本读取失败：FAILED 且磁盘内容与 SHA 不变
+  ---
+  duration_ms: 433.3827
+  type: 'test'
+  ...
+# Subtest: S4R2-06 detectExternalChange 遇 EBUSY：必须抛出可识别错误，不得返回 changed:false
+ok 98 - S4R2-06 detectExternalChange 遇 EBUSY：必须抛出可识别错误，不得返回 changed:false
+  ---
+  duration_ms: 417.887
+  type: 'test'
+  ...
+# Subtest: S4R2-07 mapStorageError：EPERM/EACCES→权限，EBUSY/EIO→IO，ENOENT→不存在
+ok 99 - S4R2-07 mapStorageError：EPERM/EACCES→权限，EBUSY/EIO→IO，ENOENT→不存在
+  ---
+  duration_ms: 0.4211
+  type: 'test'
+  ...
+# Subtest: S4R2-08 stat 遇到 EACCES：必须抛 ERR_PERMISSION_DENIED
+ok 100 - S4R2-08 stat 遇到 EACCES：必须抛 ERR_PERMISSION_DENIED # SKIP NOT_RUN: 需要修改临时文件 ACL（EPERM/EACCES），未获本轮授权
+  ---
+  duration_ms: 0.0518
+  type: 'test'
+  ...
+# Subtest: S4R2-09 窗口内文件被删除：stat 不得返回 exists:true + contentVersion:null
+ok 101 - S4R2-09 窗口内文件被删除：stat 不得返回 exists:true + contentVersion:null
+  ---
+  duration_ms: 21.1632
+  type: 'test'
+  ...
+# Subtest: S4R2-10 旧实现算法在同一窗口下确实产出 exists:true + contentVersion:null
+ok 102 - S4R2-10 旧实现算法在同一窗口下确实产出 exists:true + contentVersion:null
+  ---
+  duration_ms: 8.3739
+  type: 'test'
+  ...
+# Subtest: S4R2-11 窗口内被替换为目录：stat 必须抛 ERR_STORAGE_IO，不得当作不存在
+ok 103 - S4R2-11 窗口内被替换为目录：stat 必须抛 ERR_STORAGE_IO，不得当作不存在
+  ---
+  duration_ms: 12.4773
+  type: 'test'
+  ...
+# Subtest: S4R2-12 重新核验时目标变为非普通文件：必须抛 ERR_STORAGE_IO，不得当作不存在
+ok 104 - S4R2-12 重新核验时目标变为非普通文件：必须抛 ERR_STORAGE_IO，不得当作不存在
+  ---
+  duration_ms: 14.3135
+  type: 'test'
+  ...
+# Subtest: S5-01 GBK 字节：read 必须抛 ERR_ENCODING_UNSUPPORTED 且不返回替换字符
+ok 105 - S5-01 GBK 字节：read 必须抛 ERR_ENCODING_UNSUPPORTED 且不返回替换字符
+  ---
+  duration_ms: 27.6949
+  type: 'test'
+  ...
+# Subtest: S5-02 Latin-1 字节：read 必须抛 ERR_ENCODING_UNSUPPORTED
+ok 106 - S5-02 Latin-1 字节：read 必须抛 ERR_ENCODING_UNSUPPORTED
+  ---
+  duration_ms: 14.6302
+  type: 'test'
+  ...
+# Subtest: S5-03 PNG 内容：read 抛 ERR_RESOURCE_NOT_TEXT，writeConditional 拒绝覆盖且字节不变
+ok 107 - S5-03 PNG 内容：read 抛 ERR_RESOURCE_NOT_TEXT，writeConditional 拒绝覆盖且字节不变
+  ---
+  duration_ms: 15.4055
+  type: 'test'
+  ...
+# Subtest: S5-04 含 NUL 的内容：read 与 writeConditional 都必须拒绝（按非文本处理）
+ok 108 - S5-04 含 NUL 的内容：read 与 writeConditional 都必须拒绝（按非文本处理）
+  ---
+  duration_ms: 15.8032
+  type: 'test'
+  ...
+# Subtest: S5-05 UTF-8 BOM 与 CRLF：往返字节完全一致，BOM 保留在内容中
+ok 109 - S5-05 UTF-8 BOM 与 CRLF：往返字节完全一致，BOM 保留在内容中
+  ---
+  duration_ms: 25.0967
+  type: 'test'
+  ...
+# Subtest: S5-06 合法 U+FFFD 可正常读写；非法字节被拒绝（两者必须区分）
+ok 110 - S5-06 合法 U+FFFD 可正常读写；非法字节被拒绝（两者必须区分）
+  ---
+  duration_ms: 42.4402
+  type: 'test'
+  ...
+# Subtest: S5-07 openSession 遇编码错误：必须抛出且不创建会话；真正缺失仍可新建
+ok 111 - S5-07 openSession 遇编码错误：必须抛出且不创建会话；真正缺失仍可新建
+  ---
+  duration_ms: 16.467
+  type: 'test'
+  ...
+# Subtest: S5-08 openSession 遇 EBUSY：必须抛 ERR_STORAGE_IO，不得生成虚假 CLEAN 会话
+ok 112 - S5-08 openSession 遇 EBUSY：必须抛 ERR_STORAGE_IO，不得生成虚假 CLEAN 会话
+  ---
+  duration_ms: 466.3051
+  type: 'test'
+  ...
+# Subtest: S5-09 reconcile：磁盘被换成非法字节时必须 UNKNOWN，不得报 APPLIED
+ok 113 - S5-09 reconcile：磁盘被换成非法字节时必须 UNKNOWN，不得报 APPLIED
+  ---
+  duration_ms: 8.2297
+  type: 'test'
+  ...
+# Subtest: S5-10 reconcile：内容未变时仍必须 APPLIED（防过度修复）
+ok 114 - S5-10 reconcile：内容未变时仍必须 APPLIED（防过度修复）
+  ---
+  duration_ms: 9.6142
+  type: 'test'
+  ...
+# Subtest: S5-11 未配对代理项：save 与 writeConditional 都必须拒绝，磁盘不变
+ok 115 - S5-11 未配对代理项：save 与 writeConditional 都必须拒绝，磁盘不变
+  ---
+  duration_ms: 8.2348
+  type: 'test'
+  ...
+# Subtest: S5-12 正常 UTF-8：创建、编辑、保存、冲突与 UNKNOWN 行为不变
+ok 116 - S5-12 正常 UTF-8：创建、编辑、保存、冲突与 UNKNOWN 行为不变
+  ---
+  duration_ms: 24.5772
+  type: 'test'
+  ...
+# Subtest: S5-13 document.save：未知 serializerId 必须 REJECTED，不得回退 identity 直写
+ok 117 - S5-13 document.save：未知 serializerId 必须 REJECTED，不得回退 identity 直写
+  ---
+  duration_ms: 20.2882
+  type: 'test'
+  ...
+# Subtest: S5-14 openSession 经重解析点路径：必须抛 ERR_PATH_OUTSIDE_ROOT 且不建会话
+ok 118 - S5-14 openSession 经重解析点路径：必须抛 ERR_PATH_OUTSIDE_ROOT 且不建会话
+  ---
+  duration_ms: 13.3113
+  type: 'test'
+  ...
+# Subtest: S5-15 Serializer 抛异常：FAILED + 保持 dirty/baseVersion，事件与磁盘均正确
+ok 119 - S5-15 Serializer 抛异常：FAILED + 保持 dirty/baseVersion，事件与磁盘均正确
+  ---
+  duration_ms: 13.6194
+  type: 'test'
+  ...
+# Subtest: S5-16 Provider 写入抛异常：必须 UNKNOWN/OUTCOME_UNKNOWN，不得报 FAILED
+ok 120 - S5-16 Provider 写入抛异常：必须 UNKNOWN/OUTCOME_UNKNOWN，不得报 FAILED
+  ---
+  duration_ms: 10.0771
+  type: 'test'
+  ...
+# Subtest: S5-17 reconcile 中 Serializer 抛异常：返回 UNKNOWN 且会话状态不变
+ok 121 - S5-17 reconcile 中 Serializer 抛异常：返回 UNKNOWN 且会话状态不变
+  ---
+  duration_ms: 12.6508
+  type: 'test'
+  ...
+# Subtest: S5-18 纯 ASCII 二进制签名（GIF/PDF）不得通过文本接口写入
+ok 122 - S5-18 纯 ASCII 二进制签名（GIF/PDF）不得通过文本接口写入
+  ---
+  duration_ms: 24.5055
+  type: 'test'
+  ...
+# Subtest: S8-01 同 resourceId + 不同 path：必须抛 ERR_RESOURCE_IDENTITY_CONFLICT，且不产生副作用
+ok 123 - S8-01 同 resourceId + 不同 path：必须抛 ERR_RESOURCE_IDENTITY_CONFLICT，且不产生副作用
+  ---
+  duration_ms: 25.1819
+  type: 'test'
+  ...
+# Subtest: S8-02 同 resourceId + 不同存储根（providerId 相同）：必须拒绝
+ok 124 - S8-02 同 resourceId + 不同存储根（providerId 相同）：必须拒绝
+  ---
+  duration_ms: 30.1933
+  type: 'test'
+  ...
+# Subtest: S8-03 相同资源多视图仍共享同一 Session（防过度修复）
+ok 125 - S8-03 相同资源多视图仍共享同一 Session（防过度修复）
+  ---
+  duration_ms: 19.1386
+  type: 'test'
+  ...
+# Subtest: S8-04 仅 docs 写权限：伪造 payload.path 不能保存 secret 会话
+ok 126 - S8-04 仅 docs 写权限：伪造 payload.path 不能保存 secret 会话
+  ---
+  duration_ms: 31.6047
+  type: 'test'
+  ...
+# Subtest: S8-05 仅 docs 写权限：伪造 payload.path 不能编辑 secret 会话
+ok 127 - S8-05 仅 docs 写权限：伪造 payload.path 不能编辑 secret 会话
+  ---
+  duration_ms: 28.9771
+  type: 'test'
+  ...
+# Subtest: S8-06 仅 docs 读权限：复用 resourceId 不能拿到 secret 会话内容
+ok 128 - S8-06 仅 docs 读权限：复用 resourceId 不能拿到 secret 会话内容
+  ---
+  duration_ms: 41.9579
+  type: 'test'
+  ...
+# Subtest: S8-07 target 与 payload 身份不一致：必须拒绝（ERR_COMMAND_INVALID）
+ok 129 - S8-07 target 与 payload 身份不一致：必须拒绝（ERR_COMMAND_INVALID）
+  ---
+  duration_ms: 11.8384
+  type: 'test'
+  ...
+# Subtest: S8-08 save 时 target.resourceId 与会话不一致：必须拒绝
+ok 130 - S8-08 save 时 target.resourceId 与会话不一致：必须拒绝
+  ---
+  duration_ms: 14.5167
+  type: 'test'
+  ...
+# Subtest: S8-09 同一相对路径在不同 Provider 下不共享授权
+ok 131 - S8-09 同一相对路径在不同 Provider 下不共享授权
+  ---
+  duration_ms: 0.2599
+  type: 'test'
+  ...
+# Subtest: S8-10 有 baseVersion 的文件被删除：changed 必须为 true；新建会话仍为 false
+ok 132 - S8-10 有 baseVersion 的文件被删除：changed 必须为 true；新建会话仍为 false
+  ---
+  duration_ms: 14.8278
+  type: 'test'
+  ...
+# Subtest: S8-11 权限撤销后：同一 idempotencyKey 不得返回旧收据
+ok 133 - S8-11 权限撤销后：同一 idempotencyKey 不得返回旧收据
+  ---
+  duration_ms: 26.9582
+  type: 'test'
+  ...
+# Subtest: S8-12 不同资源复用同一 idempotencyKey：必须拒绝
+ok 134 - S8-12 不同资源复用同一 idempotencyKey：必须拒绝
+  ---
+  duration_ms: 33.3118
+  type: 'test'
+  ...
+# Subtest: S8-13 幂等收据不得跨 actor 查询
+ok 135 - S8-13 幂等收据不得跨 actor 查询
+  ---
+  duration_ms: 23.8451
+  type: 'test'
+  ...
+# Subtest: S8-14 审计记录实际资源；身份冲突拒绝时同时记录声称值
+ok 136 - S8-14 审计记录实际资源；身份冲突拒绝时同时记录声称值
+  ---
+  duration_ms: 29.8459
+  type: 'test'
+  ...
+# Subtest: S8-15 正常授权下 open/applyEdit/save 仍 APPLIED（含 path 一致与省略 path 两种写法）
+ok 137 - S8-15 正常授权下 open/applyEdit/save 仍 APPLIED（含 path 一致与省略 path 两种写法）
+  ---
+  duration_ms: 29.3658
+  type: 'test'
+  ...
+# Subtest: S8-16 双根 Provider（同 providerId）：applyEdit/save 必须按身份冲突拒绝
+ok 138 - S8-16 双根 Provider（同 providerId）：applyEdit/save 必须按身份冲突拒绝
+  ---
+  duration_ms: 14.2453
+  type: 'test'
+  ...
+# Subtest: S8-17 显式声明错误的 providerId：必须拒绝，不得静默忽略
+ok 139 - S8-17 显式声明错误的 providerId：必须拒绝，不得静默忽略
+  ---
+  duration_ms: 14.1138
+  type: 'test'
+  ...
+# Subtest: S8-18 同一幂等键提交不同 buffer 的 applyEdit：必须拒绝，缓冲保持第一次的结果
+ok 140 - S8-18 同一幂等键提交不同 buffer 的 applyEdit：必须拒绝，缓冲保持第一次的结果
+  ---
+  duration_ms: 21.5704
+  type: 'test'
+  ...
+# Subtest: S8-19 save：内容或 expectedVersion 变化后复用同键必须拒绝；完全相同重试仍去重
+ok 141 - S8-19 save：内容或 expectedVersion 变化后复用同键必须拒绝；完全相同重试仍去重
+  ---
+  duration_ms: 35.4861
+  type: 'test'
+  ...
+# Subtest: S9A-F01a `\#没有空格` 按普通文本渲染，且解析必然终止
+ok 142 - S9A-F01a `\#没有空格` 按普通文本渲染，且解析必然终止
+  ---
+  duration_ms: 1.4378
+  type: 'test'
+  ...
+# Subtest: S9A-F01b `\#\#` 与 `\#\#\#` 这类无内容标题按普通文本渲染
+ok 143 - S9A-F01b `\#\#` 与 `\#\#\#` 这类无内容标题按普通文本渲染
+  ---
+  duration_ms: 0.4512
+  type: 'test'
+  ...
+# Subtest: S9A-F01c `|普通文本`（下一行不是表格）按普通文本渲染
+ok 144 - S9A-F01c `|普通文本`（下一行不是表格）按普通文本渲染
+  ---
+  duration_ms: 0.1737
+  type: 'test'
+  ...
+# Subtest: S9A-F01d 整行只有一个 `|` 时按普通文本渲染
+ok 145 - S9A-F01d 整行只有一个 `|` 时按普通文本渲染
+  ---
+  duration_ms: 0.0985
+  type: 'test'
+  ...
+# Subtest: S9A-F01e 已识别的块级语法行为不变（标题/分隔线/引用/列表）
+ok 146 - S9A-F01e 已识别的块级语法行为不变（标题/分隔线/引用/列表）
+  ---
+  duration_ms: 0.2604
+  type: 'test'
+  ...
+# Subtest: S9A-F01f 正常表格保留表头与数据行，分隔行被丢弃
+ok 147 - S9A-F01f 正常表格保留表头与数据行，分隔行被丢弃
+  ---
+  duration_ms: 0.5521
+  type: 'test'
+  ...
+# Subtest: S9A-F01g 未闭合代码围栏延续到文末，不丢内容也不越界
+ok 148 - S9A-F01g 未闭合代码围栏延续到文末，不丢内容也不越界
+  ---
+  duration_ms: 0.1554
+  type: 'test'
+  ...
+# Subtest: S9A-F01h 普通文本与 Markdown 混合时块顺序正确
+ok 149 - S9A-F01h 普通文本与 Markdown 混合时块顺序正确
+  ---
+  duration_ms: 0.1598
+  type: 'test'
+  ...
+# Subtest: S9A-F01i 分类器对任意输入都有确定结果，且每行至少被消费一次
+ok 150 - S9A-F01i 分类器对任意输入都有确定结果，且每行至少被消费一次
+  ---
+  duration_ms: 0.2166
+  type: 'test'
+  ...
+# Subtest: S9A-F01j 大量未识别行不会导致解析不返回（规模回归）
+ok 151 - S9A-F01j 大量未识别行不会导致解析不返回（规模回归）
+  ---
+  duration_ms: 0.9669
+  type: 'test'
+  ...
+# Subtest: S9A-F02a 允许 http/https/mailto 与安全相对路径
+ok 152 - S9A-F02a 允许 http/https/mailto 与安全相对路径
+  ---
+  duration_ms: 0.2321
+  type: 'test'
+  ...
+# Subtest: S9A-F02b 拒绝 javascript/data/vbscript 等不可信协议
+ok 153 - S9A-F02b 拒绝 javascript/data/vbscript 等不可信协议
+  ---
+  duration_ms: 0.1025
+  type: 'test'
+  ...
+# Subtest: S9A-F02c 控制字符伪装的协议同样被拒绝
+ok 154 - S9A-F02c 控制字符伪装的协议同样被拒绝
+  ---
+  duration_ms: 0.0774
+  type: 'test'
+  ...
+# Subtest: S9A-F02d 协议相对地址（//host）按不可信处理，不当成相对路径
+ok 155 - S9A-F02d 协议相对地址（//host）按不可信处理，不当成相对路径
+  ---
+  duration_ms: 0.0564
+  type: 'test'
+  ...
+# Subtest: S9A-F02e 不可信链接在解析结果中 href 为 null，且保留原文用于降级
+ok 156 - S9A-F02e 不可信链接在解析结果中 href 为 null，且保留原文用于降级
+  ---
+  duration_ms: 0.2546
+  type: 'test'
+  ...
+# Subtest: S9A-F02f 解析结果中不存在任何未通过白名单的 href
+ok 157 - S9A-F02f 解析结果中不存在任何未通过白名单的 href
+  ---
+  duration_ms: 0.1743
+  type: 'test'
+  ...
+# Subtest: S9A-F02g 渲染器不使用 dangerouslySetInnerHTML
+ok 158 - S9A-F02g 渲染器不使用 dangerouslySetInnerHTML
+  ---
+  duration_ms: 3.2389
+  type: 'test'
+  ...
+# Subtest: S9B-01 服务可启动、健康检查通过、关闭后不再接受连接
+ok 159 - S9B-01 服务可启动、健康检查通过、关闭后不再接受连接
+  ---
+  duration_ms: 50.2489
+  type: 'test'
+  ...
+# Subtest: S9B-02 不接受客户端指定项目根，越界路径被拒绝
+ok 160 - S9B-02 不接受客户端指定项目根，越界路径被拒绝
+  ---
+  duration_ms: 47.8416
+  type: 'test'
+  ...
+# Subtest: S9B-03 资源树只包含项目内可读文本文件，不包含二进制
+ok 161 - S9B-03 资源树只包含项目内可读文本文件，不包含二进制
+  ---
+  duration_ms: 48.0832
+  type: 'test'
+  ...
+# Subtest: S9B-04 伪造 sessionId/viewId 的正文读取被拒绝
+ok 162 - S9B-04 伪造 sessionId/viewId 的正文读取被拒绝
+  ---
+  duration_ms: 36.712
+  type: 'test'
+  ...
+# Subtest: S9B-05 open 返回 SessionId/ViewId、真实内容与内容版本
+ok 163 - S9B-05 open 返回 SessionId/ViewId、真实内容与内容版本
+  ---
+  duration_ms: 27.39
+  type: 'test'
+  ...
+# Subtest: S9B-06 编辑后保存：磁盘字节与会话内容一致，版本更新
+ok 164 - S9B-06 编辑后保存：磁盘字节与会话内容一致，版本更新
+  ---
+  duration_ms: 38.7442
+  type: 'test'
+  ...
+# Subtest: S9B-07 关闭视图后重新打开，读到本次保存的内容
+ok 165 - S9B-07 关闭视图后重新打开，读到本次保存的内容
+  ---
+  duration_ms: 47.6151
+  type: 'test'
+  ...
+# Subtest: S9B-08 外部修改后保存：CONFLICT，磁盘不被覆盖，编辑内容保留
+ok 166 - S9B-08 外部修改后保存：CONFLICT，磁盘不被覆盖，编辑内容保留
+  ---
+  duration_ms: 35.8213
+  type: 'test'
+  ...
+# Subtest: S9B-09 保存 FAILED（目标变成二进制）：返回错误码且不丢用户缓冲
+ok 167 - S9B-09 保存 FAILED（目标变成二进制）：返回错误码且不丢用户缓冲
+  ---
+  duration_ms: 36.2887
+  type: 'test'
+  ...
+# Subtest: S9B-10 保存结果未知（UNKNOWN）：标记 OUTCOME_UNKNOWN 且不自动重试
+ok 168 - S9B-10 保存结果未知（UNKNOWN）：标记 OUTCOME_UNKNOWN 且不自动重试
+  ---
+  duration_ms: 101.4741
+  type: 'test'
+  ...
+# Subtest: S9B-11 同一文档的两个视图共享同一会话与缓冲
+ok 169 - S9B-11 同一文档的两个视图共享同一会话与缓冲
+  ---
+  duration_ms: 34.7963
+  type: 'test'
+  ...
+# Subtest: S9B-12 伪造 providerId / resourceId / actorId 一律拒绝
+ok 170 - S9B-12 伪造 providerId / resourceId / actorId 一律拒绝
+  ---
+  duration_ms: 30.4431
+  type: 'test'
+  ...
+# Subtest: S9B-13 非法 Host、非白名单 Origin、跨站写请求均被拒绝
+ok 171 - S9B-13 非法 Host、非白名单 Origin、跨站写请求均被拒绝
+  ---
+  duration_ms: 37.9597
+  type: 'test'
+  ...
+# Subtest: S9B-14 live 通道不暴露演示数据，也不会凭空写盘
+ok 172 - S9B-14 live 通道不暴露演示数据，也不会凭空写盘
+  ---
+  duration_ms: 35.344
+  type: 'test'
+  ...
+# Subtest: S9B-15 编辑队列串行发送并合并中间态，避免响应乱序导致内容回退
+ok 173 - S9B-15 编辑队列串行发送并合并中间态，避免响应乱序导致内容回退
+  ---
+  duration_ms: 17.9541
+  type: 'test'
+  ...
+# Subtest: S9B-16 编辑队列：单次失败不吞掉后续输入
+ok 174 - S9B-16 编辑队列：单次失败不吞掉后续输入
+  ---
+  duration_ms: 1.0427
+  type: 'test'
+  ...
+# Subtest: S9B-17 服务不提供静态文件或磁盘浏览接口
+ok 175 - S9B-17 服务不提供静态文件或磁盘浏览接口
+  ---
+  duration_ms: 33.3046
+  type: 'test'
+  ...
+# Subtest: S9B-18 测试临时目录不落在仓库内
+ok 176 - S9B-18 测试临时目录不落在仓库内
+  ---
+  duration_ms: 2.5136
+  type: 'test'
+  ...
+# Subtest: S9B-19 编辑被拒绝时 flush 报失败，保存不得把旧内容写成草稿
+ok 177 - S9B-19 编辑被拒绝时 flush 报失败，保存不得把旧内容写成草稿
+  ---
+  duration_ms: 31.4361
+  type: 'test'
+  ...
+# Subtest: S9B-20 超过 1 MiB 的编辑被服务端拒绝，保存被阻止且磁盘不变
+ok 178 - S9B-20 超过 1 MiB 的编辑被服务端拒绝，保存被阻止且磁盘不变
+  ---
+  duration_ms: 44.7627
+  type: 'test'
+  ...
+# Subtest: S9B-21 网络故障导致 applyEdit 抛错：保存被阻止
+ok 179 - S9B-21 网络故障导致 applyEdit 抛错：保存被阻止
+  ---
+  duration_ms: 7.3513
+  type: 'test'
+  ...
+# Subtest: S9B-22 失败后重新同步成功：可以正常保存并写盘
+ok 180 - S9B-22 失败后重新同步成功：可以正常保存并写盘
+  ---
+  duration_ms: 38.5112
+  type: 'test'
+  ...
+# Subtest: S9B-23 保存请求抛异常（断网）：UNKNOWN、保留脏标记，绝不报成功
+ok 181 - S9B-23 保存请求抛异常（断网）：UNKNOWN、保留脏标记，绝不报成功
+  ---
+  duration_ms: 0.3103
+  type: 'test'
+  ...
+# Subtest: S9B-24 保存成功但 Core 仍有新编辑：标记保持 dirty
+ok 182 - S9B-24 保存成功但 Core 仍有新编辑：标记保持 dirty
+  ---
+  duration_ms: 0.1582
+  type: 'test'
+  ...
+# Subtest: S9B-25 各保存结论保持既有 Core 语义（CONFLICT / UNKNOWN / FAILED）
+ok 183 - S9B-25 各保存结论保持既有 Core 语义（CONFLICT / UNKNOWN / FAILED）
+  ---
+  duration_ms: 0.1759
+  type: 'test'
+  ...
+# Subtest: S9B-26 非回环地址在 listen 之前被拒绝，默认与 IPv6 回环可用
+ok 184 - S9B-26 非回环地址在 listen 之前被拒绝，默认与 IPv6 回环可用
+  ---
+  duration_ms: 10.6967
+  type: 'test'
+  ...
+# Subtest: S9B-27 关闭后外部改盘：重开读到最新内容与版本，再次保存成功
+ok 185 - S9B-27 关闭后外部改盘：重开读到最新内容与版本，再次保存成功
+  ---
+  duration_ms: 58.51
+  type: 'test'
+  ...
+# Subtest: S9B-28 有未保存修改时外部改盘：保存 CONFLICT，草稿保持原样
+ok 186 - S9B-28 有未保存修改时外部改盘：保存 CONFLICT，草稿保持原样
+  ---
+  duration_ms: 37.2685
+  type: 'test'
+  ...
+# Subtest: S9B-29 未经显式确认的重载被拒绝，草稿不丢
+ok 187 - S9B-29 未经显式确认的重载被拒绝，草稿不丢
+  ---
+  duration_ms: 46.7702
+  type: 'test'
+  ...
+# Subtest: S9B-30 显式确认后重载：内容与版本对齐磁盘，可继续编辑保存
+ok 188 - S9B-30 显式确认后重载：内容与版本对齐磁盘，可继续编辑保存
+  ---
+  duration_ms: 48.1814
+  type: 'test'
+  ...
+# Subtest: S9B-31 重载失败（磁盘文件已删除）：返回错误且原有草稿不丢失
+ok 189 - S9B-31 重载失败（磁盘文件已删除）：返回错误且原有草稿不丢失
+  ---
+  duration_ms: 43.1363
+  type: 'test'
+  ...
+# Subtest: S9B-32 磁盘版本只读查看：返回磁盘内容，伪造会话被拒绝
+ok 190 - S9B-32 磁盘版本只读查看：返回磁盘内容，伪造会话被拒绝
+  ---
+  duration_ms: 41.1184
+  type: 'test'
+  ...
+# Subtest: S9B-33 干净会话即使还有视图（页面刷新残留）也会在重开时同步磁盘
+ok 191 - S9B-33 干净会话即使还有视图（页面刷新残留）也会在重开时同步磁盘
+  ---
+  duration_ms: 48.5208
+  type: 'test'
+  ...
+# Subtest: S9B-34 干净会话重开时文件已被删除：必须报 ERR_RESOURCE_NOT_FOUND，不得返回旧 CLEAN 会话
+ok 192 - S9B-34 干净会话重开时文件已被删除：必须报 ERR_RESOURCE_NOT_FOUND，不得返回旧 CLEAN 会话
+  ---
+  duration_ms: 9.4385
+  type: 'test'
+  ...
+# Subtest: S9B-35 重开时 Provider 抛权限/路径错误：必须原样上报
+ok 193 - S9B-35 重开时 Provider 抛权限/路径错误：必须原样上报
+  ---
+  duration_ms: 7.7398
+  type: 'test'
+  ...
+# Subtest: S9B-36 从未存在的新文件：重开仍保持合法的空会话语义
+ok 194 - S9B-36 从未存在的新文件：重开仍保持合法的空会话语义
+  ---
+  duration_ms: 5.4034
+  type: 'test'
+  ...
+# Subtest: S9B-37 读取期间被编辑：旧磁盘结果不得回填，不得产生 CLEAN+dirty 矛盾状态
+ok 195 - S9B-37 读取期间被编辑：旧磁盘结果不得回填，不得产生 CLEAN+dirty 矛盾状态
+  ---
+  duration_ms: 9.4609
+  type: 'test'
+  ...
+# Subtest: S9B-38 草稿备份全部失败时不得发起重载
+ok 196 - S9B-38 草稿备份全部失败时不得发起重载
+  ---
+  duration_ms: 2.424
+  type: 'test'
+  ...
+# Subtest: S10A-01 能力注册后可被发现，并能按能力名 + 扩展名解析
+ok 197 - S10A-01 能力注册后可被发现，并能按能力名 + 扩展名解析
+  ---
+  duration_ms: 4.0137
+  type: 'test'
+  ...
+# Subtest: S10A-01b 能力标识支持主版本后缀，解析结果稳定
+ok 198 - S10A-01b 能力标识支持主版本后缀，解析结果稳定
+  ---
+  duration_ms: 0.3141
+  type: 'test'
+  ...
+# Subtest: S10A-02 重复 id 与不兼容能力版本都被明确拒绝
+ok 199 - S10A-02 重复 id 与不兼容能力版本都被明确拒绝
+  ---
+  duration_ms: 1.3199
+  type: 'test'
+  ...
+# Subtest: S10A-03 依赖缺失 → BLOCKED_DEPENDENCY，且模块 activate 不会被调用
+ok 200 - S10A-03 依赖缺失 → BLOCKED_DEPENDENCY，且模块 activate 不会被调用
+  ---
+  duration_ms: 1.0404
+  type: 'test'
+  ...
+# Subtest: S10A-03b Core 侧可信模块不要求有对应插件
+ok 201 - S10A-03b Core 侧可信模块不要求有对应插件
+  ---
+  duration_ms: 0.6775
+  type: 'test'
+  ...
+# Subtest: S10A-04 Markdown 插件的查看能力可解析，且其解析器支持真实内容
+ok 202 - S10A-04 Markdown 插件的查看能力可解析，且其解析器支持真实内容
+  ---
+  duration_ms: 2.9325
+  type: 'test'
+  ...
+# Subtest: S10A-05 停用 Markdown → .md 由通用文本能力接管；树与 Core 不受影响
+ok 203 - S10A-05 停用 Markdown → .md 由通用文本能力接管；树与 Core 不受影响
+  ---
+  duration_ms: 1.0832
+  type: 'test'
+  ...
+# Subtest: S10A-05b 存在未保存内容时停用被拒绝（不丢草稿）
+ok 204 - S10A-05b 存在未保存内容时停用被拒绝（不丢草稿）
+  ---
+  duration_ms: 0.6802
+  type: 'test'
+  ...
+# Subtest: S10A-06 第三方查看器可接管 .md，Shell 不 import 任何插件实现
+ok 205 - S10A-06 第三方查看器可接管 .md，Shell 不 import 任何插件实现
+  ---
+  duration_ms: 8.6903
+  type: 'test'
+  ...
+# Subtest: S10A-07 通过插件查看的文档，保存仍受权限与版本条件约束
+ok 206 - S10A-07 通过插件查看的文档，保存仍受权限与版本条件约束
+  ---
+  duration_ms: 33.7836
+  type: 'test'
+  ...
+# Subtest: S10A-07b 插件源码不直接访问文件系统 / 网络
+ok 207 - S10A-07b 插件源码不直接访问文件系统 / 网络
+  ---
+  duration_ms: 4.3798
+  type: 'test'
+  ...
+# Subtest: S10A-08 查看器渲染抛错被收敛为错误码，不向上抛出
+ok 208 - S10A-08 查看器渲染抛错被收敛为错误码，不向上抛出
+  ---
+  duration_ms: 0.5539
+  type: 'test'
+  ...
+# Subtest: S10A-08b 插件激活抛错 → QUARANTINED，其他插件与 Core 不受影响
+ok 209 - S10A-08b 插件激活抛错 → QUARANTINED，其他插件与 Core 不受影响
+  ---
+  duration_ms: 0.9032
+  type: 'test'
+  ...
+# Subtest: S10A-08c 插件面板读取的是真实 Runtime 状态
+ok 210 - S10A-08c 插件面板读取的是真实 Runtime 状态
+  ---
+  duration_ms: 1.4936
+  type: 'test'
+  ...
+# Subtest: R01 [静态] ViewerBoundary 必须带 key（docId + providerId），否则错误状态跨文档残留
+ok 211 - R01 [静态] ViewerBoundary 必须带 key（docId + providerId），否则错误状态跨文档残留
+  ---
+  duration_ms: 0.6785
+  type: 'test'
+  ...
+# Subtest: R02-A [运行时] 并发 activate 只执行一次初始化
+ok 212 - R02-A [运行时] 并发 activate 只执行一次初始化
+  ---
+  duration_ms: 0.4778
+  type: 'test'
+  ...
+# Subtest: R02-B [运行时] activate 期间的 deactivate 必须排队等待，不得并行执行销毁
+ok 213 - R02-B [运行时] activate 期间的 deactivate 必须排队等待，不得并行执行销毁
+  ---
+  duration_ms: 8.2815
+  type: 'test'
+  ...
+# Subtest: R02-C [运行时] 并发激活失败：钩子只跑一次，两个请求共享失败结果
+ok 214 - R02-C [运行时] 并发激活失败：钩子只跑一次，两个请求共享失败结果
+  ---
+  duration_ms: 0.5579
+  type: 'test'
+  ...
+# Subtest: R02-D [运行时] activate → deactivate → activate：停用后的再激活不得被合并掉
+ok 215 - R02-D [运行时] activate → deactivate → activate：停用后的再激活不得被合并掉
+  ---
+  duration_ms: 0.3057
+  type: 'test'
+  ...
+# Subtest: R03a [运行时] 注册与构造不产生激活副作用
+ok 216 - R03a [运行时] 注册与构造不产生激活副作用
+  ---
+  duration_ms: 12.5565
+  type: 'test'
+  ...
+# Subtest: R03b [运行时] 已 ACTIVE 后重复 activate 幂等（不构成 StrictMode 的 E2E 证据）
+ok 217 - R03b [运行时] 已 ACTIVE 后重复 activate 幂等（不构成 StrictMode 的 E2E 证据）
+  ---
+  duration_ms: 0.4648
+  type: 'test'
+  ...
+# Subtest: R03c [静态] Shell 注册表构造时必须无启动副作用（不得在构造期发起 activate）
+ok 218 - R03c [静态] Shell 注册表构造时必须无启动副作用（不得在构造期发起 activate）
+  ---
+  duration_ms: 2.4008
+  type: 'test'
+  ...
+# Subtest: R04 [静态] 各插件 client 注册的能力必须与 manifest.provides 完全一致
+ok 219 - R04 [静态] 各插件 client 注册的能力必须与 manifest.provides 完全一致
+  ---
+  duration_ms: 2.4934
+  type: 'test'
+  ...
+# Subtest: R04b [运行时] 声明与注册不一致时，能力解析表现为"已声明但不可解析"
+ok 220 - R04b [运行时] 声明与注册不一致时，能力解析表现为"已声明但不可解析"
+  ---
+  duration_ms: 0.3296
+  type: 'test'
+  ...
+# Subtest: G0-01 已建立根被删除后，新建文件会话保存必须失败且不重建根
+ok 221 - G0-01 已建立根被删除后，新建文件会话保存必须失败且不重建根
+  ---
+  duration_ms: 4.9613
+  type: 'test'
+  ...
+# Subtest: G0-02 已建立根被移动后，保存不得在旧路径重建根
+ok 222 - G0-02 已建立根被移动后，保存不得在旧路径重建根
+  ---
+  duration_ms: 8.8445
+  type: 'test'
+  ...
+# Subtest: G0-03 已存在文件的根失效，必须报告根错误而不是版本冲突
+ok 223 - G0-03 已存在文件的根失效，必须报告根错误而不是版本冲突
+  ---
+  duration_ms: 8.4294
+  type: 'test'
+  ...
+# Subtest: G0-04 删除后重建同名根：身份变化必须被识别，不得写入新根
+ok 224 - G0-04 删除后重建同名根：身份变化必须被识别，不得写入新根
+  ---
+  duration_ms: 12.8374
+  type: 'test'
+  ...
+# Subtest: G0-05 Provider 构造时根不存在，首次写入仍可合法初始化
+ok 225 - G0-05 Provider 构造时根不存在，首次写入仍可合法初始化
+  ---
+  duration_ms: 23.1253
+  type: 'test'
+  ...
+# Subtest: G0-06 首次创建后根被删除，后续写入必须拒绝且不得二次初始化
+ok 226 - G0-06 首次创建后根被删除，后续写入必须拒绝且不得二次初始化
+  ---
+  duration_ms: 14.5184
+  type: 'test'
+  ...
+# Subtest: G0-07 并发首次初始化必须串行协调，完成后只有唯一根身份
+ok 227 - G0-07 并发首次初始化必须串行协调，完成后只有唯一根身份
+  ---
+  duration_ms: 22.0523
+  type: 'test'
+  ...
+# Subtest: G0-08 根令牌必须用 BigInt 精确构造，Number 精度丢失不得影响身份
+ok 228 - G0-08 根令牌必须用 BigInt 精确构造，Number 精度丢失不得影响身份
+  ---
+  duration_ms: 0.7885
+  type: 'test'
+  ...
+# Subtest: G0-08b [FS] 运行时令牌与 bigint stat 逐字段一致
+ok 229 - G0-08b [FS] 运行时令牌与 bigint stat 逐字段一致
+  ---
+  duration_ms: 5.1445
+  type: 'test'
+  ...
+# Subtest: G0-08c [STATIC] 令牌实现不得经过 Number/parseInt
+ok 230 - G0-08c [STATIC] 令牌实现不得经过 Number/parseInt
+  ---
+  duration_ms: 0.5863
+  type: 'test'
+  ...
+# Subtest: G0-09 根被替换为 junction 后，读写不得跟随到替换目标
+ok 231 - G0-09 根被替换为 junction 后，读写不得跟随到替换目标
+  ---
+  duration_ms: 19.5829
+  type: 'test'
+  ...
+# Subtest: G0-10a [INJECT] C1 处根被删除：返回 FAILED 且不重建根
+ok 232 - G0-10a [INJECT] C1 处根被删除：返回 FAILED 且不重建根
+  ---
+  duration_ms: 4.291
+  type: 'test'
+  ...
+# Subtest: G0-10b [INJECT] C2（mkdir 后、写临时文件前）根被替换：不得写入
+ok 233 - G0-10b [INJECT] C2（mkdir 后、写临时文件前）根被替换：不得写入
+  ---
+  duration_ms: 12.7199
+  type: 'test'
+  ...
+# Subtest: G0-10c [INJECT] C3（rename 前）根被替换：不得提交
+ok 234 - G0-10c [INJECT] C3（rename 前）根被替换：不得提交
+  ---
+  duration_ms: 15.6435
+  type: 'test'
+  ...
+# Subtest: G0-11 C4 提交后根身份变化，必须返回 UNKNOWN 而不是 COMMITTED
+ok 235 - G0-11 C4 提交后根身份变化，必须返回 UNKNOWN 而不是 COMMITTED
+  ---
+  duration_ms: 15.0572
+  type: 'test'
+  ...
+# Subtest: G0-12 根失效后 read/stat/list 必须报告根错误，不得伪装成文件不存在或空目录
+ok 236 - G0-12 根失效后 read/stat/list 必须报告根错误，不得伪装成文件不存在或空目录
+  ---
+  duration_ms: 13.0577
+  type: 'test'
+  ...
+# Subtest: G0-13 正常读写、递归建目录与重新打开不受连续性检查影响
+ok 237 - G0-13 正常读写、递归建目录与重新打开不受连续性检查影响
+  ---
+  duration_ms: 33.9612
+  type: 'test'
+  ...
+# Subtest: G0-13b [FS] 构造时根不存在的 Provider 仍保持"文件不存在"语义
+ok 238 - G0-13b [FS] 构造时根不存在的 Provider 仍保持"文件不存在"语义
+  ---
+  duration_ms: 6.8385
+  type: 'test'
+  ...
+# Subtest: G0-14a [UNIT] ino 不可用时拒绝构造令牌
+ok 239 - G0-14a [UNIT] ino 不可用时拒绝构造令牌
+  ---
+  duration_ms: 0.5421
+  type: 'test'
+  ...
+# Subtest: G0-14b [FS] 根路径不是目录时构造即拒绝
+ok 240 - G0-14b [FS] 根路径不是目录时构造即拒绝
+  ---
+  duration_ms: 10.4359
+  type: 'test'
+  ...
+# Subtest: G0-15 首次初始化在 C1 抛错后：不留残留、不误置已建立、后续写入可恢复
+ok 241 - G0-15 首次初始化在 C1 抛错后：不留残留、不误置已建立、后续写入可恢复
+  ---
+  duration_ms: 14.7645
+  type: 'test'
+  ...
+# Subtest: G0-15b [INJECT] C3 失败后不残留临时文件
+ok 242 - G0-15b [INJECT] C3 失败后不残留临时文件
+  ---
+  duration_ms: 17.3193
+  type: 'test'
+  ...
+# Subtest: G0-17 根在受控初始化前被外部创建：读/首次创建/覆盖都必须拒绝
+ok 243 - G0-17 根在受控初始化前被外部创建：读/首次创建/覆盖都必须拒绝
+  ---
+  duration_ms: 12.1437
+  type: 'test'
+  ...
+# Subtest: G0-17b 另一个 Provider 已认领的根：后续 Provider 不得再认领
+ok 244 - G0-17b 另一个 Provider 已认领的根：后续 Provider 不得再认领
+  ---
+  duration_ms: 12.2346
+  type: 'test'
+  ...
+# Subtest: G0-17c [INJECT] C1 之后根被外部创建：首次初始化必须 fail-closed
+ok 245 - G0-17c [INJECT] C1 之后根被外部创建：首次初始化必须 fail-closed
+  ---
+  duration_ms: 7.8493
+  type: 'test'
+  ...
+# Subtest: G0-18 版本读取期间根被删除：必须优先返回根错误而不是 CONFLICT
+ok 246 - G0-18 版本读取期间根被删除：必须优先返回根错误而不是 CONFLICT
+  ---
+  duration_ms: 7.8645
+  type: 'test'
+  ...
+# Subtest: G0-18b 未失效时版本冲突语义保持不变
+ok 247 - G0-18b 未失效时版本冲突语义保持不变
+  ---
+  duration_ms: 11.2002
+  type: 'test'
+  ...
+# Subtest: G0-19 受控初始化成功后根被替换：仍保持已建立，不得退回可初始化重新认领
+ok 248 - G0-19 受控初始化成功后根被替换：仍保持已建立，不得退回可初始化重新认领
+  ---
+  duration_ms: 16.6094
+  type: 'test'
+  ...
+# Subtest: G0-20 根变为普通文件后：拒绝写入且不重置身份
+ok 249 - G0-20 根变为普通文件后：拒绝写入且不重置身份
+  ---
+  duration_ms: 16.3221
+  type: 'test'
+  ...
+# Subtest: G0-16 根连续性错误码必须注册，并在映射中保持原样
+ok 250 - G0-16 根连续性错误码必须注册，并在映射中保持原样
+  ---
+  duration_ms: 0.2011
+  type: 'test'
+  ...
+# Subtest: H-01 /api/open 在根失效后返回 503，且不伪装成资源不存在
+ok 251 - H-01 /api/open 在根失效后返回 503，且不伪装成资源不存在
+  ---
+  duration_ms: 14.7165
+  type: 'test'
+  ...
+# Subtest: H-02 /api/save 在根失效后返回 503，保留 FAILED 语义与未保存草稿
+ok 252 - H-02 /api/save 在根失效后返回 503，保留 FAILED 语义与未保存草稿
+  ---
+  duration_ms: 23.3268
+  type: 'test'
+  ...
+# Subtest: H-03 /api/document/disk 在根失效后返回 503
+ok 253 - H-03 /api/document/disk 在根失效后返回 503
+  ---
+  duration_ms: 19.4478
+  type: 'test'
+  ...
+# Subtest: H-04 保存结果 UNKNOWN 仍返回 202
+ok 254 - H-04 保存结果 UNKNOWN 仍返回 202
+  ---
+  duration_ms: 27.1558
+  type: 'test'
+  ...
+# Subtest: H-05 磁盘版本变化导致 CONFLICT 时仍返回 409
+ok 255 - H-05 磁盘版本变化导致 CONFLICT 时仍返回 409
+  ---
+  duration_ms: 28.2147
+  type: 'test'
+  ...
+# Subtest: H-06 根正常时保存仍为 200 / COMMITTED
+ok 256 - H-06 根正常时保存仍为 200 / COMMITTED
+  ---
+  duration_ms: 28.0393
+  type: 'test'
+  ...
+# Subtest: H-07 /api/resources 在根失效后返回 503，不泄露路径也不重建根
+ok 257 - H-07 /api/resources 在根失效后返回 503，不泄露路径也不重建根
+  ---
+  duration_ms: 17.0208
+  type: 'test'
+  ...
+# Subtest: H-08 /api/resources 根正常时返回 200 与文件树
+ok 258 - H-08 /api/resources 根正常时返回 200 与文件树
+  ---
+  duration_ms: 25.1545
+  type: 'test'
+  ...
+# Subtest: R-01 两个 READY 项目：身份独立，Summary 不含内部字段
+ok 259 - R-01 两个 READY 项目：身份独立，Summary 不含内部字段
+  ---
+  duration_ms: 14.7167
+  type: 'test'
+  ...
+# Subtest: R-02 项目根不存在 → UNAVAILABLE/MISSING，其他项目仍 READY
+ok 260 - R-02 项目根不存在 → UNAVAILABLE/MISSING，其他项目仍 READY
+  ---
+  duration_ms: 12.3604
+  type: 'test'
+  ...
+# Subtest: R-03 项目根是普通文件 → UNAVAILABLE/NOT_DIRECTORY
+ok 261 - R-03 项目根是普通文件 → UNAVAILABLE/NOT_DIRECTORY
+  ---
+  duration_ms: 12.5771
+  type: 'test'
+  ...
+# Subtest: R-04 项目根是 junction → UNAVAILABLE/REPARSE_POINT
+ok 262 - R-04 项目根是 junction → UNAVAILABLE/REPARSE_POINT
+  ---
+  duration_ms: 30.6519
+  type: 'test'
+  ...
+# Subtest: R-05 重复、嵌套、Windows 大小写等价根必须在配置期拒绝
+ok 263 - R-05 重复、嵌套、Windows 大小写等价根必须在配置期拒绝
+  ---
+  duration_ms: 15.5748
+  type: 'test'
+  ...
+# Subtest: R-06 UNC 根 fail-closed；相对路径与环境变量占位符在配置期拒绝
+ok 264 - R-06 UNC 根 fail-closed；相对路径与环境变量占位符在配置期拒绝
+  ---
+  duration_ms: 16.2912
+  type: 'test'
+  ...
+# Subtest: R-07 根删除/移动/替换后项目失效，且不重建根
+ok 265 - R-07 根删除/移动/替换后项目失效，且不重建根
+  ---
+  duration_ms: 34.2122
+  type: 'test'
+  ...
+# Subtest: R-08 根令牌必须与 bigint stat 逐字段一致
+ok 266 - R-08 根令牌必须与 bigint stat 逐字段一致
+  ---
+  duration_ms: 15.6525
+  type: 'test'
+  ...
+# Subtest: R-09 两项目同名文件：Provider 身份与 Provider 实例都不相同
+ok 267 - R-09 两项目同名文件：Provider 身份与 Provider 实例都不相同
+  ---
+  duration_ms: 19.8753
+  type: 'test'
+  ...
+# Subtest: H-01 Multi 缺 projectId 返回 400，且绝不回落默认项目
+ok 268 - H-01 Multi 缺 projectId 返回 400，且绝不回落默认项目
+  ---
+  duration_ms: 31.5383
+  type: 'test'
+  ...
+# Subtest: H-02 两个项目同名文件：资源树与打开结果都各自独立
+ok 269 - H-02 两个项目同名文件：资源树与打开结果都各自独立
+  ---
+  duration_ms: 36.3325
+  type: 'test'
+  ...
+# Subtest: H-03 会话绑定项目的 Provider：disk 与 save 不跨项目，客户端改 projectId 无效
+ok 270 - H-03 会话绑定项目的 Provider：disk 与 save 不跨项目，客户端改 projectId 无效
+  ---
+  duration_ms: 55.8172
+  type: 'test'
+  ...
+# Subtest: H-04 仅授权 project-a：访问 project-b 的读与写都被拒绝
+ok 271 - H-04 仅授权 project-a：访问 project-b 的读与写都被拒绝
+  ---
+  duration_ms: 31.8391
+  type: 'test'
+  ...
+# Subtest: H-05 伪造 providerId / resourceId / actorId / rootDir 一律拒绝
+ok 272 - H-05 伪造 providerId / resourceId / actorId / rootDir 一律拒绝
+  ---
+  duration_ms: 26.3008
+  type: 'test'
+  ...
+# Subtest: H-06 项目根失效后 save/reload/disk 全部拒绝，且不重建根
+ok 273 - H-06 项目根失效后 save/reload/disk 全部拒绝，且不重建根
+  ---
+  duration_ms: 36.0594
+  type: 'test'
+  ...
+# Subtest: H-07 根失效后草稿必须保留且可读回，重开被拒绝
+ok 274 - H-07 根失效后草稿必须保留且可读回，重开被拒绝
+  ---
+  duration_ms: 39.4227
+  type: 'test'
+  ...
+# Subtest: H-07b [UNIT] STALE 会话在 A1 一律拒绝重开，且不删除会话/草稿
+ok 275 - H-07b [UNIT] STALE 会话在 A1 一律拒绝重开，且不删除会话/草稿
+  ---
+  duration_ms: 21.31
+  type: 'test'
+  ...
+# Subtest: H-08 陌生 sessionId 返回 404，他人 viewId 返回 403
+ok 276 - H-08 陌生 sessionId 返回 404，他人 viewId 返回 403
+  ---
+  duration_ms: 30.7819
+  type: 'test'
+  ...
+# Subtest: H-09 /api/health 不返回本机绝对路径
+ok 277 - H-09 /api/health 不返回本机绝对路径
+  ---
+  duration_ms: 23.3041
+  type: 'test'
+  ...
+# Subtest: H-10 Legacy 模式：接口与身份保持兼容
+ok 278 - H-10 Legacy 模式：接口与身份保持兼容
+  ---
+  duration_ms: 32.6902
+  type: 'test'
+  ...
+# Subtest: H-11 同进程混用 Legacy 与 Multi 必须拒绝
+ok 279 - H-11 同进程混用 Legacy 与 Multi 必须拒绝
+  ---
+  duration_ms: 6.5164
+  type: 'test'
+  ...
+# Subtest: H-12 一个项目失效不影响另一个 READY 项目
+ok 280 - H-12 一个项目失效不影响另一个 READY 项目
+  ---
+  duration_ms: 42.3646
+  type: 'test'
+  ...
+# Subtest: V-01 Multi 会话接口省略 viewId 一律拒绝，且不改动会话
+ok 281 - V-01 Multi 会话接口省略 viewId 一律拒绝，且不改动会话
+  ---
+  duration_ms: 30.6902
+  type: 'test'
+  ...
+# Subtest: V-02 Legacy 的 viewId 仍为可选（既有行为不变）
+ok 282 - V-02 Legacy 的 viewId 仍为可选（既有行为不变）
+  ---
+  duration_ms: 17.379
+  type: 'test'
+  ...
+# Subtest: V-03 STALE 保存失败响应不含 document.content 或草稿副本
+ok 283 - V-03 STALE 保存失败响应不含 document.content 或草稿副本
+  ---
+  duration_ms: 32.6389
+  type: 'test'
+  ...
+# Subtest: P-01 删除 project-a 根后 /api/projects 显示 A 不可用、B 仍 READY
+ok 284 - P-01 删除 project-a 根后 /api/projects 显示 A 不可用、B 仍 READY
+  ---
+  duration_ms: 35.6959
+  type: 'test'
+  ...
+# Subtest: P-02 项目不可用时的 edit 返回 503，而不是 422
+ok 285 - P-02 项目不可用时的 edit 返回 503，而不是 422
+  ---
+  duration_ms: 30.0577
+  type: 'test'
+  ...
+# Subtest: P-03 未知项目 404 / 缺 projectId 400 / 不可用 503 / 文案不含路径
+ok 286 - P-03 未知项目 404 / 缺 projectId 400 / 不可用 503 / 文案不含路径
+  ---
+  duration_ms: 30.6764
+  type: 'test'
+  ...
+# Subtest: C-01 声明 project-a 但 providerId 指向 project-b：必须拒绝，且不建立会话
+ok 287 - C-01 声明 project-a 但 providerId 指向 project-b：必须拒绝，且不建立会话
+  ---
+  duration_ms: 10.9662
+  type: 'test'
+  ...
+# Subtest: C-02 声明 project-a 但 resourceId 指向 project-b：必须拒绝
+ok 288 - C-02 声明 project-a 但 resourceId 指向 project-b：必须拒绝
+  ---
+  duration_ms: 11.9829
+  type: 'test'
+  ...
+# Subtest: C-03 两项目均已授权时，混合身份仍然必须拒绝
+ok 289 - C-03 两项目均已授权时，混合身份仍然必须拒绝
+  ---
+  duration_ms: 12.9063
+  type: 'test'
+  ...
+# Subtest: C-04 正确身份下 A、B 各自打开自己的文件
+ok 290 - C-04 正确身份下 A、B 各自打开自己的文件
+  ---
+  duration_ms: 21.2769
+  type: 'test'
+  ...
+# Subtest: C-05 Legacy 总线调用（无项目门禁）保持原行为
+ok 291 - C-05 Legacy 总线调用（无项目门禁）保持原行为
+  ---
+  duration_ms: 16.5005
+  type: 'test'
+  ...
+# Subtest: UI-01 多项目列表：默认活动项目取第一个 READY，不伪造可用项目
+ok 292 - UI-01 多项目列表：默认活动项目取第一个 READY，不伪造可用项目
+  ---
+  duration_ms: 0.9191
+  type: 'test'
+  ...
+# Subtest: UI-02 A/B 的目录展开状态互相独立
+ok 293 - UI-02 A/B 的目录展开状态互相独立
+  ---
+  duration_ms: 0.1875
+  type: 'test'
+  ...
+# Subtest: UI-03 同名文件在 A/B 生成不同 docId，Legacy 保持原样
+ok 294 - UI-03 同名文件在 A/B 生成不同 docId，Legacy 保持原样
+  ---
+  duration_ms: 0.2107
+  type: 'test'
+  ...
+# Subtest: UI-04 A/B 同名文件的标签可以同时存在
+ok 295 - UI-04 A/B 同名文件的标签可以同时存在
+  ---
+  duration_ms: 0.2872
+  type: 'test'
+  ...
+# Subtest: UI-05 切换项目不丢草稿、不清标签
+ok 296 - UI-05 切换项目不丢草稿、不清标签
+  ---
+  duration_ms: 0.1096
+  type: 'test'
+  ...
+# Subtest: UI-15 关闭 A 标签不影响 B（含分屏窗格指向）
+ok 297 - UI-15 关闭 A 标签不影响 B（含分屏窗格指向）
+  ---
+  duration_ms: 0.7276
+  type: 'test'
+  ...
+# Subtest: UI-16 左右分屏可分别指向 A 与 B 的文档
+ok 298 - UI-16 左右分屏可分别指向 A 与 B 的文档
+  ---
+  duration_ms: 0.379
+  type: 'test'
+  ...
+# Subtest: UI-19 同一 docId 重复打开只保留一个标签
+ok 299 - UI-19 同一 docId 重复打开只保留一个标签
+  ---
+  duration_ms: 0.7529
+  type: 'test'
+  ...
+# Subtest: UI-14 SAVE_RESULT 不触碰 buffer（服务端省略 content 也不会清空草稿）
+ok 300 - UI-14 SAVE_RESULT 不触碰 buffer（服务端省略 content 也不会清空草稿）
+  ---
+  duration_ms: 0.3221
+  type: 'test'
+  ...
+# Subtest: UI-09 晚到的 A 响应不得写入 B（项目/文档/会话三重比对）
+ok 301 - UI-09 晚到的 A 响应不得写入 B（项目/文档/会话三重比对）
+  ---
+  duration_ms: 0.2219
+  type: 'test'
+  ...
+# Subtest: UI-06 A/B 的编辑队列互不影响，且各自保持顺序
+ok 302 - UI-06 A/B 的编辑队列互不影响，且各自保持顺序
+  ---
+  duration_ms: 0.5728
+  type: 'test'
+  ...
+# Subtest: UI-12 UNAVAILABLE 项目不得再打开新文件，但其他项目不受影响
+ok 303 - UI-12 UNAVAILABLE 项目不得再打开新文件，但其他项目不受影响
+  ---
+  duration_ms: 0.3483
+  type: 'test'
+  ...
+# Subtest: UI-20 A/B 同名文件的草稿备份键不得冲突
+ok 304 - UI-20 A/B 同名文件的草稿备份键不得冲突
+  ---
+  duration_ms: 0.2844
+  type: 'test'
+  ...
+# Subtest: UI-01a Multi：workspaceMode=multi 且能列出两个项目
+ok 305 - UI-01a Multi：workspaceMode=multi 且能列出两个项目
+  ---
+  duration_ms: 29.0541
+  type: 'test'
+  ...
+# Subtest: UI-01b Legacy：workspaceMode=legacy 且没有项目列表
+ok 306 - UI-01b Legacy：workspaceMode=legacy 且没有项目列表
+  ---
+  duration_ms: 21.5172
+  type: 'test'
+  ...
+# Subtest: UI-03 两个项目的资源树各自命名空间，同名文件不共享节点 id
+ok 307 - UI-03 两个项目的资源树各自命名空间，同名文件不共享节点 id
+  ---
+  duration_ms: 29.5413
+  type: 'test'
+  ...
+# Subtest: UI-07/08 同名文件同时打开：编辑与保存只影响各自项目
+ok 308 - UI-07/08 同名文件同时打开：编辑与保存只影响各自项目
+  ---
+  duration_ms: 59.5557
+  type: 'test'
+  ...
+# Subtest: UI-11 Multi 省略 viewId 的 edit 被拒绝（前端必须携带）
+ok 309 - UI-11 Multi 省略 viewId 的 edit 被拒绝（前端必须携带）
+  ---
+  duration_ms: 34.6768
+  type: 'test'
+  ...
+# Subtest: UI-03b readDisk 读取会话所属项目，不被同名文件误导
+ok 310 - UI-03b readDisk 读取会话所属项目，不被同名文件误导
+  ---
+  duration_ms: 31.0261
+  type: 'test'
+  ...
+# Subtest: UI-14 项目根失效后保存失败：响应不带 content，dirty 仍为真
+ok 311 - UI-14 项目根失效后保存失败：响应不带 content，dirty 仍为真
+  ---
+  duration_ms: 36.7616
+  type: 'test'
+  ...
+# Subtest: UI-18 Demo 客户端不接触 Host：模式为 legacy、无项目、保存仅为 DEMO
+ok 312 - UI-18 Demo 客户端不接触 Host：模式为 legacy、无项目、保存仅为 DEMO
+  ---
+  duration_ms: 0.5279
+  type: 'test'
+  ...
+# Subtest: R1-01 重新打开期间发生本地编辑：旧响应不得覆盖缓冲、dirty 与 revision
+ok 313 - R1-01 重新打开期间发生本地编辑：旧响应不得覆盖缓冲、dirty 与 revision
+  ---
+  duration_ms: 41.9053
+  type: 'test'
+  ...
+# Subtest: R1-02 无本地编辑时，干净标签仍能同步磁盘变化（且临时 View 被释放）
+ok 314 - R1-02 无本地编辑时，干净标签仍能同步磁盘变化（且临时 View 被释放）
+  ---
+  duration_ms: 42.688
+  type: 'test'
+  ...
+# Subtest: R1-03 有未保存草稿的标签再次点击：不发起读取、不被覆盖
+ok 315 - R1-03 有未保存草稿的标签再次点击：不发起读取、不被覆盖
+  ---
+  duration_ms: 28.919
+  type: 'test'
+  ...
+# Subtest: R1-04 连续点击同一文件：一个标签、一个受管 View，临时 View 已释放
+ok 316 - R1-04 连续点击同一文件：一个标签、一个受管 View，临时 View 已释放
+  ---
+  duration_ms: 62.6345
+  type: 'test'
+  ...
+# Subtest: R1-05 两个并发的首次打开：只产生一个受管 View，无悬挂 View
+ok 317 - R1-05 两个并发的首次打开：只产生一个受管 View，无悬挂 View
+  ---
+  duration_ms: 30.4186
+  type: 'test'
+  ...
+# Subtest: R1-06 打开期间切换到 Demo：旧响应不插入标签、不改资源树、临时 View 释放
+ok 318 - R1-06 打开期间切换到 Demo：旧响应不插入标签、不改资源树、临时 View 释放
+  ---
+  duration_ms: 33.2477
+  type: 'test'
+  ...
+# Subtest: R1-07 打开 A 期间切到 B：A 的标签可以出现，但焦点留在 B
+ok 319 - R1-07 打开 A 期间切到 B：A 的标签可以出现，但焦点留在 B
+  ---
+  duration_ms: 29.6524
+  type: 'test'
+  ...
+# Subtest: R1-08 未保存草稿的模式切换守卫保持有效
+ok 320 - R1-08 未保存草稿的模式切换守卫保持有效
+  ---
+  duration_ms: 0.2043
+  type: 'test'
+  ...
+# Subtest: R2-01 迟到的 A/notes.md 不得把焦点从 B/a.md 抢回去
+ok 321 - R2-01 迟到的 A/notes.md 不得把焦点从 B/a.md 抢回去
+  ---
+  duration_ms: 38.511
+  type: 'test'
+  ...
+# Subtest: R2-02 合并请求的等待方不得在旧响应后抢回焦点
+ok 322 - R2-02 合并请求的等待方不得在旧响应后抢回焦点
+  ---
+  duration_ms: 35.7704
+  type: 'test'
+  ...
+# Subtest: R2-03 窗格为空时切到 B：迟到的 A 响应只能后台登记
+ok 323 - R2-03 窗格为空时切到 B：迟到的 A 响应只能后台登记
+  ---
+  duration_ms: 27.6676
+  type: 'test'
+  ...
+# Subtest: QF-01 选择一个 Markdown 文件：进入 ready，展示名称/类型/大小/内容
+ok 324 - QF-01 选择一个 Markdown 文件：进入 ready，展示名称/类型/大小/内容
+  ---
+  duration_ms: 1.6287
+  type: 'test'
+  ...
+# Subtest: QF-02 拖入单个文件与选择走同一链路：directory=false 时成功
+ok 325 - QF-02 拖入单个文件与选择走同一链路：directory=false 时成功
+  ---
+  duration_ms: 0.2504
+  type: 'test'
+  ...
+# Subtest: QF-03 一次拖入多个文件：明确拒绝，不"取第一个"
+ok 326 - QF-03 一次拖入多个文件：明确拒绝，不"取第一个"
+  ---
+  duration_ms: 0.2048
+  type: 'test'
+  ...
+# Subtest: QF-04 拖入文件夹：明确拒绝，不读取任何内容
+ok 327 - QF-04 拖入文件夹：明确拒绝，不读取任何内容
+  ---
+  duration_ms: 0.1514
+  type: 'test'
+  ...
+# Subtest: QF-05 Markdown 两种扩展名都进入 ready，扩展名保持给查看器解析
+ok 328 - QF-05 Markdown 两种扩展名都进入 ready，扩展名保持给查看器解析
+  ---
+  duration_ms: 0.2143
+  type: 'test'
+  ...
+# Subtest: QF-06 纯文本保留原始内容（含 CRLF 与制表符）
+ok 329 - QF-06 纯文本保留原始内容（含 CRLF 与制表符）
+  ---
+  duration_ms: 0.1339
+  type: 'test'
+  ...
+# Subtest: QF-07 图片/PDF/DOCX 一律拒绝，且不读取字节
+ok 330 - QF-07 图片/PDF/DOCX 一律拒绝，且不读取字节
+  ---
+  duration_ms: 0.3296
+  type: 'test'
+  ...
+# Subtest: QF-08 超过 2 MiB：读取前拒绝，不截断、不部分加载
+ok 331 - QF-08 超过 2 MiB：读取前拒绝，不截断、不部分加载
+  ---
+  duration_ms: 0.236
+  type: 'test'
+  ...
+# Subtest: QF-09 非法 UTF-8、二进制签名与 NUL 字节都安全拒绝
+ok 332 - QF-09 非法 UTF-8、二进制签名与 NUL 字节都安全拒绝
+  ---
+  duration_ms: 0.3377
+  type: 'test'
+  ...
+# Subtest: QF-10 打开 Quick File 不触发任何网络调用（不经过 Host）
+ok 333 - QF-10 打开 Quick File 不触发任何网络调用（不经过 Host）
+  ---
+  duration_ms: 0.1471
+  type: 'test'
+  ...
+# Subtest: QF-11 Quick File 不进入项目资源树，也不改变工作区状态
+ok 334 - QF-11 Quick File 不进入项目资源树，也不改变工作区状态
+  ---
+  duration_ms: 0.1949
+  type: 'test'
+  ...
+# Subtest: QF-12 切换当前项目不影响 Quick File 的内容与激活状态
+ok 335 - QF-12 切换当前项目不影响 Quick File 的内容与激活状态
+  ---
+  duration_ms: 0.1631
+  type: 'test'
+  ...
+# Subtest: QF-13 选择新文件替换旧的：磁盘上的原文件保持不动
+ok 336 - QF-13 选择新文件替换旧的：磁盘上的原文件保持不动
+  ---
+  duration_ms: 10.4579
+  type: 'test'
+  ...
+# Subtest: QF-14 移除只清空当前预览，不删除本机文件
+ok 337 - QF-14 移除只清空当前预览，不删除本机文件
+  ---
+  duration_ms: 8.7674
+  type: 'test'
+  ...
+# Subtest: QF-15 旧读取迟到：新文件优先，旧结果整份丢弃
+ok 338 - QF-15 旧读取迟到：新文件优先，旧结果整份丢弃
+  ---
+  duration_ms: 0.3953
+  type: 'test'
+  ...
+# Subtest: QF-16 Quick File 的打开/移除不影响项目标签的草稿与 dirty
+ok 339 - QF-16 Quick File 的打开/移除不影响项目标签的草稿与 dirty
+  ---
+  duration_ms: 0.1625
+  type: 'test'
+  ...
+# Subtest: QF-17 Quick File 不携带 projectId / resourceId / sessionId
+ok 340 - QF-17 Quick File 不携带 projectId / resourceId / sessionId
+  ---
+  duration_ms: 0.1703
+  type: 'test'
+  ...
+# Subtest: QF-18 查看器 render 抛错：收敛为错误结果，不向上扩散
+ok 341 - QF-18 查看器 render 抛错：收敛为错误结果，不向上扩散
+  ---
+  duration_ms: 0.1593
+  type: 'test'
+  ...
+# Subtest: PC-01 快照只包含白名单字段（没有额外字段、没有运行期身份）
+ok 342 - PC-01 快照只包含白名单字段（没有额外字段、没有运行期身份）
+  ---
+  duration_ms: 1.0132
+  type: 'test'
+  ...
+# Subtest: PC-02 正文、Session/View、根路径都不得进入存储
+ok 343 - PC-02 正文、Session/View、根路径都不得进入存储
+  ---
+  duration_ms: 0.2406
+  type: 'test'
+  ...
+# Subtest: PC-03 有效 V1 快照可以完整往返解析
+ok 344 - PC-03 有效 V1 快照可以完整往返解析
+  ---
+  duration_ms: 0.5679
+  type: 'test'
+  ...
+# Subtest: PC-04 版本/时间/枚举不合法时整体丢弃（不修补、不猜测）
+ok 345 - PC-04 版本/时间/枚举不合法时整体丢弃（不修补、不猜测）
+  ---
+  duration_ms: 0.2566
+  type: 'test'
+  ...
+# Subtest: PC-05 损坏的 JSON / 非对象 / 超长内容一律视为没有记录
+ok 346 - PC-05 损坏的 JSON / 非对象 / 超长内容一律视为没有记录
+  ---
+  duration_ms: 0.2301
+  type: 'test'
+  ...
+# Subtest: PC-06 存储不可用/配额满时只降级，不抛错、不影响编辑
+ok 347 - PC-06 存储不可用/配额满时只降级，不抛错、不影响编辑
+  ---
+  duration_ms: 0.6197
+  type: 'test'
+  ...
+# Subtest: PC-24 快照里手工塞入 sessionId/viewId 也不会被接受为恢复凭据
+ok 348 - PC-24 快照里手工塞入 sessionId/viewId 也不会被接受为恢复凭据
+  ---
+  duration_ms: 0.328
+  type: 'test'
+  ...
+# Subtest: PC-01b 只接受项目内相对路径（绝对路径/盘符/.. 一律拒绝）
+ok 349 - PC-01b 只接受项目内相对路径（绝对路径/盘符/.. 一律拒绝）
+  ---
+  duration_ms: 0.1291
+  type: 'test'
+  ...
+# Subtest: PC-08a 展开状态只保留当前树里存在的目录
+ok 350 - PC-08a 展开状态只保留当前树里存在的目录
+  ---
+  duration_ms: 0.1079
+  type: 'test'
+  ...
+# Subtest: PC-06b 高频变化合并写入，flush 立即落盘（不依赖异步定时器）
+ok 351 - PC-06b 高频变化合并写入，flush 立即落盘（不依赖异步定时器）
+  ---
+  duration_ms: 0.318
+  type: 'test'
+  ...
+# Subtest: PC-06c 快照返回 null（未连接工作区）时 autosave 不写任何东西
+ok 352 - PC-06c 快照返回 null（未连接工作区）时 autosave 不写任何东西
+  ---
+  duration_ms: 0.1006
+  type: 'test'
+  ...
+# Subtest: PC-18 有未确认内容时才挂 beforeunload 防护（且只提示，不假装保存）
+ok 353 - PC-18 有未确认内容时才挂 beforeunload 防护（且只提示，不假装保存）
+  ---
+  duration_ms: 0.2065
+  type: 'test'
+  ...
+# Subtest: PC-09a 没有工作区摘要或处于 demo 时拒绝写入记录
+ok 354 - PC-09a 没有工作区摘要或处于 demo 时拒绝写入记录
+  ---
+  duration_ms: 0.0763
+  type: 'test'
+  ...
+# Subtest: PC-09b 记录按工作区摘要隔离，读不到别的摘要的记录
+ok 355 - PC-09b 记录按工作区摘要隔离，读不到别的摘要的记录
+  ---
+  duration_ms: 0.184
+  type: 'test'
+  ...
+# Subtest: PC-06d 门禁持有时自动保存一个字节都不写；放开后恢复写入
+ok 356 - PC-06d 门禁持有时自动保存一个字节都不写；放开后恢复写入
+  ---
+  duration_ms: 0.3017
+  type: 'test'
+  ...
+# Subtest: PC-01c 结转标签会被合并写入，但不重复、不越权、不影响窗格下标
+ok 357 - PC-01c 结转标签会被合并写入，但不重复、不越权、不影响窗格下标
+  ---
+  duration_ms: 0.3082
+  type: 'test'
+  ...
+# Subtest: PC-02b 结转条目同样走白名单：不带任何运行期身份
+ok 358 - PC-02b 结转条目同样走白名单：不带任何运行期身份
+  ---
+  duration_ms: 0.1334
+  type: 'test'
+  ...
+# Subtest: PC-07 布局、分屏比例、查看模式与当前项目都按记录恢复
+ok 359 - PC-07 布局、分屏比例、查看模式与当前项目都按记录恢复
+  ---
+  duration_ms: 63.5591
+  type: 'test'
+  ...
+# Subtest: PC-08 各项目的展开状态独立恢复，且只保留真实存在的目录
+ok 360 - PC-08 各项目的展开状态独立恢复，且只保留真实存在的目录
+  ---
+  duration_ms: 53.7157
+  type: 'test'
+  ...
+# Subtest: PC-09 换了工作区（项目组合不同）时只恢复界面，不发任何文件请求
+ok 361 - PC-09 换了工作区（项目组合不同）时只恢复界面，不发任何文件请求
+  ---
+  duration_ms: 81.8047
+  type: 'test'
+  ...
+# Subtest: PC-10 同一个项目 id 但根目录被替换：摘要变化，拒绝静默恢复
+ok 362 - PC-10 同一个项目 id 但根目录被替换：摘要变化，拒绝静默恢复
+  ---
+  duration_ms: 77.9312
+  type: 'test'
+  ...
+# Subtest: PC-11 Host 重启后身份仍匹配，标签用新的 Session/View 重建
+ok 363 - PC-11 Host 重启后身份仍匹配，标签用新的 Session/View 重建
+  ---
+  duration_ms: 54.4241
+  type: 'test'
+  ...
+# Subtest: PC-11b 恢复过程只调用 open/list，不调用 edit/save/reload
+ok 364 - PC-11b 恢复过程只调用 open/list，不调用 edit/save/reload
+  ---
+  duration_ms: 47.0189
+  type: 'test'
+  ...
+# Subtest: PC-12 Legacy 工作区（无项目身份）也能恢复标签
+ok 365 - PC-12 Legacy 工作区（无项目身份）也能恢复标签
+  ---
+  duration_ms: 38.9611
+  type: 'test'
+  ...
+# Subtest: PC-13 A/a.md 与 B/a.md 恢复成两个互不影响文档
+ok 366 - PC-13 A/a.md 与 B/a.md 恢复成两个互不影响文档
+  ---
+  duration_ms: 58.4424
+  type: 'test'
+  ...
+# Subtest: PC-14 记录指向 UNAVAILABLE 项目时不读盘、不建会话、不创建文件
+ok 367 - PC-14 记录指向 UNAVAILABLE 项目时不读盘、不建会话、不创建文件
+  ---
+  duration_ms: 70.6446
+  type: 'test'
+  ...
+# Subtest: PC-15/16 文件不存在只跳过它，其他文件照常恢复且不新建文件
+ok 368 - PC-15/16 文件不存在只跳过它，其他文件照常恢复且不新建文件
+  ---
+  duration_ms: 51.3106
+  type: 'test'
+  ...
+# Subtest: PC-17 只有 hadUnsavedChanges 标记时不得宣称草稿已恢复
+ok 369 - PC-17 只有 hadUnsavedChanges 标记时不得宣称草稿已恢复
+  ---
+  duration_ms: 56.9427
+  type: 'test'
+  ...
+# Subtest: PC-17b Core 仍持有草稿时也不自动重开；用户手动打开才拿到草稿
+ok 370 - PC-17b Core 仍持有草稿时也不自动重开；用户手动打开才拿到草稿
+  ---
+  duration_ms: 49.3307
+  type: 'test'
+  ...
+# Subtest: PC-19 恢复途中切到 Demo：迟到的 live 打开结果被丢弃且 View 被释放
+ok 371 - PC-19 恢复途中切到 Demo：迟到的 live 打开结果被丢弃且 View 被释放
+  ---
+  duration_ms: 53.0881
+  type: 'test'
+  ...
+# Subtest: PC-20 恢复途中用户打开 B/a.md：恢复的标签只能后台登记
+ok 372 - PC-20 恢复途中用户打开 B/a.md：恢复的标签只能后台登记
+  ---
+  duration_ms: 56.3515
+  type: 'test'
+  ...
+# Subtest: PC-21 重复调用 restore 只执行一次，同一文档只有一个 View
+ok 373 - PC-21 重复调用 restore 只执行一次，同一文档只有一个 View
+  ---
+  duration_ms: 54.7205
+  type: 'test'
+  ...
+# Subtest: PC-22 存储里只有工作区记录，没有任何 Quick File / 草稿数据
+ok 374 - PC-22 存储里只有工作区记录，没有任何 Quick File / 草稿数据
+  ---
+  duration_ms: 57.3153
+  type: 'test'
+  ...
+# Subtest: PC-23 Host 不在线时仅恢复界面，不发出任何文件请求
+ok 375 - PC-23 Host 不在线时仅恢复界面，不发出任何文件请求
+  ---
+  duration_ms: 35.4564
+  type: 'test'
+  ...
+# Subtest: PC-07b 没有任何记录时恢复流程什么都不做
+ok 376 - PC-07b 没有任何记录时恢复流程什么都不做
+  ---
+  duration_ms: 17.3882
+  type: 'test'
+  ...
+# Subtest: PC-08b 旧快照里的项目已不存在时，它的展开状态被整体丢弃
+ok 377 - PC-08b 旧快照里的项目已不存在时，它的展开状态被整体丢弃
+  ---
+  duration_ms: 38.7914
+  type: 'test'
+  ...
+# Subtest: PC-11c 恢复出来的内容就是磁盘内容（不是快照里的旧内容）
+ok 378 - PC-11c 恢复出来的内容就是磁盘内容（不是快照里的旧内容）
+  ---
+  duration_ms: 54.6832
+  type: 'test'
+  ...
+# Subtest: PC-23b /api/health 非 200 时按"Host 不可用"降级，而不是当成旧版服务端
+ok 379 - PC-23b /api/health 非 200 时按"Host 不可用"降级，而不是当成旧版服务端
+  ---
+  duration_ms: 39.5086
+  type: 'test'
+  ...
+# Subtest: AS-05a 门禁状态迁移是显式的：hold/release/seal/adopt 各有唯一语义
+ok 380 - AS-05a 门禁状态迁移是显式的：hold/release/seal/adopt 各有唯一语义
+  ---
+  duration_ms: 0.2586
+  type: 'test'
+  ...
+# Subtest: AS-05a2 恢复途中就接管：终态才放开（不抢先落盘残缺状态）
+ok 381 - AS-05a2 恢复途中就接管：终态才放开（不抢先落盘残缺状态）
+  ---
+  duration_ms: 0.0813
+  type: 'test'
+  ...
+# Subtest: AS-01 恢复只登记了 2 个标签时，自动保存不得覆盖 8 个标签的记录
+ok 382 - AS-01 恢复只登记了 2 个标签时，自动保存不得覆盖 8 个标签的记录
+  ---
+  duration_ms: 118.4937
+  type: 'test'
+  ...
+# Subtest: AS-02 恢复期间 flush（关页面）必须被拦住，原记录一字不差
+ok 383 - AS-02 恢复期间 flush（关页面）必须被拦住，原记录一字不差
+  ---
+  duration_ms: 104.1393
+  type: 'test'
+  ...
+# Subtest: AS-03 Host 超时或恢复中断时，原快照与"未确认内容"提示都保留
+ok 384 - AS-03 Host 超时或恢复中断时，原快照与"未确认内容"提示都保留
+  ---
+  duration_ms: 47.4098
+  type: 'test'
+  ...
+# Subtest: AS-04 恢复到达终态后，新状态可以正常写入
+ok 385 - AS-04 恢复到达终态后，新状态可以正常写入
+  ---
+  duration_ms: 66.8458
+  type: 'test'
+  ...
+# Subtest: AS-05 用户接管后是"合并提交"：当前标签 + 未处理的旧标签一条都不丢
+ok 386 - AS-05 用户接管后是"合并提交"：当前标签 + 未处理的旧标签一条都不丢
+  ---
+  duration_ms: 96.7529
+  type: 'test'
+  ...
+# Subtest: DR-01 hadUnsavedChanges 的标签不会被自动重开成 CLEAN 标签
+ok 387 - DR-01 hadUnsavedChanges 的标签不会被自动重开成 CLEAN 标签
+  ---
+  duration_ms: 62.1852
+  type: 'test'
+  ...
+# Subtest: DR-02 提示不随恢复结束而消失：记录里仍然保留"存在未确认内容"
+ok 388 - DR-02 提示不随恢复结束而消失：记录里仍然保留"存在未确认内容"
+  ---
+  duration_ms: 65.2051
+  type: 'test'
+  ...
+# Subtest: DR-03 多次自动保存都不会抹掉提示；只有用户自己打开该文件才结束
+ok 389 - DR-03 多次自动保存都不会抹掉提示；只有用户自己打开该文件才结束
+  ---
+  duration_ms: 70.2211
+  type: 'test'
+  ...
+# Subtest: DR-04 报告与提示里不存在任何"草稿已恢复"的说法
+ok 390 - DR-04 报告与提示里不存在任何"草稿已恢复"的说法
+  ---
+  duration_ms: 70.8287
+  type: 'test'
+  ...
+# Subtest: DR-05 干净标签照常恢复；缺失文件与未确认内容都只影响自己
+ok 391 - DR-05 干净标签照常恢复；缺失文件与未确认内容都只影响自己
+  ---
+  duration_ms: 67.5786
+  type: 'test'
+  ...
+# Subtest: IX-01 连接 Host 期间用户改了分屏比例，迟到恢复不得改回
+ok 392 - IX-01 连接 Host 期间用户改了分屏比例，迟到恢复不得改回
+  ---
+  duration_ms: 67.5568
+  type: 'test'
+  ...
+# Subtest: IX-02 恢复途中用户切了焦点窗格，恢复结束不得改回旧焦点
+ok 393 - IX-02 恢复途中用户切了焦点窗格，恢复结束不得改回旧焦点
+  ---
+  duration_ms: 63.2717
+  type: 'test'
+  ...
+# Subtest: IX-03 连接期间切到 Demo：迟到的 Host 结果不得把界面拉回 live
+ok 394 - IX-03 连接期间切到 Demo：迟到的 Host 结果不得把界面拉回 live
+  ---
+  duration_ms: 52.6949
+  type: 'test'
+  ...
+# Subtest: IX-04 全程无交互时，布局、比例、焦点、窗格都按记录恢复
+ok 395 - IX-04 全程无交互时，布局、比例、焦点、窗格都按记录恢复
+  ---
+  duration_ms: 76.6801
+  type: 'test'
+  ...
+# Subtest: WK-01 只配置 A 与"配置 A + B（B 根缺失）"必须得到不同摘要
+ok 396 - WK-01 只配置 A 与"配置 A + B（B 根缺失）"必须得到不同摘要
+  ---
+  duration_ms: 37.9766
+  type: 'test'
+  ...
+# Subtest: WK-02 同一份配置、未改动的根：Host 重启后摘要保持不变
+ok 397 - WK-02 同一份配置、未改动的根：Host 重启后摘要保持不变
+  ---
+  duration_ms: 36.2783
+  type: 'test'
+  ...
+# Subtest: WK-03 根被替换、项目新增、项目删除都会改变摘要
+ok 398 - WK-03 根被替换、项目新增、项目删除都会改变摘要
+  ---
+  duration_ms: 69.6465
+  type: 'test'
+  ...
+# Subtest: WK-04 /api/health 与 /api/projects 都不泄露绝对路径、根令牌或 provider
+ok 399 - WK-04 /api/health 与 /api/projects 都不泄露绝对路径、根令牌或 provider
+  ---
+  duration_ms: 35.0209
+  type: 'test'
+  ...
+# Subtest: WK-04b Legacy 模式下健康响应同样只有摘要，没有根目录
+ok 400 - WK-04b Legacy 模式下健康响应同样只有摘要，没有根目录
+  ---
+  duration_ms: 28.2001
+  type: 'test'
+  ...
+# Subtest: IX-05 加载阶段 identity 迟到时不得写入旧 workspaceKey
+ok 401 - IX-05 加载阶段 identity 迟到时不得写入旧 workspaceKey
+  ---
+  duration_ms: 34.0041
+  type: 'test'
+  ...
+# Subtest: IX-06 项目列表迟到时不得把旧项目表写进 Demo 工作区
+ok 402 - IX-06 项目列表迟到时不得把旧项目表写进 Demo 工作区
+  ---
+  duration_ms: 49.8028
+  type: 'test'
+  ...
+# Subtest: IX-07 项目 A 的资源树迟到：不回填、不刷新状态、不继续加载项目 B
+ok 403 - IX-07 项目 A 的资源树迟到：不回填、不刷新状态、不继续加载项目 B
+  ---
+  duration_ms: 49.9618
+  type: 'test'
+  ...
+# Subtest: IX-08 Legacy 资源列表迟到时不得把真实文件树塞进 Demo
+ok 404 - IX-08 Legacy 资源列表迟到时不得把真实文件树塞进 Demo
+  ---
+  duration_ms: 50.3102
+  type: 'test'
+  ...
+# Subtest: IX-09 未取消时 Multi 与 Legacy 都能完整加载
+ok 405 - IX-09 未取消时 Multi 与 Legacy 都能完整加载
+  ---
+  duration_ms: 49.3455
+  type: 'test'
+  ...
+# Subtest: IX-10 手动切到 Live 又切回 Demo：迟到结果同样不得重建旧工作区
+ok 406 - IX-10 手动切到 Live 又切回 Demo：迟到结果同样不得重建旧工作区
+  ---
+  duration_ms: 60.5891
+  type: 'test'
+  ...
+# Subtest: U-01 Legacy 只给项目根：进入 legacy，端口取默认值
+ok 407 - U-01 Legacy 只给项目根：进入 legacy，端口取默认值
+  ---
+  duration_ms: 0.4489
+  type: 'test'
+  ...
+# Subtest: U-02 Legacy 给项目根与端口
+ok 408 - U-02 Legacy 给项目根与端口
+  ---
+  duration_ms: 0.132
+  type: 'test'
+  ...
+# Subtest: U-03 Multi 只给 --workspace、不带端口：必须进入 multi 并使用默认端口（修复目标）
+ok 409 - U-03 Multi 只给 --workspace、不带端口：必须进入 multi 并使用默认端口（修复目标）
+  ---
+  duration_ms: 0.0889
+  type: 'test'
+  ...
+# Subtest: U-04 Multi 给 --workspace 与端口
+ok 410 - U-04 Multi 给 --workspace 与端口
+  ---
+  duration_ms: 0.0974
+  type: 'test'
+  ...
+# Subtest: U-05 Multi 使用 --workspace=<file> 等价写法（不带端口）
+ok 411 - U-05 Multi 使用 --workspace=<file> 等价写法（不带端口）
+  ---
+  duration_ms: 0.0609
+  type: 'test'
+  ...
+# Subtest: U-06 Multi 使用 --workspace=<file> 并带端口
+ok 412 - U-06 Multi 使用 --workspace=<file> 并带端口
+  ---
+  duration_ms: 0.2015
+  type: 'test'
+  ...
+# Subtest: U-07 Multi 允许端口写在 --workspace 之前
+ok 413 - U-07 Multi 允许端口写在 --workspace 之前
+  ---
+  duration_ms: 0.0826
+  type: 'test'
+  ...
+# Subtest: U-08 端口优先级：命令行 > WS_PORT > 默认
+ok 414 - U-08 端口优先级：命令行 > WS_PORT > 默认
+  ---
+  duration_ms: 0.0985
+  type: 'test'
+  ...
+# Subtest: U-09 端口 0 合法（交给系统分配临时端口）
+ok 415 - U-09 端口 0 合法（交给系统分配临时端口）
+  ---
+  duration_ms: 0.0559
+  type: 'test'
+  ...
+# Subtest: I-01 既无项目根也无 --workspace：报无目标并附带用法
+ok 416 - I-01 既无项目根也无 --workspace：报无目标并附带用法
+  ---
+  duration_ms: 0.1696
+  type: 'test'
+  ...
+# Subtest: I-02 --workspace 后没有值：明确报缺值，而不是退化成通用用法
+ok 417 - I-02 --workspace 后没有值：明确报缺值，而不是退化成通用用法
+  ---
+  duration_ms: 0.0701
+  type: 'test'
+  ...
+# Subtest: I-03 --workspace 后是空字符串或纯空白：报缺值
+ok 418 - I-03 --workspace 后是空字符串或纯空白：报缺值
+  ---
+  duration_ms: 0.0855
+  type: 'test'
+  ...
+# Subtest: I-04 --workspace= 后为空：报缺值
+ok 419 - I-04 --workspace= 后为空：报缺值
+  ---
+  duration_ms: 0.0626
+  type: 'test'
+  ...
+# Subtest: I-05 --workspace 的值是另一个选项：按缺值拒绝（不把选项当路径）
+ok 420 - I-05 --workspace 的值是另一个选项：按缺值拒绝（不把选项当路径）
+  ---
+  duration_ms: 0.0598
+  type: 'test'
+  ...
+# Subtest: I-06 同时给项目根与 --workspace：报模式冲突，且不得把根当端口
+ok 421 - I-06 同时给项目根与 --workspace：报模式冲突，且不得把根当端口
+  ---
+  duration_ms: 0.0612
+  type: 'test'
+  ...
+# Subtest: I-07 重复指定 --workspace：报冲突（不静默取最后一个）
+ok 422 - I-07 重复指定 --workspace：报冲突（不静默取最后一个）
+  ---
+  duration_ms: 0.0874
+  type: 'test'
+  ...
+# Subtest: I-08 Multi 多给一个位置参数：报模式冲突
+ok 423 - I-08 Multi 多给一个位置参数：报模式冲突
+  ---
+  duration_ms: 0.0657
+  type: 'test'
+  ...
+# Subtest: I-09 端口不是数字：报端口非法
+ok 424 - I-09 端口不是数字：报端口非法
+  ---
+  duration_ms: 0.1038
+  type: 'test'
+  ...
+# Subtest: I-10 端口越界：报端口非法
+ok 425 - I-10 端口越界：报端口非法
+  ---
+  duration_ms: 0.1047
+  type: 'test'
+  ...
+# Subtest: I-11 WS_PORT 本身非法：报端口非法
+ok 426 - I-11 WS_PORT 本身非法：报端口非法
+  ---
+  duration_ms: 0.0878
+  type: 'test'
+  ...
+# Subtest: I-12 未知选项：报未知选项，不把它当成项目根
+ok 427 - I-12 未知选项：报未知选项，不把它当成项目根
+  ---
+  duration_ms: 0.0829
+  type: 'test'
+  ...
+# Subtest: I-13 错误对象带稳定 code 与可读文案
+ok 428 - I-13 错误对象带稳定 code 与可读文案
+  ---
+  duration_ms: 0.1005
+  type: 'test'
+  ...
+# Subtest: R1-01 Legacy 项目根 + 端口 + 一个多余参数：必须拒绝
+ok 429 - R1-01 Legacy 项目根 + 端口 + 一个多余参数：必须拒绝
+  ---
+  duration_ms: 0.0778
+  type: 'test'
+  ...
+# Subtest: R1-02 Legacy 项目根 + 两个多余参数：必须拒绝
+ok 430 - R1-02 Legacy 项目根 + 两个多余参数：必须拒绝
+  ---
+  duration_ms: 0.1249
+  type: 'test'
+  ...
+# Subtest: R1-03 Legacy 多余参数即使是数字也要拒绝（不能只靠端口校验兜底）
+ok 431 - R1-03 Legacy 多余参数即使是数字也要拒绝（不能只靠端口校验兜底）
+  ---
+  duration_ms: 0.0949
+  type: 'test'
+  ...
+# Subtest: R1-04 多余参数的拒绝先于端口校验：结构错误优先报告
+ok 432 - R1-04 多余参数的拒绝先于端口校验：结构错误优先报告
+  ---
+  duration_ms: 0.0658
+  type: 'test'
+  ...
+# Subtest: R1-05 Legacy 原有合法形式继续通过：无端口 / 带端口
+ok 433 - R1-05 Legacy 原有合法形式继续通过：无端口 / 带端口
+  ---
+  duration_ms: 0.0692
+  type: 'test'
+  ...
+# Subtest: R1-06 Multi 原有数量限制继续通过：一个位置参数=端口，两个即冲突
+ok 434 - R1-06 Multi 原有数量限制继续通过：一个位置参数=端口，两个即冲突
+  ---
+  duration_ms: 0.0778
+  type: 'test'
+  ...
+# Subtest: R1-07 多余位置参数的文案指出数量与被拒的第一个多余值
+ok 435 - R1-07 多余位置参数的文案指出数量与被拒的第一个多余值
+  ---
+  duration_ms: 0.0872
+  type: 'test'
+  ...
+# Subtest: A-01 外部修改后刷新：干净标签同步磁盘内容与版本基线，仍是干净状态
+ok 436 - A-01 外部修改后刷新：干净标签同步磁盘内容与版本基线，仍是干净状态
+  ---
+  duration_ms: 48.3563
+  type: 'test'
+  ...
+# Subtest: A-02 磁盘没有变化时不刷新：不建临时 View、不产生多余重载
+ok 437 - A-02 磁盘没有变化时不刷新：不建临时 View、不产生多余重载
+  ---
+  duration_ms: 39.104
+  type: 'test'
+  ...
+# Subtest: A-03 刷新不改变活动文档、焦点窗格与分屏结构
+ok 438 - A-03 刷新不改变活动文档、焦点窗格与分屏结构
+  ---
+  duration_ms: 47.4548
+  type: 'test'
+  ...
+# Subtest: B-01 有草稿时检测到外部修改：只提示，草稿与版本一律不动，且不调用 reload
+ok 439 - B-01 有草稿时检测到外部修改：只提示，草稿与版本一律不动，且不调用 reload
+  ---
+  duration_ms: 46.1377
+  type: 'test'
+  ...
+# Subtest: B-02 有草稿但磁盘未变：不误报外部修改
+ok 440 - B-02 有草稿但磁盘未变：不误报外部修改
+  ---
+  duration_ms: 35.6613
+  type: 'test'
+  ...
+# Subtest: B-03 外部修改与草稿并存时保存：得到 CONFLICT，不静默覆盖磁盘
+ok 441 - B-03 外部修改与草稿并存时保存：得到 CONFLICT，不静默覆盖磁盘
+  ---
+  duration_ms: 49.0357
+  type: 'test'
+  ...
+# Subtest: C-01 刷新项目 A 只动 A：B 的同名 readme.md 不受影响
+ok 442 - C-01 刷新项目 A 只动 A：B 的同名 readme.md 不受影响
+  ---
+  duration_ms: 44.9727
+  type: 'test'
+  ...
+# Subtest: C-02 Legacy 单项目：projectId 为 null 的标签同样能被刷新
+ok 443 - C-02 Legacy 单项目：projectId 为 null 的标签同样能被刷新
+  ---
+  duration_ms: 33.7245
+  type: 'test'
+  ...
+# Subtest: D-01 刷新未返回时用户输入：旧结果被拒，草稿不被覆盖
+ok 444 - D-01 刷新未返回时用户输入：旧结果被拒，草稿不被覆盖
+  ---
+  duration_ms: 44.253
+  type: 'test'
+  ...
+# Subtest: D-02 刷新未返回时用户保存：保存结果不被刷新回退
+ok 445 - D-02 刷新未返回时用户保存：保存结果不被刷新回退
+  ---
+  duration_ms: 48.5293
+  type: 'test'
+  ...
+# Subtest: D-03 刷新未返回时关闭标签：不复活标签，临时 View 必须释放
+ok 446 - D-03 刷新未返回时关闭标签：不复活标签，临时 View 必须释放
+  ---
+  duration_ms: 48.2433
+  type: 'test'
+  ...
+# Subtest: D-04 刷新未返回时切换模式：结果不得写回（也不得复活 live 标签）
+ok 447 - D-04 刷新未返回时切换模式：结果不得写回（也不得复活 live 标签）
+  ---
+  duration_ms: 61.6738
+  type: 'test'
+  ...
+# Subtest: D-05 连续点击刷新同一项目：不重复建临时 View，最终内容正确
+ok 448 - D-05 连续点击刷新同一项目：不重复建临时 View，最终内容正确
+  ---
+  duration_ms: 48.0625
+  type: 'test'
+  ...
+# Subtest: D-06 磁盘文件被删除：只记失败，标签与草稿保持不变
+ok 449 - D-06 磁盘文件被删除：只记失败，标签与草稿保持不变
+  ---
+  duration_ms: 33.5188
+  type: 'test'
+  ...
+# Subtest: D-07 刷新未返回时切换项目：活动项目不被夺回，B 不受影响
+ok 450 - D-07 刷新未返回时切换项目：活动项目不被夺回，B 不受影响
+  ---
+  duration_ms: 44.5995
+  type: 'test'
+  ...
+# Subtest: R1-M01 Multi 树读取在途切 Demo：放行后不得污染新工作区
+ok 451 - R1-M01 Multi 树读取在途切 Demo：放行后不得污染新工作区
+  ---
+  duration_ms: 22.4148
+  type: 'test'
+  ...
+# Subtest: R1-L02 Legacy 树读取在途切 Demo：放行后不得更新资源树或旧提示
+ok 452 - R1-L02 Legacy 树读取在途切 Demo：放行后不得更新资源树或旧提示
+  ---
+  duration_ms: 14.3568
+  type: 'test'
+  ...
+# Subtest: R1-E03 Demo→Live 快速往返：模式相同但旧代次，仍必须丢弃
+ok 453 - R1-E03 Demo→Live 快速往返：模式相同但旧代次，仍必须丢弃
+  ---
+  duration_ms: 21.8515
+  type: 'test'
+  ...
+# Subtest: R1-V04 open 已发出且临时 View 已建，随后关闭标签：View 必须被释放
+ok 454 - R1-V04 open 已发出且临时 View 已建，随后关闭标签：View 必须被释放
+  ---
+  duration_ms: 46.2489
+  type: 'test'
+  ...
+# Subtest: R1-V05 open 已发出且临时 View 已建，随后切模式：View 释放且不写回
+ok 455 - R1-V05 open 已发出且临时 View 已建，随后切模式：View 释放且不写回
+  ---
+  duration_ms: 41.6316
+  type: 'test'
+  ...
+# Subtest: R1-S06 readDisk 迟到且期间已保存：不得据过期快照报"外部修改"或多建 View
+ok 456 - R1-S06 readDisk 迟到且期间已保存：不得据过期快照报"外部修改"或多建 View
+  ---
+  duration_ms: 46.7217
+  type: 'test'
+  ...
+# Subtest: R1-C07 手动刷新不推进 load 代次：不得误取消进行中的恢复
+ok 457 - R1-C07 手动刷新不推进 load 代次：不得误取消进行中的恢复
+  ---
+  duration_ms: 26.0682
+  type: 'test'
+  ...
+# Subtest: R1-L08 Legacy 文档刷新在途切 Demo：返回后不得写提示或资源树
+ok 458 - R1-L08 Legacy 文档刷新在途切 Demo：返回后不得写提示或资源树
+  ---
+  duration_ms: 25.9146
+  type: 'test'
+  ...
+# Subtest: R2-01 旧刷新的 finally 不得清除新一代同项目的加载标记
+ok 459 - R2-01 旧刷新的 finally 不得清除新一代同项目的加载标记
+  ---
+  duration_ms: 26.9556
+  type: 'test'
+  ...
+# Subtest: G-01 第 1 层没有祖先列：只画自己的 ├/└
+ok 460 - G-01 第 1 层没有祖先列：只画自己的 ├/└
+  ---
+  duration_ms: 0.252
+  type: 'test'
+  ...
+# Subtest: G-02 每行的祖先列数恒等于 depth-1（缩进宽度不随引导线增减）
+ok 461 - G-02 每行的祖先列数恒等于 depth-1（缩进宽度不随引导线增减）
+  ---
+  duration_ms: 0.109
+  type: 'test'
+  ...
+# Subtest: G-03 非末项祖先：竖线在其后代行里延续
+ok 462 - G-03 非末项祖先：竖线在其后代行里延续
+  ---
+  duration_ms: 0.0621
+  type: 'test'
+  ...
+# Subtest: G-04 末项祖先：后代不再绘制该祖先的连接线
+ok 463 - G-04 末项祖先：后代不再绘制该祖先的连接线
+  ---
+  duration_ms: 0.0648
+  type: 'test'
+  ...
+# Subtest: G-05 末项祖先的 blank 会级联，但不影响更深层的其他列
+ok 464 - G-05 末项祖先的 blank 会级联，但不影响更深层的其他列
+  ---
+  duration_ms: 0.1761
+  type: 'test'
+  ...
+# Subtest: G-06 折叠不改变行形态：父项折叠后其后代不渲染，父行仍按 last 收尾
+ok 465 - G-06 折叠不改变行形态：父项折叠后其后代不渲染，父行仍按 last 收尾
+  ---
+  duration_ms: 0.0788
+  type: 'test'
+  ...
+# Subtest: G-07 三种模式共用同一规则：Multi 与 Legacy 都把 trails 传进行组件
+ok 466 - G-07 三种模式共用同一规则：Multi 与 Legacy 都把 trails 传进行组件
+  ---
+  duration_ms: 6.2924
+  type: 'test'
+  ...
+# Subtest: R-13 静态 Registry 的 version() 仍为 1（不变式）
+ok 467 - R-13 静态 Registry 的 version() 仍为 1（不变式）
+  ---
+  duration_ms: 6.8071
+  type: 'test'
+  ...
+# Subtest: R-01 运行期添加项目：/api/projects 与 /api/resources 立即可用
+ok 468 - R-01 运行期添加项目：/api/projects 与 /api/resources 立即可用
+  ---
+  duration_ms: 27.2745
+  type: 'test'
+  ...
+# Subtest: R-02 移除后项目消失且 G-DISK 全部拒绝，磁盘文件不动
+ok 469 - R-02 移除后项目消失且 G-DISK 全部拒绝，磁盘文件不动
+  ---
+  duration_ms: 26.3734
+  type: 'test'
+  ...
+# Subtest: R-04 撤销后 read/write grant 立即消失
+ok 470 - R-04 撤销后 read/write grant 立即消失
+  ---
+  duration_ms: 17.3063
+  type: 'test'
+  ...
+# Subtest: R-05 移除被拒（有草稿）后状态回 ACTIVE，草稿与版本不变
+ok 471 - R-05 移除被拒（有草稿）后状态回 ACTIVE，草稿与版本不变
+  ---
+  duration_ms: 35.1737
+  type: 'test'
+  ...
+# Subtest: D-A-04 无 View 的干净历史会话不阻止移除
+ok 472 - D-A-04 无 View 的干净历史会话不阻止移除
+  ---
+  duration_ms: 33.9077
+  type: 'test'
+  ...
+# Subtest: D-A-05 存在活动 View 时拒绝移除（409 语义 + 不破坏视图）
+ok 473 - D-A-05 存在活动 View 时拒绝移除（409 语义 + 不破坏视图）
+  ---
+  duration_ms: 28.2424
+  type: 'test'
+  ...
+# Subtest: D-A-07 有草稿（且视图仍开着）时拒绝移除，blockedBy 含 ACTIVE_VIEWS 与 DIRTY
+ok 474 - D-A-07 有草稿（且视图仍开着）时拒绝移除，blockedBy 含 ACTIVE_VIEWS 与 DIRTY
+  ---
+  duration_ms: 27.1749
+  type: 'test'
+  ...
+# Subtest: D-A-06 [UNIT] SAVING / OUTCOME_UNKNOWN / CONFLICT / DIRTY 各自单独阻断移除
+ok 475 - D-A-06 [UNIT] SAVING / OUTCOME_UNKNOWN / CONFLICT / DIRTY 各自单独阻断移除
+  ---
+  duration_ms: 11.3044
+  type: 'test'
+  ...
+# Subtest: D-B-01/UNAVAILABLE 后 G-DRAFT 仍可读回内存草稿
+ok 476 - D-B-01/UNAVAILABLE 后 G-DRAFT 仍可读回内存草稿
+  ---
+  duration_ms: 30.8189
+  type: 'test'
+  ...
+# Subtest: D-B-02 非 dirty 的视图在项目失效后仍可关闭
+ok 477 - D-B-02 非 dirty 的视图在项目失效后仍可关闭
+  ---
+  duration_ms: 25.7692
+  type: 'test'
+  ...
+# Subtest: D-B-03 dirty 视图在项目失效后仍按既有契约拒关（不静默丢草稿）
+ok 478 - D-B-03 dirty 视图在项目失效后仍按既有契约拒关（不静默丢草稿）
+  ---
+  duration_ms: 29.478
+  type: 'test'
+  ...
+# Subtest: D-B-04 项目失效后 G-DISK 仍全部拒绝（草稿可读 ≠ 磁盘可用）
+ok 479 - D-B-04 项目失效后 G-DISK 仍全部拒绝（草稿可读 ≠ 磁盘可用）
+  ---
+  duration_ms: 31.3521
+  type: 'test'
+  ...
+# Subtest: D-B-05 伪造 viewId 不能读草稿（G-DRAFT 仍绑定会话与视图）
+ok 480 - D-B-05 伪造 viewId 不能读草稿（G-DRAFT 仍绑定会话与视图）
+  ---
+  duration_ms: 24.9017
+  type: 'test'
+  ...
+# Subtest: D-C-01 屏障期间新的 open/edit/save 一律 409，且不产生磁盘写入
+ok 481 - D-C-01 屏障期间新的 open/edit/save 一律 409，且不产生磁盘写入
+  ---
+  duration_ms: 34.1036
+  type: 'test'
+  ...
+# Subtest: D-C-02 屏障期间草稿读取与关闭视图不受影响
+ok 482 - D-C-02 屏障期间草稿读取与关闭视图不受影响
+  ---
+  duration_ms: 23.7845
+  type: 'test'
+  ...
+# Subtest: X-01 跨项目同名文件不混淆身份与授权
+ok 483 - X-01 跨项目同名文件不混淆身份与授权
+  ---
+  duration_ms: 29.3378
+  type: 'test'
+  ...
+# Subtest: X-02 撤销 A 不影响 B 的读写
+ok 484 - X-02 撤销 A 不影响 B 的读写
+  ---
+  duration_ms: 25.6425
+  type: 'test'
+  ...
+# Subtest: X-03 已撤销的 projectId 不被复用（同目录重新添加得到新 id）
+ok 485 - X-03 已撤销的 projectId 不被复用（同目录重新添加得到新 id）
+  ---
+  duration_ms: 18.4233
+  type: 'test'
+  ...
+# Subtest: X-04 add 拒绝重复根与嵌套根，不产生任何持久化调用
+ok 486 - X-04 add 拒绝重复根与嵌套根，不产生任何持久化调用
+  ---
+  duration_ms: 15.4322
+  type: 'test'
+  ...
+# Subtest: X-05 屏障期间晚到的 open 不留下 View（可继续移除）
+ok 487 - X-05 屏障期间晚到的 open 不留下 View（可继续移除）
+  ---
+  duration_ms: 23.4438
+  type: 'test'
+  ...
+# Subtest: X-06 撤销不会删除或移动项目目录内容
+ok 488 - X-06 撤销不会删除或移动项目目录内容
+  ---
+  duration_ms: 18.8182
+  type: 'test'
+  ...
+# Subtest: X-07 重命名只改显示名，身份与 workspaceKey 不变
+ok 489 - X-07 重命名只改显示名，身份与 workspaceKey 不变
+  ---
+  duration_ms: 22.9672
+  type: 'test'
+  ...
+# Subtest: R1-01 撤销「确认未写入」→ 回 ACTIVE、零变更、可安全重试
+ok 490 - R1-01 撤销「确认未写入」→ 回 ACTIVE、零变更、可安全重试
+  ---
+  duration_ms: 31.542
+  type: 'test'
+  ...
+# Subtest: R1-02 撤销「结果不确定」→ REVOKE_UNKNOWN：拒盘、撤权、不释放屏障、不重复提交
+ok 491 - R1-02 撤销「结果不确定」→ REVOKE_UNKNOWN：拒盘、撤权、不释放屏障、不重复提交
+  ---
+  duration_ms: 30.5131
+  type: 'test'
+  ...
+# Subtest: R1-03 未声明提交结果的异常一律按「不确定」处理（fail-closed）
+ok 492 - R1-03 未声明提交结果的异常一律按「不确定」处理（fail-closed）
+  ---
+  duration_ms: 19.4335
+  type: 'test'
+  ...
+# Subtest: R1-04 根不可用的项目仍占用其注册身份：同路径/父目录/子目录均拒绝
+ok 493 - R1-04 根不可用的项目仍占用其注册身份：同路径/父目录/子目录均拒绝
+  ---
+  duration_ms: 16.3974
+  type: 'test'
+  ...
+# Subtest: R1-05 仅凭 /api/health 也必须发现根已消失（不得继续返回旧 READY 摘要）
+ok 494 - R1-05 仅凭 /api/health 也必须发现根已消失（不得继续返回旧 READY 摘要）
+  ---
+  duration_ms: 35.3349
+  type: 'test'
+  ...
+# Subtest: R1-06 根被同名目录替换（令牌变化）时 /api/health 同样必须失效
+ok 495 - R1-06 根被同名目录替换（令牌变化）时 /api/health 同样必须失效
+  ---
+  duration_ms: 37.8015
+  type: 'test'
+  ...
+# Subtest: R1-07 Legacy 的工作区身份仍为启动快照（不因根消失而改变）
+ok 496 - R1-07 Legacy 的工作区身份仍为启动快照（不因根消失而改变）
+  ---
+  duration_ms: 12.1264
+  type: 'test'
+  ...
+# Subtest: R1-08 32 字符显示名派生出的 projectId 加序号后仍满足既有正则
+ok 497 - R1-08 32 字符显示名派生出的 projectId 加序号后仍满足既有正则
+  ---
+  duration_ms: 9.689
+  type: 'test'
+  ...
+# Subtest: R1-09 Legacy 的 GET /api/document 仍执行原有读取授权
+ok 498 - R1-09 Legacy 的 GET /api/document 仍执行原有读取授权
+  ---
+  duration_ms: 20.2697
+  type: 'test'
+  ...
+# Subtest: R1-10 Multi 的 G-DRAFT 只认 actor + session + viewId，不依赖项目 grant
+ok 499 - R1-10 Multi 的 G-DRAFT 只认 actor + session + viewId，不依赖项目 grant
+  ---
+  duration_ms: 38.616
+  type: 'test'
+  ...
+# Subtest: R2-01 Legacy 撤销 read 授权后 POST /api/close 必须 403 且 View 不得关闭
+ok 500 - R2-01 Legacy 撤销 read 授权后 POST /api/close 必须 403 且 View 不得关闭
+  ---
+  duration_ms: 22.2843
+  type: 'test'
+  ...
+# Subtest: R2-02 Multi 的 POST /api/close 不受项目失效/授权撤销影响，dirty 仍 409
+ok 501 - R2-02 Multi 的 POST /api/close 不受项目失效/授权撤销影响，dirty 仍 409
+  ---
+  duration_ms: 49.5755
+  type: 'test'
+  ...
+# Subtest: S-01 首次初始化：空目录正常启动并建立日志头
+ok 502 - S-01 首次初始化：空目录正常启动并建立日志头
+  ---
+  duration_ms: 35.4735
+  type: 'test'
+  ...
+# Subtest: S-02 添加：commitSeq 单调、createdByOp 落盘、重启后仍在
+ok 503 - S-02 添加：commitSeq 单调、createdByOp 落盘、重启后仍在
+  ---
+  duration_ms: 46.1813
+  type: 'test'
+  ...
+# Subtest: S-03 撤销：墓碑 + revoked[] + issuedIds 永久保留
+ok 504 - S-03 撤销：墓碑 + revoked[] + issuedIds 永久保留
+  ---
+  duration_ms: 71.0618
+  type: 'test'
+  ...
+# Subtest: S-04 R-09/已撤销 id 永不复用（含重启后）
+ok 505 - S-04 R-09/已撤销 id 永不复用（含重启后）
+  ---
+  duration_ms: 83.8599
+  type: 'test'
+  ...
+# Subtest: S-05 C3a/C3b 墓碑优先：配置文件滞后时重启后项目消失且无 grant
+ok 506 - S-05 C3a/C3b 墓碑优先：配置文件滞后时重启后项目消失且无 grant
+  ---
+  duration_ms: 70.0527
+  type: 'test'
+  ...
+# Subtest: S-06 R-06c 墓碑追加中断（半行）→ 受限且不发任何磁盘权限
+ok 507 - S-06 R-06c 墓碑追加中断（半行）→ 受限且不发任何磁盘权限
+  ---
+  duration_ms: 61.1687
+  type: 'test'
+  ...
+# Subtest: S-07 R-08b hash 链断裂 → 断裂点之前的撤销仍生效，但整体不授权
+ok 508 - S-07 R-08b hash 链断裂 → 断裂点之前的撤销仍生效，但整体不授权
+  ---
+  duration_ms: 105.6648
+  type: 'test'
+  ...
+# Subtest: S-08 R-07 主配置截断但日志完整 → 回落 .bak，可读不可变更
+ok 509 - S-08 R-07 主配置截断但日志完整 → 回落 .bak，可读不可变更
+  ---
+  duration_ms: 63.1106
+  type: 'test'
+  ...
+# Subtest: S-09 主配置与备份都损坏 → 空表、零授权、禁止变更
+ok 510 - S-09 主配置与备份都损坏 → 空表、零授权、禁止变更
+  ---
+  duration_ms: 60.349
+  type: 'test'
+  ...
+# Subtest: S-10 R-07b 日志缺失 + commitSeq>0：即使配置 checksum 正确也不得授权
+ok 511 - S-10 R-07b 日志缺失 + commitSeq>0：即使配置 checksum 正确也不得授权
+  ---
+  duration_ms: 45.2846
+  type: 'test'
+  ...
+# Subtest: S-11 R-07c 日志缺失且配置来自 .bak → 同样全拒
+ok 512 - S-11 R-07c 日志缺失且配置来自 .bak → 同样全拒
+  ---
+  duration_ms: 63.6229
+  type: 'test'
+  ...
+# Subtest: S-12 R-07e 冷启动（commitSeq 0、无撤销、日志缺失）→ 正常并重建日志头
+ok 513 - S-12 R-07e 冷启动（commitSeq 0、无撤销、日志缺失）→ 正常并重建日志头
+  ---
+  duration_ms: 29.3387
+  type: 'test'
+  ...
+# Subtest: S-13 R-08 备份含已撤销项目 → 墓碑优先，不复活
+ok 514 - S-13 R-08 备份含已撤销项目 → 墓碑优先，不复活
+  ---
+  duration_ms: 87.299
+  type: 'test'
+  ...
+# Subtest: S-14 无法解释的序号差异（配置远领先日志）→ 受限
+ok 515 - S-14 无法解释的序号差异（配置远领先日志）→ 受限
+  ---
+  duration_ms: 44.5808
+  type: 'test'
+  ...
+# Subtest: S-15 R-15 墓碑确认未写入（0 字节）→ 零变更、可重试
+ok 516 - S-15 R-15 墓碑确认未写入（0 字节）→ 零变更、可重试
+  ---
+  duration_ms: 58.3908
+  type: 'test'
+  ...
+# Subtest: S-16 R-15b 墓碑已写入但追加报错 → 证据核对 + 重新 fsync 成功 → 撤销生效
+ok 517 - S-16 R-15b 墓碑已写入但追加报错 → 证据核对 + 重新 fsync 成功 → 撤销生效
+  ---
+  duration_ms: 75.2642
+  type: 'test'
+  ...
+# Subtest: S-17 R-16 墓碑成功、配置写失败 → 立即不可访问，重启后 REMOVED，Store DEGRADED
+ok 518 - S-17 R-16 墓碑成功、配置写失败 → 立即不可访问，重启后 REMOVED，Store DEGRADED
+  ---
+  duration_ms: 71.3885
+  type: 'test'
+  ...
+# Subtest: S-18 配置写入成功但运行期提交异常 → 黑名单拒盘且 DEGRADED
+ok 519 - S-18 配置写入成功但运行期提交异常 → 黑名单拒盘且 DEGRADED
+  ---
+  duration_ms: 59.1469
+  type: 'test'
+  ...
+# Subtest: S-19 双实例竞争同一个 Store：第二个必须拒绝，释放后可接管
+ok 520 - S-19 双实例竞争同一个 Store：第二个必须拒绝，释放后可接管
+  ---
+  duration_ms: 31.9927
+  type: 'test'
+  ...
+# Subtest: S-20 异常退出留下的陈旧锁可被接管（不依赖进程存活回调）
+ok 521 - S-20 异常退出留下的陈旧锁可被接管（不依赖进程存活回调）
+  ---
+  duration_ms: 38.028
+  type: 'test'
+  ...
+# Subtest: S-21 R-17/17b opId 只认精确匹配的持久证据
+ok 522 - S-21 R-17/17b opId 只认精确匹配的持久证据
+  ---
+  duration_ms: 84.0687
+  type: 'test'
+  ...
+# Subtest: S-22 重命名的 opId 也可确认（改的是同一条目证据）
+ok 523 - S-22 重命名的 opId 也可确认（改的是同一条目证据）
+  ---
+  duration_ms: 47.4927
+  type: 'test'
+  ...
+# Subtest: S-23 v1 配置只读兼容：可加载，变更后写回当前版本 v4
+ok 524 - S-23 v1 配置只读兼容：可加载，变更后写回当前版本 v4
+  ---
+  duration_ms: 38.9624
+  type: 'test'
+  ...
+# Subtest: S-24 原子写：不残留 tmp 文件，.bak 是上一版本
+ok 525 - S-24 原子写：不残留 tmp 文件，.bak 是上一版本
+  ---
+  duration_ms: 57.5049
+  type: 'test'
+  ...
+# Subtest: S-25 R-10 配置记录的根令牌与当前不一致 → UNAVAILABLE，且不改写配置
+ok 526 - S-25 R-10 配置记录的根令牌与当前不一致 → UNAVAILABLE，且不改写配置
+  ---
+  duration_ms: 36.0954
+  type: 'test'
+  ...
+# Subtest: S-26 受限状态下 G-DISK 全拒、变更 503，草稿端点不受影响
+ok 527 - S-26 受限状态下 G-DISK 全拒、变更 503，草稿端点不受影响
+  ---
+  duration_ms: 48.3426
+  type: 'test'
+  ...
+# Subtest: S-27 日志 fsync 持续失败 → 持久化未确认，保持 UNKNOWN 且不重复追加墓碑
+ok 528 - S-27 日志 fsync 持续失败 → 持久化未确认，保持 UNKNOWN 且不重复追加墓碑
+  ---
+  duration_ms: 42.8642
+  type: 'test'
+  ...
+# Subtest: S-28 项目 A 的撤销失败不影响项目 B 的权限与可读性
+ok 529 - S-28 项目 A 的撤销失败不影响项目 B 的权限与可读性
+  ---
+  duration_ms: 75.1158
+  type: 'test'
+  ...
+# Subtest: R1-01 运行期日志被破坏后，其它项目的 G-DISK 一律拒绝（含已发出的 grant）
+ok 530 - R1-01 运行期日志被破坏后，其它项目的 G-DISK 一律拒绝（含已发出的 grant）
+  ---
+  duration_ms: 84.2017
+  type: 'test'
+  ...
+# Subtest: R1-02 撤销后重启，重新添加同名目录必须得到新 id（不复用、不认领旧会话）
+ok 531 - R1-02 撤销后重启，重新添加同名目录必须得到新 id（不复用、不认领旧会话）
+  ---
+  duration_ms: 86.6478
+  type: 'test'
+  ...
+# Subtest: R1-03 运行期日志被删除后，撤销必须拒绝且不得伪造新日志链
+ok 532 - R1-03 运行期日志被删除后，撤销必须拒绝且不得伪造新日志链
+  ---
+  duration_ms: 41.8224
+  type: 'test'
+  ...
+# Subtest: R1-04 运行期链断裂后，撤销必须拒绝并进入受限
+ok 533 - R1-04 运行期链断裂后，撤销必须拒绝并进入受限
+  ---
+  duration_ms: 44.3392
+  type: 'test'
+  ...
+# Subtest: R1-05 缺 grantSource（unspecified）的记录重启后不得获得任何 G-DISK
+ok 534 - R1-05 缺 grantSource（unspecified）的记录重启后不得获得任何 G-DISK
+  ---
+  duration_ms: 25.4583
+  type: 'test'
+  ...
+# Subtest: R1-06 缺 canonicalRoot/rootToken 的记录重启后不得授权
+ok 535 - R1-06 缺 canonicalRoot/rootToken 的记录重启后不得授权
+  ---
+  duration_ms: 21.5284
+  type: 'test'
+  ...
+# Subtest: R1-07 完整可信记录（os-dialog + 三元组 + 令牌一致）才会授权
+ok 536 - R1-07 完整可信记录（os-dialog + 三元组 + 令牌一致）才会授权
+  ---
+  duration_ms: 21.9878
+  type: 'test'
+  ...
+# Subtest: R1-08 v2 配置含嵌套根时只授权第一个，第二个必须 UNAVAILABLE
+ok 537 - R1-08 v2 配置含嵌套根时只授权第一个，第二个必须 UNAVAILABLE
+  ---
+  duration_ms: 28.6222
+  type: 'test'
+  ...
+# Subtest: R1-09 v1 配置含重复根时也只授权第一个
+ok 538 - R1-09 v1 配置含重复根时也只授权第一个
+  ---
+  duration_ms: 22.5394
+  type: 'test'
+  ...
+# Subtest: R1-10 v2 配置含重复根（同一目录两个 id）时只授权第一个
+ok 539 - R1-10 v2 配置含重复根（同一目录两个 id）时只授权第一个
+  ---
+  duration_ms: 24.6102
+  type: 'test'
+  ...
+# Subtest: R2-01 日志 fsync 持续失败（行已完整写入）→ UNKNOWN，且不重复追加墓碑
+ok 540 - R2-01 日志 fsync 持续失败（行已完整写入）→ UNKNOWN，且不重复追加墓碑
+  ---
+  duration_ms: 46.0648
+  type: 'test'
+  ...
+# Subtest: R2-02 追加报错但行完整、重新 fsync 成功 → 撤销完成，且只写一行
+ok 541 - R2-02 追加报错但行完整、重新 fsync 成功 → 撤销完成，且只写一行
+  ---
+  duration_ms: 61.0459
+  type: 'test'
+  ...
+# Subtest: R2-03 半行墓碑（追加中断）→ 日志不可证，全局 fail-closed
+ok 542 - R2-03 半行墓碑（追加中断）→ 日志不可证，全局 fail-closed
+  ---
+  duration_ms: 65.5565
+  type: 'test'
+  ...
+# Subtest: R2-04 确认零字节写入 → not-committed，回 ACTIVE 且授权保留
+ok 543 - R2-04 确认零字节写入 → not-committed，回 ACTIVE 且授权保留
+  ---
+  duration_ms: 63.5723
+  type: 'test'
+  ...
+# Subtest: R2-05 配置已记录撤销、运行期把日志截断为表头 → 拒绝变更并全局拒盘
+ok 544 - R2-05 配置已记录撤销、运行期把日志截断为表头 → 拒绝变更并全局拒盘
+  ---
+  duration_ms: 83.1034
+  type: 'test'
+  ...
+# Subtest: R2-06 日志只剩较早的墓碑（丢掉最后一条）→ 拒绝变更
+ok 545 - R2-06 日志只剩较早的墓碑（丢掉最后一条）→ 拒绝变更
+  ---
+  duration_ms: 120.4552
+  type: 'test'
+  ...
+# Subtest: R2-07 加载期：撤销行的 opId 与配置不符 → 不可信、零授权
+ok 546 - R2-07 加载期：撤销行的 opId 与配置不符 → 不可信、零授权
+  ---
+  duration_ms: 90.5275
+  type: 'test'
+  ...
+# Subtest: R2-10 运行期日志被换成"同序号、不同 opId"的自洽链 → 拒绝变更
+ok 547 - R2-10 运行期日志被换成"同序号、不同 opId"的自洽链 → 拒绝变更
+  ---
+  duration_ms: 85.8518
+  type: 'test'
+  ...
+# Subtest: R2-08 运行期已验证的日志前缀不得无证据回退
+ok 548 - R2-08 运行期已验证的日志前缀不得无证据回退
+  ---
+  duration_ms: 91.0493
+  type: 'test'
+  ...
+# Subtest: R2-09 合法"墓碑领先配置一个序号"仍可加载并继续提交
+ok 549 - R2-09 合法"墓碑领先配置一个序号"仍可加载并继续提交
+  ---
+  duration_ms: 112.115
+  type: 'test'
+  ...
+# Subtest: R3-01 运行期日志读取抛 I/O 异常 → 全局拒盘（含未参与撤销的项目）
+ok 550 - R3-01 运行期日志读取抛 I/O 异常 → 全局拒盘（含未参与撤销的项目）
+  ---
+  duration_ms: 72.0294
+  type: 'test'
+  ...
+# Subtest: R3-02 追加异常后的恢复性读取失败 → 目标项目 UNKNOWN + 全部项目拒盘
+ok 551 - R3-02 追加异常后的恢复性读取失败 → 目标项目 UNKNOWN + 全部项目拒盘
+  ---
+  duration_ms: 62.3391
+  type: 'test'
+  ...
+# Subtest: R3-03 正常的日志读取、撤销与重启不受新检查影响
+ok 552 - R3-03 正常的日志读取、撤销与重启不受新检查影响
+  ---
+  duration_ms: 66.7686
+  type: 'test'
+  ...
+# Subtest: S-01 跨源 pick 请求 403，且不弹出选择器
+ok 553 - S-01 跨源 pick 请求 403，且不弹出选择器
+  ---
+  duration_ms: 38.1925
+  type: 'test'
+  ...
+# Subtest: S-02 变更类请求缺少 Origin 时 403（不依赖 token 兜底）
+ok 554 - S-02 变更类请求缺少 Origin 时 403（不依赖 token 兜底）
+  ---
+  duration_ms: 37.8446
+  type: 'test'
+  ...
+# Subtest: S-03 Origin: null 与 cross-site 一律 403
+ok 555 - S-03 Origin: null 与 cross-site 一律 403
+  ---
+  duration_ms: 38.7289
+  type: 'test'
+  ...
+# Subtest: S-04 伪造或缺失 X-WS-Token 一律 403，且不弹对话框
+ok 556 - S-04 伪造或缺失 X-WS-Token 一律 403，且不弹对话框
+  ---
+  duration_ms: 38.4612
+  type: 'test'
+  ...
+# Subtest: S-05 已消费的 intentId 再次使用 → 410，且只弹一次对话框
+ok 557 - S-05 已消费的 intentId 再次使用 → 410，且只弹一次对话框
+  ---
+  duration_ms: 40.1178
+  type: 'test'
+  ...
+# Subtest: S-06 意图超过 TTL（120s）后 → 410 ERR_INTENT_EXPIRED
+ok 558 - S-06 意图超过 TTL（120s）后 → 410 ERR_INTENT_EXPIRED
+  ---
+  duration_ms: 35.0014
+  type: 'test'
+  ...
+# Subtest: S-07 并发 pick：第二次 409 ERR_PICKER_BUSY，只创建一个选择器
+ok 559 - S-07 并发 pick：第二次 409 ERR_PICKER_BUSY，只创建一个选择器
+  ---
+  duration_ms: 40.3635
+  type: 'test'
+  ...
+# Subtest: S-08 取消 → 200 CANCELLED，配置与内存零变化
+ok 560 - S-08 取消 → 200 CANCELLED，配置与内存零变化
+  ---
+  duration_ms: 48.9405
+  type: 'test'
+  ...
+# Subtest: S-09 选择器不可用或超时 → 501 ERR_PICKER_UNAVAILABLE，零副作用
+ok 561 - S-09 选择器不可用或超时 → 501 ERR_PICKER_UNAVAILABLE，零副作用
+  ---
+  duration_ms: 40.6776
+  type: 'test'
+  ...
+# Subtest: S-10 body 携带 rootDir/path/canonicalRoot/rootToken/grantSource 一律 400 且零 IO
+ok 562 - S-10 body 携带 rootDir/path/canonicalRoot/rootToken/grantSource 一律 400 且零 IO
+  ---
+  duration_ms: 54.3292
+  type: 'test'
+  ...
+# Subtest: S-11 选中文件 / 不存在的目录 / UNC 路径 → 422 且零写入
+ok 563 - S-11 选中文件 / 不存在的目录 / UNC 路径 → 422 且零写入
+  ---
+  duration_ms: 43.0831
+  type: 'test'
+  ...
+# Subtest: S-12 选择重复根 → 409，选择子目录（嵌套）→ 422，均零写入
+ok 564 - S-12 选择重复根 → 409，选择子目录（嵌套）→ 422，均零写入
+  ---
+  duration_ms: 117.7504
+  type: 'test'
+  ...
+# Subtest: S-13 选择器未返回时重启 → 旧 requestId 410，且无半成品配置
+ok 565 - S-13 选择器未返回时重启 → 旧 requestId 410，且无半成品配置
+  ---
+  duration_ms: 100.7901
+  type: 'test'
+  ...
+# Subtest: S-14 添加后 /api/projects 与 /api/health 不含任何绝对路径、rootToken、providerId
+ok 566 - S-14 添加后 /api/projects 与 /api/health 不含任何绝对路径、rootToken、providerId
+  ---
+  duration_ms: 76.3664
+  type: 'test'
+  ...
+# Subtest: S-15 Legacy 与静态 Multi 的变更端点 501，且既有行为不变
+ok 567 - S-15 Legacy 与静态 Multi 的变更端点 501，且既有行为不变
+  ---
+  duration_ms: 48.9123
+  type: 'test'
+  ...
+# Subtest: S-16 选择成功后 /api/resources 立即 200 并返回目录树
+ok 568 - S-16 选择成功后 /api/resources 立即 200 并返回目录树
+  ---
+  duration_ms: 53.0639
+  type: 'test'
+  ...
+# Subtest: S-17 关闭并重启 Host 后，已授权的项目仍然可读（凭据已持久化）
+ok 569 - S-17 关闭并重启 Host 后，已授权的项目仍然可读（凭据已持久化）
+  ---
+  duration_ms: 70.3638
+  type: 'test'
+  ...
+# Subtest: X-01 --workspace-store 解析为托管模式，且与 --workspace 互斥
+ok 570 - X-01 --workspace-store 解析为托管模式，且与 --workspace 互斥
+  ---
+  duration_ms: 0.6175
+  type: 'test'
+  ...
+# Subtest: X-02 同一存储目录的第二个 Host 启动失败（ERR_STORE_LOCKED），第一个不受影响
+ok 571 - X-02 同一存储目录的第二个 Host 启动失败（ERR_STORE_LOCKED），第一个不受影响
+  ---
+  duration_ms: 34.6022
+  type: 'test'
+  ...
+# Subtest: X-03 /api/open 的项目内相对 path 不被 pick 的禁字段规则误伤
+ok 572 - X-03 /api/open 的项目内相对 path 不被 pick 的禁字段规则误伤
+  ---
+  duration_ms: 55.3043
+  type: 'test'
+  ...
+# Subtest: X-04 HTTP 无法指定 grantSource：只有选择器成功结果才产生可信授权
+ok 573 - X-04 HTTP 无法指定 grantSource：只有选择器成功结果才产生可信授权
+  ---
+  duration_ms: 54.1481
+  type: 'test'
+  ...
+# Subtest: W-01 Windows 适配器：execFile + 固定参数数组 + shell:false，脚本是常量无插值
+ok 574 - W-01 Windows 适配器：execFile + 固定参数数组 + shell:false，脚本是常量无插值
+  ---
+  duration_ms: 0.6546
+  type: 'test'
+  ...
+# Subtest: W-02 Windows 适配器：取消/异常/找不到/超时都不产生路径
+ok 575 - W-02 Windows 适配器：取消/异常/找不到/超时都不产生路径
+  ---
+  duration_ms: 0.4303
+  type: 'test'
+  ...
+# Subtest: W-03 非 TTY 与非 Windows 一律 fail-closed，绝不退化成"网页输入路径"
+ok 576 - W-03 非 TTY 与非 Windows 一律 fail-closed，绝不退化成"网页输入路径"
+  ---
+  duration_ms: 0.3095
+  type: 'test'
+  ...
+# Subtest: R1-01 stdin 超时不等待输入：返回 timeout，且传入的 timeoutMs 被真正使用
+ok 577 - R1-01 stdin 超时不等待输入：返回 timeout，且传入的 timeoutMs 被真正使用
+  ---
+  duration_ms: 0.3645
+  type: 'test'
+  ...
+# Subtest: R1-02 超时后迟到输入不再产生结果（迟到的 reply 被丢弃）
+ok 578 - R1-02 超时后迟到输入不再产生结果（迟到的 reply 被丢弃）
+  ---
+  duration_ms: 0.795
+  type: 'test'
+  ...
+# Subtest: R1-03 超时后关闭 readline（移除输入监听器），不遗留句柄
+ok 579 - R1-03 超时后关闭 readline（移除输入监听器），不遗留句柄
+  ---
+  duration_ms: 0.5846
+  type: 'test'
+  ...
+# Subtest: R1-04 超时在 HTTP 层：501 + 单飞释放 + 迟到输入不注册项目
+ok 580 - R1-04 超时在 HTTP 层：501 + 单飞释放 + 迟到输入不注册项目
+  ---
+  duration_ms: 75.3334
+  type: 'test'
+  ...
+# Subtest: R2-01 端口被占用 → 托管 Host 启动失败，但同进程内 Store 能重新打开
+ok 581 - R2-01 端口被占用 → 托管 Host 启动失败，但同进程内 Store 能重新打开
+  ---
+  duration_ms: 29.5804
+  type: 'test'
+  ...
+# Subtest: R2-02 监听失败后可以换端口正常启动，并保留原有项目
+ok 582 - R2-02 监听失败后可以换端口正常启动，并保留原有项目
+  ---
+  duration_ms: 65.9129
+  type: 'test'
+  ...
+# Subtest: R3-01 项目名过长 → 400 ERR_COMMAND_INVALID，且零副作用
+ok 583 - R3-01 项目名过长 → 400 ERR_COMMAND_INVALID，且零副作用
+  ---
+  duration_ms: 28.7193
+  type: 'test'
+  ...
+# Subtest: R3-02 项目名含控制字符 → 400，且选择器只被调用一次
+ok 584 - R3-02 项目名含控制字符 → 400，且选择器只被调用一次
+  ---
+  duration_ms: 33.0785
+  type: 'test'
+  ...
+# Subtest: R3-03 同名错误码在两条映射路径上一致：422 只留给"无法处理"，其他码不变
+ok 585 - R3-03 同名错误码在两条映射路径上一致：422 只留给"无法处理"，其他码不变
+  ---
+  duration_ms: 49.3343
+  type: 'test'
+  ...
+# Subtest: TX-01 根层显示所有可枚举条目（图片/PDF/视频/无扩展名/隐藏文件/空目录）
+ok 586 - TX-01 根层显示所有可枚举条目（图片/PDF/视频/无扩展名/隐藏文件/空目录）
+  ---
+  duration_ms: 58.8916
+  type: 'test'
+  ...
+# Subtest: TX-02 空目录返回空页（EMPTY），不是 200 + 缺字段
+ok 587 - TX-02 空目录返回空页（EMPTY），不是 200 + 缺字段
+  ---
+  duration_ms: 44.9815
+  type: 'test'
+  ...
+# Subtest: TX-03 逐层请求：docs 与 docs/sub 各自正确
+ok 588 - TX-03 逐层请求：docs 与 docs/sub 各自正确
+  ---
+  duration_ms: 49.2145
+  type: 'test'
+  ...
+# Subtest: TX-04 不存在的目录 → 404，不是 200 空页
+ok 589 - TX-04 不存在的目录 → 404，不是 200 空页
+  ---
+  duration_ms: 41.9083
+  type: 'test'
+  ...
+# Subtest: TX-05 dir 指向文件 → 404（ENOTDIR），不是空目录
+ok 590 - TX-05 dir 指向文件 → 404（ENOTDIR），不是空目录
+  ---
+  duration_ms: 47.6391
+  type: 'test'
+  ...
+# Subtest: TX-06 目录读不出来 → 403 ERR_DIR_UNREADABLE（不是 ERR_PERMISSION_DENIED）
+ok 591 - TX-06 目录读不出来 → 403 ERR_DIR_UNREADABLE（不是 ERR_PERMISSION_DENIED）
+  ---
+  duration_ms: 46.6215
+  type: 'test'
+  ...
+# Subtest: TX-07 未授权项目 → 403 ERR_PERMISSION_DENIED（与不可读严格区分）
+ok 592 - TX-07 未授权项目 → 403 ERR_PERMISSION_DENIED（与不可读严格区分）
+  ---
+  duration_ms: 42.6424
+  type: 'test'
+  ...
+# Subtest: TX-21 链接显示为 link 叶子、id 走 link: 命名空间、展开被拒且不跟随
+ok 593 - TX-21 链接显示为 link 叶子、id 走 link: 命名空间、展开被拒且不跟随
+  ---
+  duration_ms: 47.5955
+  type: 'test'
+  ...
+# Subtest: TX-06b 排序：目录与链接在前、文件在后、同组按 zh-Hans-CN，且两次一致
+ok 594 - TX-06b 排序：目录与链接在前、文件在后、同组按 zh-Hans-CN，且两次一致
+  ---
+  duration_ms: 44.2724
+  type: 'test'
+  ...
+# Subtest: TX-08 id 命名空间：dir:/doc: 带 projectId，跨项目不撞
+ok 595 - TX-08 id 命名空间：dir:/doc: 带 projectId，跨项目不撞
+  ---
+  duration_ms: 55.2966
+  type: 'test'
+  ...
+# Subtest: TX-09 /api/resources 输出形状与过滤规则完全不变（旧实现冻结）
+ok 596 - TX-09 /api/resources 输出形状与过滤规则完全不变（旧实现冻结）
+  ---
+  duration_ms: 48.3415
+  type: 'test'
+  ...
+# Subtest: TX-10 非法 dir 一律 400 且不读盘
+ok 597 - TX-10 非法 dir 一律 400 且不读盘
+  ---
+  duration_ms: 52.971
+  type: 'test'
+  ...
+# Subtest: TX-11 Multi：projectId 缺失 400 / 不存在 404 / 不可用 503
+ok 598 - TX-11 Multi：projectId 缺失 400 / 不存在 404 / 不可用 503
+  ---
+  duration_ms: 47.6585
+  type: 'test'
+  ...
+# Subtest: TX-16 屏障期（QUIESCING）→ 409，且在读盘之前被拒
+ok 599 - TX-16 屏障期（QUIESCING）→ 409，且在读盘之前被拒
+  ---
+  duration_ms: 50.2398
+  type: 'test'
+  ...
+# Subtest: TX-14 单层 2001 项：limit=2000 时两页取完，nextCursor 归零即全覆盖
+ok 600 - TX-14 单层 2001 项：limit=2000 时两页取完，nextCursor 归零即全覆盖
+  ---
+  duration_ms: 1981.3393
+  type: 'test'
+  ...
+# Subtest: TX-14b 完整分页遍历：无重复、无遗漏、按序拼接
+ok 601 - TX-14b 完整分页遍历：无重复、无遗漏、按序拼接
+  ---
+  duration_ms: 38.576
+  type: 'test'
+  ...
+# Subtest: TX-14c limit 取 1 / 7 / 2000 得到同一序列
+ok 602 - TX-14c limit 取 1 / 7 / 2000 得到同一序列
+  ---
+  duration_ms: 43.2194
+  type: 'test'
+  ...
+# Subtest: TX-14d cursor / limit 非法 → 400 且不读盘
+ok 603 - TX-14d cursor / limit 非法 → 400 且不读盘
+  ---
+  duration_ms: 22.4298
+  type: 'test'
+  ...
+# Subtest: TX-15 响应不含本机绝对路径 / providerId / rootToken
+ok 604 - TX-15 响应不含本机绝对路径 / providerId / rootToken
+  ---
+  duration_ms: 43.3302
+  type: 'test'
+  ...
+# Subtest: S-51-01 第一页替换整层；其它层的对象引用不变
+ok 605 - S-51-01 第一页替换整层；其它层的对象引用不变
+  ---
+  duration_ms: 0.4312
+  type: 'test'
+  ...
+# Subtest: S-51-02 续页追加而非替换；重复游标不产生重复条目；nextCursor 归零即结束
+ok 606 - S-51-02 续页追加而非替换；重复游标不产生重复条目；nextCursor 归零即结束
+  ---
+  duration_ms: 0.1859
+  type: 'test'
+  ...
+# Subtest: S-51-03 分页状态与已加载文件计数
+ok 607 - S-51-03 分页状态与已加载文件计数
+  ---
+  duration_ms: 0.1724
+  type: 'test'
+  ...
+# Subtest: S-51-04 层表物化成递归树，且未加载的子层不会被伪装成空目录
+ok 608 - S-51-04 层表物化成递归树，且未加载的子层不会被伪装成空目录
+  ---
+  duration_ms: 0.2557
+  type: 'test'
+  ...
+# Subtest: S-51-05 加载中标记不丢已加载条目；失败保留内容与游标供重试
+ok 609 - S-51-05 加载中标记不丢已加载条目；失败保留内容与游标供重试
+  ---
+  duration_ms: 0.1567
+  type: 'test'
+  ...
+# Subtest: S-51-06 reducer：刷新只作废该项目，其他项目的层表引用完全不变
+ok 610 - S-51-06 reducer：刷新只作废该项目，其他项目的层表引用完全不变
+  ---
+  duration_ms: 0.1663
+  type: 'test'
+  ...
+# Subtest: S-51-07 reducer：TREE_LEVEL_PAGE 同时维护派生树（既有恢复链路的兼容视图）
+ok 611 - S-51-07 reducer：TREE_LEVEL_PAGE 同时维护派生树（既有恢复链路的兼容视图）
+  ---
+  duration_ms: 0.1123
+  type: 'test'
+  ...
+# Subtest: S-51-08 Demo 静态树拆成层表后能物化回同一结构（三种模式同一渲染路径）
+ok 612 - S-51-08 Demo 静态树拆成层表后能物化回同一结构（三种模式同一渲染路径）
+  ---
+  duration_ms: 0.2606
+  type: 'test'
+  ...
+# Subtest: S-51-09 entryToNode 保持 link: 独立命名空间与相对路径
+ok 613 - S-51-09 entryToNode 保持 link: 独立命名空间与相对路径
+  ---
+  duration_ms: 0.2056
+  type: 'test'
+  ...
+# Subtest: S-51-10 恢复：父层已完整加载却找不到 → file-missing；父层未加载 → 交给 Host 判定
+ok 614 - S-51-10 恢复：父层已完整加载却找不到 → file-missing；父层未加载 → 交给 Host 判定
+  ---
+  duration_ms: 0.3036
+  type: 'test'
+  ...
+# Subtest: S-51-11 live.listTree 正确编码 projectId/dir/cursor/limit，失败归一为 REJECTED
+ok 615 - S-51-11 live.listTree 正确编码 projectId/dir/cursor/limit，失败归一为 REJECTED
+  ---
+  duration_ms: 1.3942
+  type: 'test'
+  ...
+# Subtest: S-51-12 demo.listTree 一页返回静态层，不触碰网络
+ok 616 - S-51-12 demo.listTree 一页返回静态层，不触碰网络
+  ---
+  duration_ms: 0.4188
+  type: 'test'
+  ...
+# Subtest: S-51-13 TreeBranch 先问查看器再打开，且 link 不进入打开链路
+ok 617 - S-51-13 TreeBranch 先问查看器再打开，且 link 不进入打开链路
+  ---
+  duration_ms: 2.333
+  type: 'test'
+  ...
+# Subtest: S-51-14 真实模式与演示模式的根行都从同一组件、depth 0 出发
+ok 618 - S-51-14 真实模式与演示模式的根行都从同一组件、depth 0 出发
+  ---
+  duration_ms: 0.9904
+  type: 'test'
+  ...
+# Subtest: R1-01-01 Legacy 嵌套目录：父层未加载 → 合成候选交给 Host，不判 file-missing
+ok 619 - R1-01-01 Legacy 嵌套目录：父层未加载 → 合成候选交给 Host，不判 file-missing
+  ---
+  duration_ms: 0.2323
+  type: 'test'
+  ...
+# Subtest: R1-01-02 Legacy 根层只加载第一页 → 后续页里的文件仍是候选
+ok 620 - R1-01-02 Legacy 根层只加载第一页 → 后续页里的文件仍是候选
+  ---
+  duration_ms: 0.0998
+  type: 'test'
+  ...
+# Subtest: R1-01-03 Legacy 完全加载且确认不存在 → 仍按既有规则判 file-missing
+ok 621 - R1-01-03 Legacy 完全加载且确认不存在 → 仍按既有规则判 file-missing
+  ---
+  duration_ms: 0.1224
+  type: 'test'
+  ...
+# Subtest: R1-01-04 集成：Legacy 恢复真的把嵌套标签与分页标签交给 Host 验证
+ok 622 - R1-01-04 集成：Legacy 恢复真的把嵌套标签与分页标签交给 Host 验证
+  ---
+  duration_ms: 0.3518
+  type: 'test'
+  ...
+# Subtest: R1-02-01 Demo→Live 之后，上一代迟到响应一个 dispatch 都不能发
+ok 623 - R1-02-01 Demo→Live 之后，上一代迟到响应一个 dispatch 都不能发
+  ---
+  duration_ms: 0.7866
+  type: 'test'
+  ...
+# Subtest: R1-02-02 重新连接（同一工作区、新代次）旧响应不回填
+ok 624 - R1-02-02 重新连接（同一工作区、新代次）旧响应不回填
+  ---
+  duration_ms: 0.1622
+  type: 'test'
+  ...
+# Subtest: R1-02-07 旧代次遗留的 loading 不得把新一代请求挡在门外
+ok 625 - R1-02-07 旧代次遗留的 loading 不得把新一代请求挡在门外
+  ---
+  duration_ms: 0.1985
+  type: 'test'
+  ...
+# Subtest: R1-02-03 刷新同项目：旧请求不得覆盖新请求写入的层表
+ok 626 - R1-02-03 刷新同项目：旧请求不得覆盖新请求写入的层表
+  ---
+  duration_ms: 0.1916
+  type: 'test'
+  ...
+# Subtest: R1-02-04 旧请求的失败结果不得把新请求的层写成 error
+ok 627 - R1-02-04 旧请求的失败结果不得把新请求的层写成 error
+  ---
+  duration_ms: 0.2171
+  type: 'test'
+  ...
+# Subtest: R1-02-05 其它项目刷新 / 切换焦点不应取消当前项目的有效加载
+ok 628 - R1-02-05 其它项目刷新 / 切换焦点不应取消当前项目的有效加载
+  ---
+  duration_ms: 0.2185
+  type: 'test'
+  ...
+# Subtest: R1-02-06 同层并发单飞；续页原样回传快照；刷新不动标签与草稿
+ok 629 - R1-02-06 同层并发单飞；续页原样回传快照；刷新不动标签与草稿
+  ---
+  duration_ms: 0.2209
+  type: 'test'
+  ...
+# Subtest: R1-03-01 74 层真实目录全部可见，末层文件不得显示成空文件夹
+ok 630 - R1-03-01 74 层真实目录全部可见，末层文件不得显示成空文件夹
+  ---
+  duration_ms: 2.2197
+  type: 'test'
+  ...
+# Subtest: R1-03-02 自指/回边数据按路径身份终止，不无限递归
+ok 631 - R1-03-02 自指/回边数据按路径身份终止，不无限递归
+  ---
+  duration_ms: 0.1888
+  type: 'test'
+  ...
+# Subtest: R1-04-01 buildTreePage：静态目录跨页快照一致；条目集合变化则快照变化
+ok 632 - R1-04-01 buildTreePage：静态目录跨页快照一致；条目集合变化则快照变化
+  ---
+  duration_ms: 0.7506
+  type: 'test'
+  ...
+# Subtest: R1-04-02 HTTP：第一页后插入文件 → 409 ERR_DIR_CHANGED，不返回可能遗漏的第二页
+ok 633 - R1-04-02 HTTP：第一页后插入文件 → 409 ERR_DIR_CHANGED，不返回可能遗漏的第二页
+  ---
+  duration_ms: 25.907
+  type: 'test'
+  ...
+# Subtest: R1-04-03 HTTP：删除与重命名同样被检测为目录变化
+ok 634 - R1-04-03 HTTP：删除与重命名同样被检测为目录变化
+  ---
+  duration_ms: 27.8369
+  type: 'test'
+  ...
+# Subtest: R1-04-04 HTTP：静态目录保留正常分页、去重、排序与全量遍历
+ok 635 - R1-04-04 HTTP：静态目录保留正常分页、去重、排序与全量遍历
+  ---
+  duration_ms: 57.7507
+  type: 'test'
+  ...
+# Subtest: R1-04-05 Shell：目录变化错误不得被当成"全部加载完成"
+ok 636 - R1-04-05 Shell：目录变化错误不得被当成"全部加载完成"
+  ---
+  duration_ms: 0.9351
+  type: 'test'
+  ...
+# Subtest: R1-04-06 非法 snapshot 参数零 IO 拒绝；不传 snapshot 的旧客户端仍可正常分页
+ok 637 - R1-04-06 非法 snapshot 参数零 IO 拒绝；不传 snapshot 的旧客户端仍可正常分页
+  ---
+  duration_ms: 18.671
+  type: 'test'
+  ...
+# Subtest: R2-01-01 连续两次刷新同一项目：B 先返回、A 后返回，旧响应不得覆盖新层表
+ok 638 - R2-01-01 连续两次刷新同一项目：B 先返回、A 后返回，旧响应不得覆盖新层表
+  ---
+  duration_ms: 1.2318
+  type: 'test'
+  ...
+# Subtest: R2-01-02 旧请求失败迟到：不得写 error / NOTICE，不得覆盖新请求的 ready
+ok 639 - R2-01-02 旧请求失败迟到：不得写 error / NOTICE，不得覆盖新请求的 ready
+  ---
+  duration_ms: 1.2435
+  type: 'test'
+  ...
+# Subtest: R2-01-03 旧请求抛异常迟到：catch 与 finally 都不得留下痕迹
+ok 640 - R2-01-03 旧请求抛异常迟到：catch 与 finally 都不得留下痕迹
+  ---
+  duration_ms: 0.4302
+  type: 'test'
+  ...
+# Subtest: R2-01-04 刷新项目 A 不取消项目 B 的有效请求
+ok 641 - R2-01-04 刷新项目 A 不取消项目 B 的有效请求
+  ---
+  duration_ms: 0.5021
+  type: 'test'
+  ...
+# Subtest: R2-01-06 Legacy 根层连续两次刷新：B 先返回、A 后返回同样不得覆盖
+ok 642 - R2-01-06 Legacy 根层连续两次刷新：B 先返回、A 后返回同样不得覆盖
+  ---
+  duration_ms: 0.2763
+  type: 'test'
+  ...
+# Subtest: R2-01-05 刷新竞争修复不改变标签、草稿与已打开文档
+ok 643 - R2-01-05 刷新竞争修复不改变标签、草稿与已打开文档
+  ---
+  duration_ms: 0.2138
+  type: 'test'
+  ...
+# Subtest: R2-02-01 dir=link 保持明确的链接拒绝语义；探针确实被接上
+ok 644 - R2-02-01 dir=link 保持明确的链接拒绝语义；探针确实被接上
+  ---
+  duration_ms: 22.4744
+  type: 'test'
+  ...
+# Subtest: R2-02-01b Windows junction 兜底：lstat 认不出链接时仍报 ERR_DIR_IS_LINK
+ok 645 - R2-02-01b Windows junction 兜底：lstat 认不出链接时仍报 ERR_DIR_IS_LINK
+  ---
+  duration_ms: 20.0415
+  type: 'test'
+  ...
+# Subtest: R2-02-02 dir=link/child 必须拒绝，且不得先沿链接访问根外 child（探针判定）
+ok 646 - R2-02-02 dir=link/child 必须拒绝，且不得先沿链接访问根外 child（探针判定）
+  ---
+  duration_ms: 21.2565
+  type: 'test'
+  ...
+# Subtest: R2-02-03 普通嵌套目录仍正常读取；悬空链接与非法相对路径全部 fail-closed
+ok 647 - R2-02-03 普通嵌套目录仍正常读取；悬空链接与非法相对路径全部 fail-closed
+  ---
+  duration_ms: 24.4777
+  type: 'test'
+  ...
+# Subtest: R2-02-04 HTTP 层：dir=link/child 被拒且不泄露根外内容，越界探针仍为零
+ok 648 - R2-02-04 HTTP 层：dir=link/child 被拒且不泄露根外内容，越界探针仍为零
+  ---
+  duration_ms: 29.1357
+  type: 'test'
+  ...
+# Subtest: PA-04-01 缺失 acknowledgeScope → 400，且选择器一次都没被调用
+ok 649 - PA-04-01 缺失 acknowledgeScope → 400，且选择器一次都没被调用
+  ---
+  duration_ms: 37.4422
+  type: 'test'
+  ...
+# Subtest: PA-04-02 acknowledgeScope 取值不对（含空串 / true / 近似值）→ 400，不弹窗
+ok 650 - PA-04-02 acknowledgeScope 取值不对（含空串 / true / 近似值）→ 400，不弹窗
+  ---
+  duration_ms: 45.0521
+  type: 'test'
+  ...
+# Subtest: PA-04-03 校验顺序：先 400 再谈意图（已用 intent 缺 ack 仍是 400 而非 410）
+ok 651 - PA-04-03 校验顺序：先 400 再谈意图（已用 intent 缺 ack 仍是 400 而非 410）
+  ---
+  duration_ms: 37.6978
+  type: 'test'
+  ...
+# Subtest: PA-04-04 坏 ack 不占用单飞状态：紧接着的合法请求仍是 202 而不是 409
+ok 652 - PA-04-04 坏 ack 不占用单飞状态：紧接着的合法请求仍是 202 而不是 409
+  ---
+  duration_ms: 59.0201
+  type: 'test'
+  ...
+# Subtest: PA-07-01 选择成功 → 项目 READY、根层可读，响应不含绝对路径
+ok 653 - PA-07-01 选择成功 → 项目 READY、根层可读，响应不含绝对路径
+  ---
+  duration_ms: 58.0586
+  type: 'test'
+  ...
+# Subtest: PA-05-01 系统对话框取消 → CANCELLED，项目数不变
+ok 654 - PA-05-01 系统对话框取消 → CANCELLED，项目数不变
+  ---
+  duration_ms: 36.5293
+  type: 'test'
+  ...
+# Subtest: PA-06-01 选择器不可用 → REJECTED 501，零副作用
+ok 655 - PA-06-01 选择器不可用 → REJECTED 501，零副作用
+  ---
+  duration_ms: 36.2513
+  type: 'test'
+  ...
+# Subtest: PA-08-01 重命名只改显示名：projectId / 树 / 磁盘目录名不变
+ok 656 - PA-08-01 重命名只改显示名：projectId / 树 / 磁盘目录名不变
+  ---
+  duration_ms: 78.0104
+  type: 'test'
+  ...
+# Subtest: PA-09-01 名称空白 / 超长 / 含控制字符 → 400，名称保持原样
+ok 657 - PA-09-01 名称空白 / 超长 / 含控制字符 → 400，名称保持原样
+  ---
+  duration_ms: 67.1829
+  type: 'test'
+  ...
+# Subtest: PA-09-02 不存在的项目 → 404；缺 projectId / name 非字符串 → 400
+ok 658 - PA-09-02 不存在的项目 → 404；缺 projectId / name 非字符串 → 400
+  ---
+  duration_ms: 55.5151
+  type: 'test'
+  ...
+# Subtest: PA-09-03 重命名端点需要 T1 令牌（无令牌 → 403）
+ok 659 - PA-09-03 重命名端点需要 T1 令牌（无令牌 → 403）
+  ---
+  duration_ms: 58.2419
+  type: 'test'
+  ...
+# Subtest: PA-03-01 能力探测：托管 / 静态 Multi / Legacy 三种答案
+ok 660 - PA-03-01 能力探测：托管 / 静态 Multi / Legacy 三种答案
+  ---
+  duration_ms: 47.6511
+  type: 'test'
+  ...
+# Subtest: PA-09-04 Legacy 与静态 Multi 的 rename 仍 501（不出现半实现）
+ok 661 - PA-09-04 Legacy 与静态 Multi 的 rename 仍 501（不出现半实现）
+  ---
+  duration_ms: 13.5716
+  type: 'test'
+  ...
+# Subtest: PA-01-01 打开信任模态不发出任何请求
+ok 662 - PA-01-01 打开信任模态不发出任何请求
+  ---
+  duration_ms: 0.7669
+  type: 'test'
+  ...
+# Subtest: PA-02-01 取消模态：零请求、零副作用
+ok 663 - PA-02-01 取消模态：零请求、零副作用
+  ---
+  duration_ms: 0.1605
+  type: 'test'
+  ...
+# Subtest: PA-03-02 确认后顺序：bootstrap → startPick（带 acknowledgeScope），再轮询
+ok 664 - PA-03-02 确认后顺序：bootstrap → startPick（带 acknowledgeScope），再轮询
+  ---
+  duration_ms: 0.5203
+  type: 'test'
+  ...
+# Subtest: PA-01-02 重复确认不会弹第二个选择器（单飞）
+ok 665 - PA-01-02 重复确认不会弹第二个选择器（单飞）
+  ---
+  duration_ms: 0.2013
+  type: 'test'
+  ...
+# Subtest: PA-05-02 选择器取消：结果只报一次，不自动重试
+ok 666 - PA-05-02 选择器取消：结果只报一次，不自动重试
+  ---
+  duration_ms: 0.2648
+  type: 'test'
+  ...
+# Subtest: PA-06-02 选择器不可用 → rejected，且不回落任何文本路径注册
+ok 667 - PA-06-02 选择器不可用 → rejected，且不回落任何文本路径注册
+  ---
+  duration_ms: 0.2392
+  type: 'test'
+  ...
+# Subtest: PA-07-02 APPLIED → 重取项目表 + 加载新项目根层 + 刷新工作区摘要
+ok 668 - PA-07-02 APPLIED → 重取项目表 + 加载新项目根层 + 刷新工作区摘要
+  ---
+  duration_ms: 0.2785
+  type: 'test'
+  ...
+# Subtest: PA-07-03 工作区在等待期间变化（代次失效）→ 迟到结果一律丢弃
+ok 669 - PA-07-03 工作区在等待期间变化（代次失效）→ 迟到结果一律丢弃
+  ---
+  duration_ms: 0.5359
+  type: 'test'
+  ...
+# Subtest: PA-06-03 Host 不发意图（降级）→ 直接 unsupported，且不发 pick 请求
+ok 670 - PA-06-03 Host 不发意图（降级）→ 直接 unsupported，且不发 pick 请求
+  ---
+  duration_ms: 0.2252
+  type: 'test'
+  ...
+# Subtest: PA-03-03 非托管模式下点确认直接给说明，不发任何请求
+ok 671 - PA-03-03 非托管模式下点确认直接给说明，不发任何请求
+  ---
+  duration_ms: 0.1294
+  type: 'test'
+  ...
+# Subtest: PA-09-05 名称校验与 Host 同规则（trim / 64 字 / 控制字符）
+ok 672 - PA-09-05 名称校验与 Host 同规则（trim / 64 字 / 控制字符）
+  ---
+  duration_ms: 0.1332
+  type: 'test'
+  ...
+# Subtest: PA-10-01 SET_PROJECTS 只更新项目表：其它项目的层表与展开状态原样保留
+ok 673 - PA-10-01 SET_PROJECTS 只更新项目表：其它项目的层表与展开状态原样保留
+  ---
+  duration_ms: 0.1354
+  type: 'test'
+  ...
+# Subtest: PA-10-02 分页合并按目录追加，不会把别的项目拖进来
+ok 674 - PA-10-02 分页合并按目录追加，不会把别的项目拖进来
+  ---
+  duration_ms: 0.0931
+  type: 'test'
+  ...
+# Subtest: PA-03-04 真实客户端：bootstrap → startPick → queryPick 落成 READY 项目，且不带任何路径字段
+ok 675 - PA-03-04 真实客户端：bootstrap → startPick → queryPick 落成 READY 项目，且不带任何路径字段
+  ---
+  duration_ms: 67.0427
+  type: 'test'
+  ...
+# Subtest: PA-06-04 真实客户端：非托管 Host 的能力探测不得报 managed
+ok 676 - PA-06-04 真实客户端：非托管 Host 的能力探测不得报 managed
+  ---
+  duration_ms: 19.2348
+  type: 'test'
+  ...
+# Subtest: PA-08-02 真实客户端重命名：只改显示名，磁盘目录名与 projectId 不变
+ok 677 - PA-08-02 真实客户端重命名：只改显示名，磁盘目录名与 projectId 不变
+  ---
+  duration_ms: 289.1434
+  type: 'test'
+  ...
+# Subtest: PA-09-06 真实客户端重命名：空名被 Host 拒绝，名称保持原样
+ok 678 - PA-09-06 真实客户端重命名：空名被 Host 拒绝，名称保持原样
+  ---
+  duration_ms: 55.1336
+  type: 'test'
+  ...
+# Subtest: PA-10-03 PROJECT_RENAMED 只替换那一行：层表、当前项目与其它项目原样保留
+ok 679 - PA-10-03 PROJECT_RENAMED 只替换那一行：层表、当前项目与其它项目原样保留
+  ---
+  duration_ms: 0.5273
+  type: 'test'
+  ...
+# Subtest: PA-05-03 系统窗口仍打开时轮询必须是 PENDING（Host 返回 202，不是错误）
+ok 680 - PA-05-03 系统窗口仍打开时轮询必须是 PENDING（Host 返回 202，不是错误）
+  ---
+  duration_ms: 42.9954
+  type: 'test'
+  ...
+# Subtest: PA-11-01 披露同时覆盖浏览范围、读取与保存、执行边界、可撤销
+ok 681 - PA-11-01 披露同时覆盖浏览范围、读取与保存、执行边界、可撤销
+  ---
+  duration_ms: 0.3111
+  type: 'test'
+  ...
+# Subtest: PA-01-03 能力探测：同一身份并发只发一个请求，身份变化后重新问，演示模式不发请求
+ok 682 - PA-01-03 能力探测：同一身份并发只发一个请求，身份变化后重新问，演示模式不发请求
+  ---
+  duration_ms: 0.4975
+  type: 'test'
+  ...
+# Subtest: PA-07-04 Host 已 APPLIED 但项目表读取失败 → registered-unsynced，不是"添加失败"
+ok 683 - PA-07-04 Host 已 APPLIED 但项目表读取失败 → registered-unsynced，不是"添加失败"
+  ---
+  duration_ms: 0.2671
+  type: 'test'
+  ...
+# Subtest: PA-07-05 Host 已 APPLIED 但根层加载失败 → registered-unsynced，项目行仍可见
+ok 684 - PA-07-05 Host 已 APPLIED 但根层加载失败 → registered-unsynced，项目行仍可见
+  ---
+  duration_ms: 0.3679
+  type: 'test'
+  ...
+# Subtest: PA-05-04 轮询中断 → unknown：不宣称"没添加"，也不自动重试
+ok 685 - PA-05-04 轮询中断 → unknown：不宣称"没添加"，也不自动重试
+  ---
+  duration_ms: 0.1791
+  type: 'test'
+  ...
+# Subtest: PA-05-05 等待超时 → unknown（不是 failed），且不重发 pick
+ok 686 - PA-05-05 等待超时 → unknown（不是 failed），且不重发 pick
+  ---
+  duration_ms: 0.161
+  type: 'test'
+  ...
+# Subtest: PA-07-06 结果未知时只读核对能补齐界面：resync 不重发 pick
+ok 687 - PA-07-06 结果未知时只读核对能补齐界面：resync 不重发 pick
+  ---
+  duration_ms: 0.1394
+  type: 'test'
+  ...
+# Subtest: PA-07-07 本次提交使工作区摘要更新属于合法转移：onWorkspaceKey 同步更新身份后仍判 applied
+ok 688 - PA-07-07 本次提交使工作区摘要更新属于合法转移：onWorkspaceKey 同步更新身份后仍判 applied
+  ---
+  duration_ms: 0.2024
+  type: 'test'
+  ...
+# Subtest: PA-07-08 外部代次变化（切模式/重连/换工作区）仍阻止旧响应回填，本次提交不会
+ok 689 - PA-07-08 外部代次变化（切模式/重连/换工作区）仍阻止旧响应回填，本次提交不会
+  ---
+  duration_ms: 0.1651
+  type: 'test'
+  ...
+# Subtest: PA-12-01 onProjects 抛异常 → registered-unsynced，模态收敛且可以重新开始
+ok 690 - PA-12-01 onProjects 抛异常 → registered-unsynced，模态收敛且可以重新开始
+  ---
+  duration_ms: 0.1677
+  type: 'test'
+  ...
+# Subtest: PA-12-02 loadRoot 抛异常 → registered-unsynced，busy 释放
+ok 691 - PA-12-02 loadRoot 抛异常 → registered-unsynced，busy 释放
+  ---
+  duration_ms: 0.135
+  type: 'test'
+  ...
+# Subtest: PA-12-03 onWorkspaceKey 抛异常 → 仍算 applied（列表与树已同步），busy 释放
+ok 692 - PA-12-03 onWorkspaceKey 抛异常 → 仍算 applied（列表与树已同步），busy 释放
+  ---
+  duration_ms: 0.1344
+  type: 'test'
+  ...
+# Subtest: PA-12-04 等待函数抛异常 → unknown，不重发 pick，busy 释放
+ok 693 - PA-12-04 等待函数抛异常 → unknown，不重发 pick，busy 释放
+  ---
+  duration_ms: 0.1345
+  type: 'test'
+  ...
+# Subtest: PA-12-05 编排层自身抛出 → confirm 收敛为 unknown，且不会停在 picking
+ok 694 - PA-12-05 编排层自身抛出 → confirm 收敛为 unknown，且不会停在 picking
+  ---
+  duration_ms: 0.1576
+  type: 'test'
+  ...
+# Subtest: R2-01-01 正常恢复：项目表 + 缺失根层 + 摘要全部同步，已加载的不重读
+ok 695 - R2-01-01 正常恢复：项目表 + 缺失根层 + 摘要全部同步，已加载的不重读
+  ---
+  duration_ms: 0.6328
+  type: 'test'
+  ...
+# Subtest: R2-01-02 等待期间切到 Demo：不得回填任何结果
+ok 696 - R2-01-02 等待期间切到 Demo：不得回填任何结果
+  ---
+  duration_ms: 0.2098
+  type: 'test'
+  ...
+# Subtest: R2-01-03 等待期间切到 Demo 再切回 Live（真实切换会推进代次）：旧结果不得回填
+ok 697 - R2-01-03 等待期间切到 Demo 再切回 Live（真实切换会推进代次）：旧结果不得回填
+  ---
+  duration_ms: 0.1908
+  type: 'test'
+  ...
+# Subtest: R2-01-04 等待期间切换工作区（代次失效，mode 仍是 live）：不得回填
+ok 698 - R2-01-04 等待期间切换工作区（代次失效，mode 仍是 live）：不得回填
+  ---
+  duration_ms: 0.1518
+  type: 'test'
+  ...
+# Subtest: R2-01-05 指定 projectId：只补那一个根层，其它缺失项目不动
+ok 699 - R2-01-05 指定 projectId：只补那一个根层，其它缺失项目不动
+  ---
+  duration_ms: 1.0771
+  type: 'test'
+  ...
+# Subtest: R2-01-06 未指定 projectId 且读取失败：保持 ok:false，不把失败当"已添加"
+ok 700 - R2-01-06 未指定 projectId 且读取失败：保持 ok:false，不把失败当"已添加"
+  ---
+  duration_ms: 0.6515
+  type: 'test'
+  ...
+# Subtest: R2-01-07 根层被拒绝/失败时不得谎报"已重新读取项目列表"（TREE-01 要求 8）
+ok 701 - R2-01-07 根层被拒绝/失败时不得谎报"已重新读取项目列表"（TREE-01 要求 8）
+  ---
+  duration_ms: 0.3743
+  type: 'test'
+  ...
+# Subtest: R2-01-08 根层 failed 同样不被当成成功（防止把异常当加载完成）
+ok 702 - R2-01-08 根层 failed 同样不被当成成功（防止把异常当加载完成）
+  ---
+  duration_ms: 0.1853
+  type: 'test'
+  ...
+# Subtest: TREE-01-01 子目录在途时 workspaceKey 合法变化（添加项目）：必须用新 key 重发取回，不得卡在正在加载
+ok 703 - TREE-01-01 子目录在途时 workspaceKey 合法变化（添加项目）：必须用新 key 重发取回，不得卡在正在加载
+  ---
+  duration_ms: 4.0756
+  type: 'test'
+  ...
+# Subtest: TREE-01-02 两个项目各自子目录都被自己更新 key 波及：两层都必须取回
+ok 704 - TREE-01-02 两个项目各自子目录都被自己更新 key 波及：两层都必须取回
+  ---
+  duration_ms: 2.2691
+  type: 'test'
+  ...
+# Subtest: TREE-01-03 真正切走（epoch 推进）：旧子目录请求作废且不重发，不污染新会话
+ok 705 - TREE-01-03 真正切走（epoch 推进）：旧子目录请求作废且不重发，不污染新会话
+  ---
+  duration_ms: 0.2383
+  type: 'test'
+  ...
+# Subtest: TREE-01-04 invalidateAll（重新连接）同样不被当作"仅 key 变化"重发
+ok 706 - TREE-01-04 invalidateAll（重新连接）同样不被当作"仅 key 变化"重发
+  ---
+  duration_ms: 0.124
+  type: 'test'
+  ...
+# Subtest: TREE-01-05 连续 key 抖动有上界：最多重发有限次后收敛，不会无限打转
+ok 707 - TREE-01-05 连续 key 抖动有上界：最多重发有限次后收敛，不会无限打转
+  ---
+  duration_ms: 41.6943
+  type: 'test'
+  ...
+# Subtest: PB-05 缺 confirm → 400 且零变更（项目仍在、字节不变）
+ok 708 - PB-05 缺 confirm → 400 且零变更（项目仍在、字节不变）
+  ---
+  duration_ms: 47.1945
+  type: 'test'
+  ...
+# Subtest: PB-05b 错误 confirm / 缺 Origin / 缺令牌 都被拒绝（零变更）
+ok 709 - PB-05b 错误 confirm / 缺 Origin / 缺令牌 都被拒绝（零变更）
+  ---
+  duration_ms: 49.1708
+  type: 'test'
+  ...
+# Subtest: PB-01 只读前置检查：有活动视图时 allowed=false / ACTIVE_VIEWS，且不改状态
+ok 710 - PB-01 只读前置检查：有活动视图时 allowed=false / ACTIVE_VIEWS，且不改状态
+  ---
+  duration_ms: 50.1627
+  type: 'test'
+  ...
+# Subtest: PB-01b 有活动视图时 remove → 409 aborted + blockedBy ACTIVE_VIEWS（零变更）
+ok 711 - PB-01b 有活动视图时 remove → 409 aborted + blockedBy ACTIVE_VIEWS（零变更）
+  ---
+  duration_ms: 53.955
+  type: 'test'
+  ...
+# Subtest: PB-04 干净后移除成功：项目消失、/api/tree 404、磁盘字节逐字节不变
+ok 712 - PB-04 干净后移除成功：项目消失、/api/tree 404、磁盘字节逐字节不变
+  ---
+  duration_ms: 72.0037
+  type: 'test'
+  ...
+# Subtest: PB-09 响应 / 文案不含绝对路径（项目内相对 path 允许）
+ok 713 - PB-09 响应 / 文案不含绝对路径（项目内相对 path 允许）
+  ---
+  duration_ms: 66.2059
+  type: 'test'
+  ...
+# Subtest: PB-06 op 查询按证据匹配：撤销后 revoked，未发生 unknown，绝不按 projectId 猜
+ok 714 - PB-06 op 查询按证据匹配：撤销后 revoked，未发生 unknown，绝不按 projectId 猜
+  ---
+  duration_ms: 72.7969
+  type: 'test'
+  ...
+# Subtest: PB-07 重启 Host 后：已移除项目不复活，另一个项目仍在
+ok 715 - PB-07 重启 Host 后：已移除项目不复活，另一个项目仍在
+  ---
+  duration_ms: 84.5955
+  type: 'test'
+  ...
+# Subtest: R1-02-01 同一 opId 不得用于另一个项目的撤销（409 + 零变更 + 只有一条墓碑）
+ok 716 - R1-02-01 同一 opId 不得用于另一个项目的撤销（409 + 零变更 + 只有一条墓碑）
+  ---
+  duration_ms: 75.9851
+  type: 'test'
+  ...
+# Subtest: R1-02-02 op 查询返回证据归属：未知 opId 的归属必须为 null
+ok 717 - R1-02-02 op 查询返回证据归属：未知 opId 的归属必须为 null
+  ---
+  duration_ms: 72.3071
+  type: 'test'
+  ...
+# Subtest: R1-02-03 已被"添加事务"使用的 opId 不得再用于撤销（409 + 项目与证据都不变）
+ok 718 - R1-02-03 已被"添加事务"使用的 opId 不得再用于撤销（409 + 项目与证据都不变）
+  ---
+  duration_ms: 47.6352
+  type: 'test'
+  ...
+# Subtest: R1-02-04 重启后重复使用同一 opId 仍被拒（持久证据优先于进程内状态）
+ok 719 - R1-02-04 重启后重复使用同一 opId 仍被拒（持久证据优先于进程内状态）
+  ---
+  duration_ms: 95.1467
+  type: 'test'
+  ...
+# Subtest: PB-06-01 APPLIED：opId 提交前落定、只发一次 remove、命中即移除
+ok 720 - PB-06-01 APPLIED：opId 提交前落定、只发一次 remove、命中即移除
+  ---
+  duration_ms: 0.6961
+  type: 'test'
+  ...
+# Subtest: PB-01-01 ABORTED：返回 blocked + blockedBy，且不清缓存
+ok 721 - PB-01-01 ABORTED：返回 blocked + blockedBy，且不清缓存
+  ---
+  duration_ms: 0.1355
+  type: 'test'
+  ...
+# Subtest: PB-06-02 超时(REJECTED) → 按 opId 查证据命中 revoked：判为已移除（不重发 remove）
+ok 722 - PB-06-02 超时(REJECTED) → 按 opId 查证据命中 revoked：判为已移除（不重发 remove）
+  ---
+  duration_ms: 0.7188
+  type: 'test'
+  ...
+# Subtest: PB-06-03 超时 → 查询 unknown：只读刷新列表 + 提示人工核对，且不自动重试
+ok 723 - PB-06-03 超时 → 查询 unknown：只读刷新列表 + 提示人工核对，且不自动重试
+  ---
+  duration_ms: 11.4843
+  type: 'test'
+  ...
+# Subtest: PB-06-04 查询端点本身失败 → 仍不重试 remove，刷新列表后 unknown
+ok 724 - PB-06-04 查询端点本身失败 → 仍不重试 remove，刷新列表后 unknown
+  ---
+  duration_ms: 2.1726
+  type: 'test'
+  ...
+# Subtest: PB-05-03 501 → unsupported（Demo/静态/Legacy），不发查询也不刷新
+ok 725 - PB-05-03 501 → unsupported（Demo/静态/Legacy），不发查询也不刷新
+  ---
+  duration_ms: 0.2211
+  type: 'test'
+  ...
+# Subtest: 迟到（提交期间 epoch 变）→ 结果不回填、不清缓存
+ok 726 - 迟到（提交期间 epoch 变）→ 结果不回填、不清缓存
+  ---
+  duration_ms: 0.1178
+  type: 'test'
+  ...
+# Subtest: Demo 模式直接 unsupported（不触碰端口）
+ok 727 - Demo 模式直接 unsupported（不触碰端口）
+  ---
+  duration_ms: 0.0851
+  type: 'test'
+  ...
+# Subtest: removalPrecheck 透传端口（只读）
+ok 728 - removalPrecheck 透传端口（只读）
+  ---
+  duration_ms: 0.2426
+  type: 'test'
+  ...
+# Subtest: R1-01-01 remove 端口 reject（断线 / Abort）→ 收敛为 unknown：一次 op 查询 + 一次只读刷新，绝不重发
+ok 729 - R1-01-01 remove 端口 reject（断线 / Abort）→ 收敛为 unknown：一次 op 查询 + 一次只读刷新，绝不重发
+  ---
+  duration_ms: 13.3267
+  type: 'test'
+  ...
+# Subtest: R1-01-02 remove 端口 reject，但 op 证据命中本次 opId → 判为已移除
+ok 730 - R1-01-02 remove 端口 reject，但 op 证据命中本次 opId → 判为已移除
+  ---
+  duration_ms: 2.3373
+  type: 'test'
+  ...
+# Subtest: R1-01-03 同一项目的重复确认不得并发发出多个 remove（共享同一次提交）
+ok 731 - R1-01-03 同一项目的重复确认不得并发发出多个 remove（共享同一次提交）
+  ---
+  duration_ms: 0.2555
+  type: 'test'
+  ...
+# Subtest: R1-01-04 查询端点自身 reject → 仍返回 unknown（不抛出、不重发 remove）
+ok 732 - R1-01-04 查询端点自身 reject → 仍返回 unknown（不抛出、不重发 remove）
+  ---
+  duration_ms: 13.7864
+  type: 'test'
+  ...
+# Subtest: R1-02-05 op 证据属于另一个项目 → 不得认领为"本项目已移除"
+ok 733 - R1-02-05 op 证据属于另一个项目 → 不得认领为"本项目已移除"
+  ---
+  duration_ms: 2.3757
+  type: 'test'
+  ...
+# Subtest: R1-03-07 PROJECT_REMOVED 收掉被移除项目的标签，其它项目的标签/草稿原样保留
+ok 734 - R1-03-07 PROJECT_REMOVED 收掉被移除项目的标签，其它项目的标签/草稿原样保留
+  ---
+  duration_ms: 0.3852
+  type: 'test'
+  ...
+# Subtest: PROJECT_REMOVED 只清被移除项目：其它项目树/展开/选中引用不变，活动项目回退
+ok 735 - PROJECT_REMOVED 只清被移除项目：其它项目树/展开/选中引用不变，活动项目回退
+  ---
+  duration_ms: 0.182
+  type: 'test'
+  ...
+# Subtest: R1-03-01 摘要变化：写入新摘要，并清掉旧摘要记录（不让新列表挂在旧记录上）
+ok 736 - R1-03-01 摘要变化：写入新摘要，并清掉旧摘要记录（不让新列表挂在旧记录上）
+  ---
+  duration_ms: 0.3788
+  type: 'test'
+  ...
+# Subtest: R1-03-02 健康检查失败：进入待同步（摘要置空），不伪造新摘要、也不删旧记录
+ok 737 - R1-03-02 健康检查失败：进入待同步（摘要置空），不伪造新摘要、也不删旧记录
+  ---
+  duration_ms: 0.1231
+  type: 'test'
+  ...
+# Subtest: R1-03-03 切换工作区期间响应迟到：一律不回填（不写摘要、不删记录）
+ok 738 - R1-03-03 切换工作区期间响应迟到：一律不回填（不写摘要、不删记录）
+  ---
+  duration_ms: 0.0892
+  type: 'test'
+  ...
+# Subtest: R1-03-04 探测失败但期间已切走：同样按 stale 处理，不置空新工作区的摘要
+ok 739 - R1-03-04 探测失败但期间已切走：同样按 stale 处理，不置空新工作区的摘要
+  ---
+  duration_ms: 0.1048
+  type: 'test'
+  ...
+# Subtest: R1-03-05 摘要未变：不重复写入（避免无意义的持久化抖动）
+ok 740 - R1-03-05 摘要未变：不重复写入（避免无意义的持久化抖动）
+  ---
+  duration_ms: 0.0917
+  type: 'test'
+  ...
+# Subtest: R1-03-06 摘要形状非法：按待同步处理，绝不写入猜出来的值
+ok 741 - R1-03-06 摘要形状非法：按待同步处理，绝不写入猜出来的值
+  ---
+  duration_ms: 0.0862
+  type: 'test'
+  ...
+# Subtest: R1-03-07 Host 没有工作区身份（空工作区）：按待同步处理
+ok 742 - R1-03-07 Host 没有工作区身份（空工作区）：按待同步处理
+  ---
+  duration_ms: 0.1202
+  type: 'test'
+  ...
+# Subtest: R1-03-08 摘要为 null 时不产生任何恢复记录（serialize 拒绝落盘）
+ok 743 - R1-03-08 摘要为 null 时不产生任何恢复记录（serialize 拒绝落盘）
+  ---
+  duration_ms: 0.1066
+  type: 'test'
+  ...
+# Subtest: R1-03-09 连续两次刷新：第二次以第一次的结果为基线，不重复清理
+ok 744 - R1-03-09 连续两次刷新：第二次以第一次的结果为基线，不重复清理
+  ---
+  duration_ms: 0.1669
+  type: 'test'
+  ...
+# Subtest: R2-01-01 移除后身份 pending：400ms 到点与 pagehide flush 都写不出旧摘要记录
+ok 745 - R2-01-01 移除后身份 pending：400ms 到点与 pagehide flush 都写不出旧摘要记录
+  ---
+  duration_ms: 0.3479
+  type: 'test'
+  ...
+# Subtest: R2-01-02 健康检查完成后：写入的是新摘要，且旧摘要记录被清掉
+ok 746 - R2-01-02 健康检查完成后：写入的是新摘要，且旧摘要记录被清掉
+  ---
+  duration_ms: 0.3264
+  type: 'test'
+  ...
+# Subtest: R2-01-03 健康检查失败：摘要置空并保持待同步，flush 与到点都不写
+ok 747 - R2-01-03 健康检查失败：摘要置空并保持待同步，flush 与到点都不写
+  ---
+  duration_ms: 0.1317
+  type: 'test'
+  ...
+# Subtest: R2-01-04 身份探测迟到（切换工作区）：不恢复旧身份、不写任何记录
+ok 748 - R2-01-04 身份探测迟到（切换工作区）：不恢复旧身份、不写任何记录
+  ---
+  duration_ms: 0.1073
+  type: 'test'
+  ...
+# Subtest: R2-01-05 切到 Demo 后：即使门禁被放开，也不会写出旧身份的记录
+ok 749 - R2-01-05 切到 Demo 后：即使门禁被放开，也不会写出旧身份的记录
+  ---
+  duration_ms: 0.0929
+  type: 'test'
+  ...
+# Subtest: R2-01-06 移除被拒（abort）时不合上门禁：正常自动保存不受影响
+ok 750 - R2-01-06 移除被拒（abort）时不合上门禁：正常自动保存不受影响
+  ---
+  duration_ms: 0.0894
+  type: 'test'
+  ...
+# Subtest: R2-01-07 恢复门禁与身份门禁互不影响：各自放行才允许写入
+ok 751 - R2-01-07 恢复门禁与身份门禁互不影响：各自放行才允许写入
+  ---
+  duration_ms: 0.0618
+  type: 'test'
+  ...
+# Subtest: R2-02-01 本地阻断判定：没有标签不阻断，干净标签只算"还开着"
+ok 752 - R2-02-01 本地阻断判定：没有标签不阻断，干净标签只算"还开着"
+  ---
+  duration_ms: 0.1523
+  type: 'test'
+  ...
+# Subtest: R2-02-02 本地阻断判定：dirty / saving / 未知结果 / 冲突逐项命中且去重
+ok 753 - R2-02-02 本地阻断判定：dirty / saving / 未知结果 / 冲突逐项命中且去重
+  ---
+  duration_ms: 0.1185
+  type: 'test'
+  ...
+# Subtest: R2-02-03 Host 重启后 activeViews=0 但本地有 dirty 标签：拒绝移除、零请求、草稿原样
+ok 754 - R2-02-03 Host 重启后 activeViews=0 但本地有 dirty 标签：拒绝移除、零请求、草稿原样
+  ---
+  duration_ms: 0.5052
+  type: 'test'
+  ...
+# Subtest: R2-02-04 草稿处理干净之后可以正常移除（Host 门禁仍是权威）
+ok 755 - R2-02-04 草稿处理干净之后可以正常移除（Host 门禁仍是权威）
+  ---
+  duration_ms: 0.2788
+  type: 'test'
+  ...
+# Subtest: R2-03-01 同一装配实例并发确认：只发出一次 remove（单飞真的生效）
+ok 756 - R2-03-01 同一装配实例并发确认：只发出一次 remove（单飞真的生效）
+  ---
+  duration_ms: 0.1406
+  type: 'test'
+  ...
+# Subtest: R2-03-02 事务结束后不会被缓存：下一次确认是新操作，重新提交
+ok 757 - R2-03-02 事务结束后不会被缓存：下一次确认是新操作，重新提交
+  ---
+  duration_ms: 0.1314
+  type: 'test'
+  ...
+# Subtest: R2-03-03 不同项目并发：各发一次（跨项目串行化交给 Host mutationLock）
+ok 758 - R2-03-03 不同项目并发：各发一次（跨项目串行化交给 Host mutationLock）
+  ---
+  duration_ms: 0.1709
+  type: 'test'
+  ...
+# Subtest: R2-03-04 成功提示在身份同步之后发出；待同步时明确标注
+ok 759 - R2-03-04 成功提示在身份同步之后发出；待同步时明确标注
+  ---
+  duration_ms: 2.1979
+  type: 'test'
+  ...
+# Subtest: R2-03-05 移除被阻断时不做身份同步（工作区没变，摘要不该动）
+ok 760 - R2-03-05 移除被阻断时不做身份同步（工作区没变，摘要不该动）
+  ---
+  duration_ms: 0.1337
+  type: 'test'
+  ...
+# Subtest: E-01-01 移除最后一个项目：空集合没有摘要 → 待同步、零写入（不伪造空工作区身份）
+ok 761 - E-01-01 移除最后一个项目：空集合没有摘要 → 待同步、零写入（不伪造空工作区身份）
+  ---
+  duration_ms: 0.9918
+  type: 'test'
+  ...
+# Subtest: E-01-02 再添加一个项目、拿到有效摘要：写入资格自动恢复，写出的是新摘要
+ok 762 - E-01-02 再添加一个项目、拿到有效摘要：写入资格自动恢复，写出的是新摘要
+  ---
+  duration_ms: 7.0329
+  type: 'test'
+  ...
+# Subtest: E-01-03 添加成功但摘要取不到：继续待同步，绝不伪造
+ok 763 - E-01-03 添加成功但摘要取不到：继续待同步，绝不伪造
+  ---
+  duration_ms: 2.1441
+  type: 'test'
+  ...
+# Subtest: E-01-04 旧请求迟到（代次已推进）：不得释放新工作区的门禁
+ok 764 - E-01-04 旧请求迟到（代次已推进）：不得释放新工作区的门禁
+  ---
+  duration_ms: 16.0768
+  type: 'test'
+  ...
+# Subtest: E-01-05 刷新恢复：新摘要下的记录可被读取，且指向新项目
+ok 765 - E-01-05 刷新恢复：新摘要下的记录可被读取，且指向新项目
+  ---
+  duration_ms: 16.1486
+  type: 'test'
+  ...
+# Subtest: E-01-06 门禁本来就没合上：添加流程不产生多余提示
+ok 766 - E-01-06 门禁本来就没合上：添加流程不产生多余提示
+  ---
+  duration_ms: 0.3065
+  type: 'test'
+  ...
+# Subtest: E-02-01 身份同步 pending 期间再次确认：不发第二个 remove、不生成第二个 opId、不重复清理
+ok 767 - E-02-01 身份同步 pending 期间再次确认：不发第二个 remove、不生成第二个 opId、不重复清理
+  ---
+  duration_ms: 0.7203
+  type: 'test'
+  ...
+# Subtest: E-02-02 整笔操作结束后（含身份同步）：新的确认仍是新操作
+ok 768 - E-02-02 整笔操作结束后（含身份同步）：新的确认仍是新操作
+  ---
+  duration_ms: 13.6408
+  type: 'test'
+  ...
+# Subtest: 05-01-01 A 在途时 B 也发起移除：两个请求都发出，B 被 Host 全局锁拒绝且不算成功
+ok 769 - 05-01-01 A 在途时 B 也发起移除：两个请求都发出，B 被 Host 全局锁拒绝且不算成功
+  ---
+  duration_ms: 17.0518
+  type: 'test'
+  ...
+# Subtest: 05-01-02 A 已撤销但身份检查未回时 B 移除：B 照常提交，最终身份以最后一次同步为准
+ok 770 - 05-01-02 A 已撤销但身份检查未回时 B 移除：B 照常提交，最终身份以最后一次同步为准
+  ---
+  duration_ms: 16.3777
+  type: 'test'
+  ...
+# Subtest: 05-01-03 只读健康检查乱序返回：旧的那次不得改写摘要，也不得放开写入门禁
+ok 771 - 05-01-03 只读健康检查乱序返回：旧的那次不得改写摘要，也不得放开写入门禁
+  ---
+  duration_ms: 17.1352
+  type: 'test'
+  ...
+# Subtest: 05-01-04 移除期间 400ms 到点与 pagehide flush：都写不出旧摘要记录
+ok 772 - 05-01-04 移除期间 400ms 到点与 pagehide flush：都写不出旧摘要记录
+  ---
+  duration_ms: 2.291
+  type: 'test'
+  ...
+# Subtest: 05-01-05 A 的响应丢失：只查一次证据、不重发、返回 UNKNOWN
+ok 773 - 05-01-05 A 的响应丢失：只查一次证据、不重发、返回 UNKNOWN
+  ---
+  duration_ms: 13.6238
+  type: 'test'
+  ...
+# Subtest: 05-01-06 跨项目并发时同一项目的单飞仍有效：A 只提交一次
+ok 774 - 05-01-06 跨项目并发时同一项目的单飞仍有效：A 只提交一次
+  ---
+  duration_ms: 2.0182
+  type: 'test'
+  ...
+# Subtest: 05-01-07 真实 Host：并发 remove 服从全局事务锁（不双重撤销、不伪造成功）
+ok 775 - 05-01-07 真实 Host：并发 remove 服从全局事务锁（不双重撤销、不伪造成功）
+  ---
+  duration_ms: 92.0111
+  type: 'test'
+  ...
+# Subtest: 05-02 连续操作链：添加 / 改名 / 多级展开 / 移除 / 再添加 / 重启
+ok 776 - 05-02 连续操作链：添加 / 改名 / 多级展开 / 移除 / 再添加 / 重启
+  ---
+  duration_ms: 238.8285
+  type: 'test'
+  ...
+# Subtest: 05-03-01 同名相对路径的两个文件身份互不相同
+ok 777 - 05-03-01 同名相对路径的两个文件身份互不相同
+  ---
+  duration_ms: 0.2665
+  type: 'test'
+  ...
+# Subtest: 05-03-02 打开两个同名文件：会话独立，编辑 A 不回填 B
+ok 778 - 05-03-02 打开两个同名文件：会话独立，编辑 A 不回填 B
+  ---
+  duration_ms: 35.0266
+  type: 'test'
+  ...
+# Subtest: 05-03-03 交错保存不串写：改 A → 改 B → 先保存 B → 再保存 A
+ok 779 - 05-03-03 交错保存不串写：改 A → 改 B → 先保存 B → 再保存 A
+  ---
+  duration_ms: 65.2236
+  type: 'test'
+  ...
+# Subtest: 05-03-04 未保存草稿不因切换项目消失（reducer 层的标签态）
+ok 780 - 05-03-04 未保存草稿不因切换项目消失（reducer 层的标签态）
+  ---
+  duration_ms: 0.513
+  type: 'test'
+  ...
+# Subtest: 05-03-05 外部改动后再保存：冲突被识别且不覆盖别人的内容
+ok 781 - 05-03-05 外部改动后再保存：冲突被识别且不覆盖别人的内容
+  ---
+  duration_ms: 39.1392
+  type: 'test'
+  ...
+# Subtest: 05-03-06 保存流程：草稿未同步不写盘，传输异常报 UNKNOWN 且保留草稿
+ok 782 - 05-03-06 保存流程：草稿未同步不写盘，传输异常报 UNKNOWN 且保留草稿
+  ---
+  duration_ms: 0.3812
+  type: 'test'
+  ...
+# Subtest: 05-04-01 多项目根与子目录：条目与文件类型都正确可见
+ok 783 - 05-04-01 多项目根与子目录：条目与文件类型都正确可见
+  ---
+  duration_ms: 112.9876
+  type: 'test'
+  ...
+# Subtest: 05-04-02 空目录 / 不存在 / 不是目录：三态严格区分
+ok 784 - 05-04-02 空目录 / 不存在 / 不是目录：三态严格区分
+  ---
+  duration_ms: 91.5456
+  type: 'test'
+  ...
+# Subtest: 05-04-03 分页完整：不截断、不重复、不漏项
+ok 785 - 05-04-03 分页完整：不截断、不重复、不漏项
+  ---
+  duration_ms: 83.6361
+  type: 'test'
+  ...
+# Subtest: 05-04-04 目录在两页之间变化 → ERR_DIR_CHANGED（不静默漏项）
+ok 786 - 05-04-04 目录在两页之间变化 → ERR_DIR_CHANGED（不静默漏项）
+  ---
+  duration_ms: 82.6279
+  type: 'test'
+  ...
+# Subtest: 05-04-05 junction 不被跟随：以 link 呈现且展开被拒绝，根外内容不泄露
+ok 787 - 05-04-05 junction 不被跟随：以 link 呈现且展开被拒绝，根外内容不泄露
+  ---
+  duration_ms: 23.9822
+  type: 'test'
+  ...
+# Subtest: 05-04-06 刷新 A 不清 B：作废与重载只作用于目标项目
+ok 788 - 05-04-06 刷新 A 不清 B：作废与重载只作用于目标项目
+  ---
+  duration_ms: 0.8426
+  type: 'test'
+  ...
+# Subtest: 05-04-07 移除 A 后迟到的目录响应：不再回填，也不会重建 A 的节点
+ok 789 - 05-04-07 移除 A 后迟到的目录响应：不再回填，也不会重建 A 的节点
+  ---
+  duration_ms: 0.2341
+  type: 'test'
+  ...
+# Subtest: 05-04-08 折叠再展开：展开状态变化不触碰层表，因此复用缓存
+ok 790 - 05-04-08 折叠再展开：展开状态变化不触碰层表，因此复用缓存
+  ---
+  duration_ms: 0.1558
+  type: 'test'
+  ...
+# Subtest: 05-05-01 同一项目集合在重启前后摘要一致：恢复记录可被认领，旧摘要的记录不被认领
+ok 791 - 05-05-01 同一项目集合在重启前后摘要一致：恢复记录可被认领，旧摘要的记录不被认领
+  ---
+  duration_ms: 50.6306
+  type: 'test'
+  ...
+# Subtest: 05-05-02 Host 断线：身份探测失败 → 摘要置空、写入被拦；Host 恢复后自动放行
+ok 792 - 05-05-02 Host 断线：身份探测失败 → 摘要置空、写入被拦；Host 恢复后自动放行
+  ---
+  duration_ms: 0.6786
+  type: 'test'
+  ...
+# Subtest: 05-05-03 结果未知：只读刷新项目列表，绝不自动重发 remove
+ok 793 - 05-05-03 结果未知：只读刷新项目列表，绝不自动重发 remove
+  ---
+  duration_ms: 0.3672
+  type: 'test'
+  ...
+# Subtest: 05-05-04 配置校验和损坏：变更一律 503，零墓碑写入，读取仍可用
+ok 794 - 05-05-04 配置校验和损坏：变更一律 503，零墓碑写入，读取仍可用
+  ---
+  duration_ms: 33.16
+  type: 'test'
+  ...
+# Subtest: 05-06-01 只读端点只认已授权项目；变更端点没有 T1 令牌一律拒绝
+ok 795 - 05-06-01 只读端点只认已授权项目；变更端点没有 T1 令牌一律拒绝
+  ---
+  duration_ms: 48.3131
+  type: 'test'
+  ...
+# Subtest: 05-06-02 变更请求必须声明同源 Origin
+ok 796 - 05-06-02 变更请求必须声明同源 Origin
+  ---
+  duration_ms: 45.0553
+  type: 'test'
+  ...
+# Subtest: 05-06-03 T2 意图一次性：同一个 intentId 不能启动第二次选择
+ok 797 - 05-06-03 T2 意图一次性：同一个 intentId 不能启动第二次选择
+  ---
+  duration_ms: 43.7582
+  type: 'test'
+  ...
+# Subtest: 05-06-04 越界目录：.. / 绝对路径 / UNC 一律拒绝，且不返回任何根外内容
+ok 798 - 05-06-04 越界目录：.. / 绝对路径 / UNC 一律拒绝，且不返回任何根外内容
+  ---
+  duration_ms: 56.5106
+  type: 'test'
+  ...
+# Subtest: 05-06-05 移除项目不删除磁盘文件，字节保持一致
+ok 799 - 05-06-05 移除项目不删除磁盘文件，字节保持一致
+  ---
+  duration_ms: 71.5515
+  type: 'test'
+  ...
+# Subtest: 05-06-06 响应里不出现本机绝对路径或 rootToken
+ok 800 - 05-06-06 响应里不出现本机绝对路径或 rootToken
+  ---
+  duration_ms: 50.6891
+  type: 'test'
+  ...
+# Subtest: 05-06-07 项目根被删除：该项目不可用，且不误报成权限问题、不泄露路径
+ok 801 - 05-06-07 项目根被删除：该项目不可用，且不误报成权限问题、不泄露路径
+  ---
+  duration_ms: 58.062
+  type: 'test'
+  ...
+# Subtest: E-01-01 旧身份检查在添加成功后返回 keyB：不得覆盖已确认的 keyBC
+ok 802 - E-01-01 旧身份检查在添加成功后返回 keyB：不得覆盖已确认的 keyBC
+  ---
+  duration_ms: 5.789
+  type: 'test'
+  ...
+# Subtest: E-01-02 旧身份检查在添加成功后抛错：不得把已确认的 keyBC 置回 null
+ok 803 - E-01-02 旧身份检查在添加成功后抛错：不得把已确认的 keyBC 置回 null
+  ---
+  duration_ms: 3.2229
+  type: 'test'
+  ...
+# Subtest: C-01 项目根创建 123.md：真实磁盘存在且 0 字节
+ok 804 - C-01 项目根创建 123.md：真实磁盘存在且 0 字节
+  ---
+  duration_ms: 32.3653
+  type: 'test'
+  ...
+# Subtest: C-02 子文件夹创建 notes.txt：路径正确，父目录内容不变
+ok 805 - C-02 子文件夹创建 notes.txt：路径正确，父目录内容不变
+  ---
+  duration_ms: 25.5759
+  type: 'test'
+  ...
+# Subtest: C-03 右键普通文件 → 目标为其父目录（由 Shell 解析，Host 只收相对目录）
+ok 806 - C-03 右键普通文件 → 目标为其父目录（由 Shell 解析，Host 只收相对目录）
+  ---
+  duration_ms: 29.0444
+  type: 'test'
+  ...
+# Subtest: C-04 新建空文件夹：磁盘目录真实存在，文件树可展开
+ok 807 - C-04 新建空文件夹：磁盘目录真实存在，文件树可展开
+  ---
+  duration_ms: 31.1273
+  type: 'test'
+  ...
+# Subtest: C-05 Esc 取消零变更由 Shell 保证；Host 端未被调用时磁盘零变更
+ok 808 - C-05 Esc 取消零变更由 Shell 保证；Host 端未被调用时磁盘零变更
+  ---
+  duration_ms: 20.9898
+  type: 'test'
+  ...
+# Subtest: C-06 已存在同名文件/目录一律拒绝，原始内容 SHA-256 不变
+ok 809 - C-06 已存在同名文件/目录一律拒绝，原始内容 SHA-256 不变
+  ---
+  duration_ms: 29.5893
+  type: 'test'
+  ...
+# Subtest: C-07 两次并发创建同名文件：最多成功一次
+ok 810 - C-07 两次并发创建同名文件：最多成功一次
+  ---
+  duration_ms: 31.2565
+  type: 'test'
+  ...
+# Subtest: C-08 非法路径 / Windows 保留名 / 尾随空格句点：一律零 IO 拒绝
+ok 811 - C-08 非法路径 / Windows 保留名 / 尾随空格句点：一律零 IO 拒绝
+  ---
+  duration_ms: 52.2525
+  type: 'test'
+  ...
+# Subtest: C-08b 重解析点父目录与缺失父目录：拒绝且不递归创建
+ok 812 - C-08b 重解析点父目录与缺失父目录：拒绝且不递归创建
+  ---
+  duration_ms: 32.2232
+  type: 'test'
+  ...
+# Subtest: C-09 无令牌、错误 Origin、无写权限：全部拒绝且零变更
+ok 813 - C-09 无令牌、错误 Origin、无写权限：全部拒绝且零变更
+  ---
+  duration_ms: 24.3174
+  type: 'test'
+  ...
+# Subtest: C-09b QUIESCING 与 UNAVAILABLE 一律拒绝且零变更
+ok 814 - C-09b QUIESCING 与 UNAVAILABLE 一律拒绝且零变更
+  ---
+  duration_ms: 28.7304
+  type: 'test'
+  ...
+# Subtest: C-09c createManagedEntry：无项目写授权时连磁盘操作准入都不进入
+ok 815 - C-09c createManagedEntry：无项目写授权时连磁盘操作准入都不进入
+  ---
+  duration_ms: 0.34
+  type: 'test'
+  ...
+# Subtest: C-10 A/B 项目隔离：创建 A 不写入 B，项目集合与 workspaceKey 不变
+ok 816 - C-10 A/B 项目隔离：创建 A 不写入 B，项目集合与 workspaceKey 不变
+  ---
+  duration_ms: 31.0382
+  type: 'test'
+  ...
+# Subtest: C-11 结果未知：明确 UNKNOWN、不自动重发、磁盘零猜测
+ok 817 - C-11 结果未知：明确 UNKNOWN、不自动重发、磁盘零猜测
+  ---
+  duration_ms: 28.8427
+  type: 'test'
+  ...
+# Subtest: C-12 重启 Host 后新文件仍在，文件树正确显示
+ok 818 - C-12 重启 Host 后新文件仍在，文件树正确显示
+  ---
+  duration_ms: 65.5074
+  type: 'test'
+  ...
+# Subtest: C-14 Legacy 与静态 Multi：真实创建端点明确 501，磁盘零变更
+ok 819 - C-14 Legacy 与静态 Multi：真实创建端点明确 501，磁盘零变更
+  ---
+  duration_ms: 28.9882
+  type: 'test'
+  ...
+# Subtest: C-16 旧链路未受影响：/api/resources、document.save、移除前检仍可用
+ok 820 - C-16 旧链路未受影响：/api/resources、document.save、移除前检仍可用
+  ---
+  duration_ms: 45.3338
+  type: 'test'
+  ...
+# Subtest: C-03 右键根 / 文件夹 / 文件 / 空白区 / 工具栏的目标目录
+ok 821 - C-03 右键根 / 文件夹 / 文件 / 空白区 / 工具栏的目标目录
+  ---
+  duration_ms: 0.5282
+  type: 'test'
+  ...
+# Subtest: C-03b 链接节点 / 无上下文项目 / 不支持模式一律拒绝，且不跨项目借用活动状态
+ok 822 - C-03b 链接节点 / 无上下文项目 / 不支持模式一律拒绝，且不跨项目借用活动状态
+  ---
+  duration_ms: 0.132
+  type: 'test'
+  ...
+# Subtest: C-05 预设扩展名：保留扩展名、只选中主文件名；Esc 取消不发请求
+ok 823 - C-05 预设扩展名：保留扩展名、只选中主文件名；Esc 取消不发请求
+  ---
+  duration_ms: 0.1832
+  type: 'test'
+  ...
+# Subtest: C-05b 非法名称在提交前被挡：零请求、保留输入供修正
+ok 824 - C-05b 非法名称在提交前被挡：零请求、保留输入供修正
+  ---
+  duration_ms: 0.2289
+  type: 'test'
+  ...
+# Subtest: C-01b 只有 Host 明确 APPLIED 才刷新层表，绝不预先插假节点
+ok 825 - C-01b 只有 Host 明确 APPLIED 才刷新层表，绝不预先插假节点
+  ---
+  duration_ms: 0.1552
+  type: 'test'
+  ...
+# Subtest: C-11 UNKNOWN：一次创建 + 恰好一次只读核对，绝不重发、绝不据同名推断成功
+ok 826 - C-11 UNKNOWN：一次创建 + 恰好一次只读核对，绝不重发、绝不据同名推断成功
+  ---
+  duration_ms: 0.1344
+  type: 'test'
+  ...
+# Subtest: C-11b 网络异常：同样收敛为 UNKNOWN；并发提交只有一个真正发请求
+ok 827 - C-11b 网络异常：同样收敛为 UNKNOWN；并发提交只有一个真正发请求
+  ---
+  duration_ms: 0.1711
+  type: 'test'
+  ...
+# Subtest: C-06b 同名拒绝：保留输入供修正，不刷新树、不伪造成功
+ok 828 - C-06b 同名拒绝：保留输入供修正，不刷新树、不伪造成功
+  ---
+  duration_ms: 0.0996
+  type: 'test'
+  ...
+# Subtest: C-13 二级菜单与真实已激活能力注册表一致（首版三项）
+ok 829 - C-13 二级菜单与真实已激活能力注册表一致（首版三项）
+  ---
+  duration_ms: 1.9483
+  type: 'test'
+  ...
+# Subtest: C-13b 插件停用 / 查看能力不可用 / 注册表未就绪：不再列为"已支持"
+ok 830 - C-13b 插件停用 / 查看能力不可用 / 注册表未就绪：不再列为"已支持"
+  ---
+  duration_ms: 1.0431
+  type: 'test'
+  ...
+# Subtest: C-14b Demo 客户端明确不支持真实创建
+ok 831 - C-14b Demo 客户端明确不支持真实创建
+  ---
+  duration_ms: 0.1232
+  type: 'test'
+  ...
+# Subtest: 浏览器提交体只有 projectId / parentDir / name（无路径/根/令牌/providerId）
+ok 832 - 浏览器提交体只有 projectId / parentDir / name（无路径/根/令牌/providerId）
+  ---
+  duration_ms: 0.5678
+  type: 'test'
+  ...
+# Subtest: 创建后展开目标文件夹是幂等的，且不动其它项目
+ok 833 - 创建后展开目标文件夹是幂等的，且不动其它项目
+  ---
+  duration_ms: 0.1396
+  type: 'test'
+  ...
+# Subtest: R1-01 折叠文件夹：展开计划指向该文件夹自身，且要求打开所属项目根
+ok 834 - R1-01 折叠文件夹：展开计划指向该文件夹自身，且要求打开所属项目根
+  ---
+  duration_ms: 0.2153
+  type: 'test'
+  ...
+# Subtest: R1-01 折叠项目根：计划只要求打开该项目的根，不展开任何文件夹、不跨项目
+ok 835 - R1-01 折叠项目根：计划只要求打开该项目的根，不展开任何文件夹、不跨项目
+  ---
+  duration_ms: 0.1014
+  type: 'test'
+  ...
+# Subtest: R1-01 空白区 / 工具栏选中折叠目录时，从层表解析目标节点；未加载到的分页不伪造节点
+ok 836 - R1-01 空白区 / 工具栏选中折叠目录时，从层表解析目标节点；未加载到的分页不伪造节点
+  ---
+  duration_ms: 0.1014
+  type: 'test'
+  ...
+# Subtest: R1-01 展开是幂等的：重复展开不会把已展开目录折叠，也不动其它项目
+ok 837 - R1-01 展开是幂等的：重复展开不会把已展开目录折叠，也不动其它项目
+  ---
+  duration_ms: 0.1529
+  type: 'test'
+  ...
+# Subtest: R1-02 预设模式下主文件名为空时一律拦截
+ok 838 - R1-02 预设模式下主文件名为空时一律拦截
+  ---
+  duration_ms: 0.3559
+  type: 'test'
+  ...
+# Subtest: R1-02 填了主名就放行；自由输入不额外禁止合法点文件名
+ok 839 - R1-02 填了主名就放行；自由输入不额外禁止合法点文件名
+  ---
+  duration_ms: 0.5174
+  type: 'test'
+  ...
+# Subtest: R1-02 空主名绝不进入 Host 创建链路（编排器纵深防御）
+ok 840 - R1-02 空主名绝不进入 Host 创建链路（编排器纵深防御）
+  ---
+  duration_ms: 0.4234
+  type: 'test'
+  ...
+# Subtest: 1 普通文件真实重命名：磁盘路径变化、SHA-256 不变、树同步
+ok 841 - 1 普通文件真实重命名：磁盘路径变化、SHA-256 不变、树同步
+  ---
+  duration_ms: 45.3213
+  type: 'test'
+  ...
+# Subtest: 2 文件夹重命名：后代文件路径同步变化，内容不变
+ok 842 - 2 文件夹重命名：后代文件路径同步变化，内容不变
+  ---
+  duration_ms: 46.6142
+  type: 'test'
+  ...
+# Subtest: 3 文件移动：源消失、目标出现、字节一致
+ok 843 - 3 文件移动：源消失、目标出现、字节一致
+  ---
+  duration_ms: 38.5988
+  type: 'test'
+  ...
+# Subtest: 4 文件夹移动：完整目录结构保持一致
+ok 844 - 4 文件夹移动：完整目录结构保持一致
+  ---
+  duration_ms: 45.0697
+  type: 'test'
+  ...
+# Subtest: 6 同名冲突：源与目标都不被覆盖，字节不变
+ok 845 - 6 同名冲突：源与目标都不被覆盖，字节不变
+  ---
+  duration_ms: 35.6467
+  type: 'test'
+  ...
+# Subtest: 7 大小写仅变化的 Windows 重命名：真实目录项名称改变
+ok 846 - 7 大小写仅变化的 Windows 重命名：真实目录项名称改变
+  ---
+  duration_ms: 34.0212
+  type: 'test'
+  ...
+# Subtest: 6b 竞争窗口：检查后占位前外部创建同名目标 → 拒绝且不覆盖
+ok 847 - 6b 竞争窗口：检查后占位前外部创建同名目标 → 拒绝且不覆盖
+  ---
+  duration_ms: 40.9341
+  type: 'test'
+  ...
+# Subtest: 8 目录移动到自身 / 后代被拒，磁盘零变更
+ok 848 - 8 目录移动到自身 / 后代被拒，磁盘零变更
+  ---
+  duration_ms: 34.7338
+  type: 'test'
+  ...
+# Subtest: 9 junction / symlink / 根外路径 / 非法名称一律拒绝
+ok 849 - 9 junction / symlink / 根外路径 / 非法名称一律拒绝
+  ---
+  duration_ms: 58.4382
+  type: 'test'
+  ...
+# Subtest: 10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝
+ok 850 - 10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝
+  ---
+  duration_ms: 32.4838
+  type: 'test'
+  ...
+# Subtest: 11 活动编辑 View / 危险草稿阻止改名或移动，零磁盘变更
+ok 851 - 11 活动编辑 View / 危险草稿阻止改名或移动，零磁盘变更
+  ---
+  duration_ms: 38.7892
+  type: 'test'
+  ...
+# Subtest: 13 并发 open / save / create 与结构变更：屏障内新准入被拒，路径不脱节
+ok 852 - 13 并发 open / save / create 与结构变更：屏障内新准入被拒，路径不脱节
+  ---
+  duration_ms: 46.3375
+  type: 'test'
+  ...
+# Subtest: 14 A 项目操作不影响 B 项目
+ok 853 - 14 A 项目操作不影响 B 项目
+  ---
+  duration_ms: 36.3826
+  type: 'test'
+  ...
+# Subtest: 15 副作用已发生但确认失败 → UNKNOWN，不自动重试、磁盘真实已变
+ok 854 - 15 副作用已发生但确认失败 → UNKNOWN，不自动重试、磁盘真实已变
+  ---
+  duration_ms: 33.7826
+  type: 'test'
+  ...
+# Subtest: 16 Host 重启与页面刷新后，真实路径与文件树一致
+ok 855 - 16 Host 重启与页面刷新后，真实路径与文件树一致
+  ---
+  duration_ms: 42.797
+  type: 'test'
+  ...
+# Subtest: 18 旧创建 / 保存 / 移除端点保持原语义
+ok 856 - 18 旧创建 / 保存 / 移除端点保持原语义
+  ---
+  duration_ms: 50.1077
+  type: 'test'
+  ...
+# Subtest: 改名预填原名并只选中主文件名，扩展名保留
+ok 857 - 改名预填原名并只选中主文件名，扩展名保留
+  ---
+  duration_ms: 0.3174
+  type: 'test'
+  ...
+# Subtest: 目标规则：目录不得移入自身/后代；非法名称与相对逃逸拒绝
+ok 858 - 目标规则：目录不得移入自身/后代；非法名称与相对逃逸拒绝
+  ---
+  duration_ms: 0.2619
+  type: 'test'
+  ...
+# Subtest: 移动候选只含已加载层表里的真实普通文件夹，排除自身/后代与链接
+ok 859 - 移动候选只含已加载层表里的真实普通文件夹，排除自身/后代与链接
+  ---
+  duration_ms: 0.2431
+  type: 'test'
+  ...
+# Subtest: 本地标签/草稿阻断（含 Host 重启后的脱节场景），只判不救
+ok 860 - 本地标签/草稿阻断（含 Host 重启后的脱节场景），只判不救
+  ---
+  duration_ms: 0.2854
+  type: 'test'
+  ...
+# Subtest: 只有 Host 明确 APPLIED 才刷新层表；失败保留输入不刷新
+ok 861 - 只有 Host 明确 APPLIED 才刷新层表；失败保留输入不刷新
+  ---
+  duration_ms: 0.4416
+  type: 'test'
+  ...
+# Subtest: 网络断开 / UNKNOWN：恰好一次只读核对，绝不重发、不据目标存在推断成功
+ok 862 - 网络断开 / UNKNOWN：恰好一次只读核对，绝不重发、不据目标存在推断成功
+  ---
+  duration_ms: 0.3062
+  type: 'test'
+  ...
+# Subtest: 本地阻断 / 非法目标：零请求；并发提交只有一个真正发请求
+ok 863 - 本地阻断 / 非法目标：零请求；并发提交只有一个真正发请求
+  ---
+  duration_ms: 0.3105
+  type: 'test'
+  ...
+# Subtest: 提交结果 → 输入行去留：blocked/busy/rejected 保留，applied/unknown 收起
+ok 864 - 提交结果 → 输入行去留：blocked/busy/rejected 保留，applied/unknown 收起
+  ---
+  duration_ms: 0.0881
+  type: 'test'
+  ...
+# Subtest: TREE_STRUCTURE_CHANGED 只作废旧路径的层与展开/选择，不动其它项目
+ok 865 - TREE_STRUCTURE_CHANGED 只作废旧路径的层与展开/选择，不动其它项目
+  ---
+  duration_ms: 0.2208
+  type: 'test'
+  ...
+# Subtest: invalidateLevel 使旧路径的迟到响应失效
+ok 866 - invalidateLevel 使旧路径的迟到响应失效
+  ---
+  duration_ms: 0.1162
+  type: 'test'
+  ...
+# Subtest: Demo 客户端明确不支持真实改名/移动
+ok 867 - Demo 客户端明确不支持真实改名/移动
+  ---
+  duration_ms: 0.1177
+  type: 'test'
+  ...
+# Subtest: A-01 同一页面重开同一文件：新 View 登记后旧 View 被释放，关闭新 View 后可改名
+ok 868 - A-01 同一页面重开同一文件：新 View 登记后旧 View 被释放，关闭新 View 后可改名
+  ---
+  duration_ms: 44.2359
+  type: 'test'
+  ...
+# Subtest: A-02 不同页面的 View 互不影响：重开一页不得关闭另一页
+ok 869 - A-02 不同页面的 View 互不影响：重开一页不得关闭另一页
+  ---
+  duration_ms: 46.5698
+  type: 'test'
+  ...
+# Subtest: A-03 DIRTY 草稿在重新打开后正文不丢失，且仍然拦住结构变更
+ok 870 - A-03 DIRTY 草稿在重新打开后正文不丢失，且仍然拦住结构变更
+  ---
+  duration_ms: 34.5486
+  type: 'test'
+  ...
+# Subtest: A-01b 普通同页打开不回收当前标签的 View（临时 View 释放后 view-1 仍可用）
+ok 871 - A-01b 普通同页打开不回收当前标签的 View（临时 View 释放后 view-1 仍可用）
+  ---
+  duration_ms: 41.9331
+  type: 'test'
+  ...
+# Subtest: B-01 屏障期间普通磁盘通道被拒，伪造凭据进不了专用通道，排空后结构变更完成
+ok 872 - B-01 屏障期间普通磁盘通道被拒，伪造凭据进不了专用通道，排空后结构变更完成
+  ---
+  duration_ms: 51.7024
+  type: 'test'
+  ...
+# Subtest: B-02 真实凭据只在屏障回调内有效，离开屏障后立即失效
+ok 873 - B-02 真实凭据只在屏障回调内有效，离开屏障后立即失效
+  ---
+  duration_ms: 28.5346
+  type: 'test'
+  ...
+# Subtest: C-02 handle.stat 失败（占位已建立）→ UNKNOWN，源文件不动
+ok 874 - C-02 handle.stat 失败（占位已建立）→ UNKNOWN，源文件不动
+  ---
+  duration_ms: 29.0904
+  type: 'test'
+  ...
+# Subtest: C-03 handle.close 失败（占位已建立）→ UNKNOWN
+ok 875 - C-03 handle.close 失败（占位已建立）→ UNKNOWN
+  ---
+  duration_ms: 27.1545
+  type: 'test'
+  ...
+# Subtest: C-04 POSIX：删除并重建同名文件后 ino 改变，身份可判别
+ok 876 - C-04 POSIX：删除并重建同名文件后 ino 改变，身份可判别 # SKIP 仅在 POSIX 上验证 ino 语义
+  ---
+  duration_ms: 0.0901
+  type: 'test'
+  ...
+# Subtest: C-01 占位被外部换成 0 字节文件：拒绝覆盖、外部文件保留、源文件仍在
+ok 877 - C-01 占位被外部换成 0 字节文件：拒绝覆盖、外部文件保留、源文件仍在
+  ---
+  duration_ms: 30.5044
+  type: 'test'
+  ...
+# Subtest: 同一页面刷新：锁已释放后解析出同一个 id
+ok 878 - 同一页面刷新：锁已释放后解析出同一个 id
+  ---
+  duration_ms: 2.0932
+  type: 'test'
+  ...
+# Subtest: 两个独立页面：各自生成不同 id
+ok 879 - 两个独立页面：各自生成不同 id
+  ---
+  duration_ms: 0.2201
+  type: 'test'
+  ...
+# Subtest: opener 复制 sessionStorage：原页面仍持锁 → 复制品换新 id
+ok 880 - opener 复制 sessionStorage：原页面仍持锁 → 复制品换新 id
+  ---
+  duration_ms: 0.2454
+  type: 'test'
+  ...
+# Subtest: Chrome 复制标签页：同一 id 已被占 → 复制品换新 id，原标签保持原 id
+ok 881 - Chrome 复制标签页：同一 id 已被占 → 复制品换新 id，原标签保持原 id
+  ---
+  duration_ms: 0.1696
+  type: 'test'
+  ...
+# Subtest: 刷新卸载窗口：第一次抢不到锁但随即释放 → 不换 id
+ok 882 - 刷新卸载窗口：第一次抢不到锁但随即释放 → 不换 id
+  ---
+  duration_ms: 0.2171
+  type: 'test'
+  ...
+# Subtest: 没有 Web Locks：退化信任 sessionStorage（记录局限）
+ok 883 - 没有 Web Locks：退化信任 sessionStorage（记录局限）
+  ---
+  duration_ms: 0.125
+  type: 'test'
+  ...
+# Subtest: 没有 sessionStorage：不生成身份（请求里省略该字段）
+ok 884 - 没有 sessionStorage：不生成身份（请求里省略该字段）
+  ---
+  duration_ms: 0.0743
+  type: 'test'
+  ...
+# Subtest: 形状：生成的 id 必须通过 Host 校验；垃圾值被忽略并重建
+ok 885 - 形状：生成的 id 必须通过 Host 校验；垃圾值被忽略并重建
+  ---
+  duration_ms: 0.15
+  type: 'test'
+  ...
+# Subtest: 集成：再次点击已打开文档（refreshCleanTab）不得让 view-1 失效
+ok 886 - 集成：再次点击已打开文档（refreshCleanTab）不得让 view-1 失效
+  ---
+  duration_ms: 52.4119
+  type: 'test'
+  ...
+# Subtest: 集成：修改磁盘后 refreshOpenTabs，原标签仍可正常编辑保存
+ok 887 - 集成：修改磁盘后 refreshOpenTabs，原标签仍可正常编辑保存
+  ---
+  duration_ms: 40.3385
+  type: 'test'
+  ...
+# Subtest: 集成：恢复流程（reclaimPage）才回收本页旧 View，普通打开不回收
+ok 888 - 集成：恢复流程（reclaimPage）才回收本页旧 View，普通打开不回收
+  ---
+  duration_ms: 28.8779
+  type: 'test'
+  ...
+# Subtest: 集成：DIRTY 草稿在刷新/重开后不丢，且继续阻止结构变更
+ok 889 - 集成：DIRTY 草稿在刷新/重开后不丢，且继续阻止结构变更
+  ---
+  duration_ms: 36.6352
+  type: 'test'
+  ...
+# Subtest: R1.2-02a getItem 抛错：不得抛出异常，也不得伪造新身份
+ok 890 - R1.2-02a getItem 抛错：不得抛出异常，也不得伪造新身份
+  ---
+  duration_ms: 0.3771
+  type: 'test'
+  ...
+# Subtest: R1.2-02b 新生成的 id 没能持久化：不得返回它
+ok 891 - R1.2-02b 新生成的 id 没能持久化：不得返回它
+  ---
+  duration_ms: 0.2235
+  type: 'test'
+  ...
+# Subtest: R1.2-02c 旧身份本来就在存储里：重写失败不影响它的可持续性
+ok 892 - R1.2-02c 旧身份本来就在存储里：重写失败不影响它的可持续性
+  ---
+  duration_ms: 0.1228
+  type: 'test'
+  ...
+# Subtest: R1.2-02d 没有 sessionStorage：不给身份（原因可诊断）
+ok 893 - R1.2-02d 没有 sessionStorage：不给身份（原因可诊断）
+  ---
+  duration_ms: 0.0735
+  type: 'test'
+  ...
+# Subtest: R1.2-02e 连新 id 都抢不到锁：宁可不带身份也不与别人共用
+ok 894 - R1.2-02e 连新 id 都抢不到锁：宁可不带身份也不与别人共用
+  ---
+  duration_ms: 0.1163
+  type: 'test'
+  ...
+# Subtest: R1.2-02f 成功路径不受影响：返回的 id 一定已落进 storage
+ok 895 - R1.2-02f 成功路径不受影响：返回的 id 一定已落进 storage
+  ---
+  duration_ms: 0.1023
+  type: 'test'
+  ...
+# Subtest: R1.2-04a 初次占位后 stat 失败 → UNKNOWN；源完整、身份未知不删目标
+ok 896 - R1.2-04a 初次占位后 stat 失败 → UNKNOWN；源完整、身份未知不删目标
+  ---
+  duration_ms: 26.6851
+  type: 'test'
+  ...
+# Subtest: R1.2-04b 初次占位后 close 失败 → UNKNOWN；句柄被再次尽力释放
+ok 897 - R1.2-04b 初次占位后 close 失败 → UNKNOWN；句柄被再次尽力释放
+  ---
+  duration_ms: 27.5245
+  type: 'test'
+  ...
+# Subtest: R1.2-04c 占位被外部删除后，第二次占位 stat 失败 → UNKNOWN（不是 REJECTED）
+ok 898 - R1.2-04c 占位被外部删除后，第二次占位 stat 失败 → UNKNOWN（不是 REJECTED）
+  ---
+  duration_ms: 28.3313
+  type: 'test'
+  ...
+# Subtest: R1.2-04d 占位被外部删除后，第二次占位 close 失败 → UNKNOWN，且句柄被释放
+ok 899 - R1.2-04d 占位被外部删除后，第二次占位 close 失败 → UNKNOWN，且句柄被释放
+  ---
+  duration_ms: 31.4293
+  type: 'test'
+  ...
+# Subtest: R1.2-04e 外部文件占住目标名：零副作用拒绝，外部文件完整保留
+ok 900 - R1.2-04e 外部文件占住目标名：零副作用拒绝，外部文件完整保留
+  ---
+  duration_ms: 33.6123
+  type: 'test'
+  ...
+# Subtest: R1.2-05a 身份复核后、rename 前被外部替换：hook 位置正确，覆盖行为如实记录
+ok 901 - R1.2-05a 身份复核后、rename 前被外部替换：hook 位置正确，覆盖行为如实记录
+  ---
+  duration_ms: 30.4266
+  type: 'test'
+  ...
+# Subtest: R1.2-05b 正常路径不受新注入点影响：hook 触发一次且改名成功
+ok 902 - R1.2-05b 正常路径不受新注入点影响：hook 触发一次且改名成功
+  ---
+  duration_ms: 27.7792
+  type: 'test'
+  ...
+# Subtest: R1.2-01a 两个旧 View → 恢复被接管 → 第 2 个旧 View 被回收，关标签后改名成功
+ok 903 - R1.2-01a 两个旧 View → 恢复被接管 → 第 2 个旧 View 被回收，关标签后改名成功
+  ---
+  duration_ms: 61.8768
+  type: 'test'
+  ...
+# Subtest: R1.2-01b 对照：没有回收能力时，第 2 个旧 View 会留下并拦住改名（用例有判别力）
+ok 904 - R1.2-01b 对照：没有回收能力时，第 2 个旧 View 会留下并拦住改名（用例有判别力）
+  ---
+  duration_ms: 38.8237
+  type: 'test'
+  ...
+# Subtest: R1.2-01c 不得回收其它页面的 View
+ok 905 - R1.2-01c 不得回收其它页面的 View
+  ---
+  duration_ms: 52.2346
+  type: 'test'
+  ...
+# Subtest: R1.2-01d 不得为了回收 View 而丢弃 DIRTY 草稿
+ok 906 - R1.2-01d 不得为了回收 View 而丢弃 DIRTY 草稿
+  ---
+  duration_ms: 42.429
+  type: 'test'
+  ...
+# Subtest: R1.2-01e 接管后，未被用户打开的待恢复文件同样不得遗留旧 View
+ok 907 - R1.2-01e 接管后，未被用户打开的待恢复文件同样不得遗留旧 View
+  ---
+  duration_ms: 49.7661
+  type: 'test'
+  ...
+# Subtest: R1.3-01a open-rejected：重开失败的文件，旧 View 仍要被回收
+ok 908 - R1.3-01a open-rejected：重开失败的文件，旧 View 仍要被回收
+  ---
+  duration_ms: 64.8868
+  type: 'test'
+  ...
+# Subtest: R1.3-01b file-missing：树里没有的文件，旧 View 也回收，回来后不被阻塞
+ok 909 - R1.3-01b file-missing：树里没有的文件，旧 View 也回收，回来后不被阻塞
+  ---
+  duration_ms: 65.5727
+  type: 'test'
+  ...
+# Subtest: R1.3-01c project-unavailable：项目恢复可用后，旧 View 不得再拦住改名
+ok 910 - R1.3-01c project-unavailable：项目恢复可用后，旧 View 不得再拦住改名
+  ---
+  duration_ms: 33.4452
+  type: 'test'
+  ...
+# Subtest: R1.3-01d unsaved-changes：拒绝关闭时保留 View 与草稿，并如实报告 blocked
+ok 911 - R1.3-01d unsaved-changes：拒绝关闭时保留 View 与草稿，并如实报告 blocked
+  ---
+  duration_ms: 43.372
+  type: 'test'
+  ...
+# Subtest: R1.3-01e 当前标签持有的新 View 不得被批量回收顺手关掉
+ok 912 - R1.3-01e 当前标签持有的新 View 不得被批量回收顺手关掉
+  ---
+  duration_ms: 35.9566
+  type: 'test'
+  ...
+# Subtest: R1.3-01f 其它页面实例的 View 不得回收，且阻塞状态可观察
+ok 913 - R1.3-01f 其它页面实例的 View 不得回收，且阻塞状态可观察
+  ---
+  duration_ms: 41.398
+  type: 'test'
+  ...
+# Subtest: R1.3-01g 恢复被接管：pending 与 skipped 在结算前一起回收，活动 View 不动
+ok 914 - R1.3-01g 恢复被接管：pending 与 skipped 在结算前一起回收，活动 View 不动
+  ---
+  duration_ms: 49.2525
+  type: 'test'
+  ...
+# Subtest: R1.3-01h 回收失败（项目已不存在）：不得静默跳过，必须计入 failed 并进提示
+ok 915 - R1.3-01h 回收失败（项目已不存在）：不得静默跳过，必须计入 failed 并进提示
+  ---
+  duration_ms: 28.8606
+  type: 'test'
+  ...
+# Subtest: R1.3-02a 64 条路径：单批发完，不拆分
+ok 916 - R1.3-02a 64 条路径：单批发完，不拆分
+  ---
+  duration_ms: 434.0991
+  type: 'test'
+  ...
+# Subtest: R1.3-02b 65 条路径：切成 64 + 1，两批都真的执行
+ok 917 - R1.3-02b 65 条路径：切成 64 + 1，两批都真的执行
+  ---
+  duration_ms: 361.3599
+  type: 'test'
+  ...
+# Subtest: R1.3-02c 128 条路径：64 + 64，全部关闭且无遗漏
+ok 918 - R1.3-02c 128 条路径：64 + 64，全部关闭且无遗漏
+  ---
+  duration_ms: 740.0334
+  type: 'test'
+  ...
+# Subtest: R1.3-02d 129 条路径：64 + 64 + 1，最后一批只有 1 条也要发
+ok 919 - R1.3-02d 129 条路径：64 + 64 + 1，最后一批只有 1 条也要发
+  ---
+  duration_ms: 689.508
+  type: 'test'
+  ...
+# Subtest: R1.3-02e 中间批次被拒：其它批次照常执行，失败规模如实报告
+ok 920 - R1.3-02e 中间批次被拒：其它批次照常执行，失败规模如实报告
+  ---
+  duration_ms: 732.0096
+  type: 'test'
+  ...
+# Subtest: R1.3-02f 重复路径去重、keepViewIds 每批都带，当前 View 不被误关
+ok 921 - R1.3-02f 重复路径去重、keepViewIds 每批都带，当前 View 不被误关
+  ---
+  duration_ms: 341.3011
+  type: 'test'
+  ...
+# Subtest: P1-01a 隐藏单个文件：默认树不再显示，磁盘内容与目录结构零变更
+ok 922 - P1-01a 隐藏单个文件：默认树不再显示，磁盘内容与目录结构零变更
+  ---
+  duration_ms: 71.7307
+  type: 'test'
+  ...
+# Subtest: P1-01b 同一路径重复隐藏是幂等的：不重复写配置、不涨 commitSeq
+ok 923 - P1-01b 同一路径重复隐藏是幂等的：不重复写配置、不涨 commitSeq
+  ---
+  duration_ms: 68.872
+  type: 'test'
+  ...
+# Subtest: P1-01c 取消隐藏恢复显示；对未隐藏的路径取消隐藏同样是幂等 no-op
+ok 924 - P1-01c 取消隐藏恢复显示；对未隐藏的路径取消隐藏同样是幂等 no-op
+  ---
+  duration_ms: 95.0367
+  type: 'test'
+  ...
+# Subtest: P1-01d 隐藏目录：整棵子树从默认视图消失，子层读取与磁盘内容不变
+ok 925 - P1-01d 隐藏目录：整棵子树从默认视图消失，子层读取与磁盘内容不变
+  ---
+  duration_ms: 70.4545
+  type: 'test'
+  ...
+# Subtest: P1-01e 父目录与子文件的隐藏记录互相独立：取消父目录不会顺手清掉子记录
+ok 926 - P1-01e 父目录与子文件的隐藏记录互相独立：取消父目录不会顺手清掉子记录
+  ---
+  duration_ms: 100.7184
+  type: 'test'
+  ...
+# Subtest: P1-01f 项目隔离：A 项目的隐藏记录不影响 B 项目，记录按 projectId 作用域
+ok 927 - P1-01f 项目隔离：A 项目的隐藏记录不影响 B 项目，记录按 projectId 作用域
+  ---
+  duration_ms: 76.5085
+  type: 'test'
+  ...
+# Subtest: P1-01g 越界与非法路径一律拒绝，且不留下任何隐藏记录
+ok 928 - P1-01g 越界与非法路径一律拒绝，且不留下任何隐藏记录
+  ---
+  duration_ms: 55.2252
+  type: 'test'
+  ...
+# Subtest: P1-01h 不存在或不属于该项目的路径不得登记
+ok 929 - P1-01h 不存在或不属于该项目的路径不得登记
+  ---
+  duration_ms: 53.4175
+  type: 'test'
+  ...
+# Subtest: P1-01i 隐藏与取消隐藏都必须通过 T1 令牌与显式 Origin
+ok 930 - P1-01i 隐藏与取消隐藏都必须通过 T1 令牌与显式 Origin
+  ---
+  duration_ms: 77.2215
+  type: 'test'
+  ...
+# Subtest: P1-01j 重启后隐藏状态仍然有效（配置 v4 + 校验和自洽）
+ok 931 - P1-01j 重启后隐藏状态仍然有效（配置 v4 + 校验和自洽）
+  ---
+  duration_ms: 104.9437
+  type: 'test'
+  ...
+# Subtest: P1-01k v2 配置可以直接使用；发生变更时升级到 v4 且保留原有项目表
+ok 932 - P1-01k v2 配置可以直接使用；发生变更时升级到 v4 且保留原有项目表
+  ---
+  duration_ms: 75.0447
+  type: 'test'
+  ...
+# Subtest: P1-01k2 v1 配置同样可用：升级后仍能隐藏，写回 v4
+ok 933 - P1-01k2 v1 配置同样可用：升级后仍能隐藏，写回 v4
+  ---
+  duration_ms: 70.2386
+  type: 'test'
+  ...
+# Subtest: P1-01l 隐藏不改变 workspaceKey：恢复记录不会因此失配
+ok 934 - P1-01l 隐藏不改变 workspaceKey：恢复记录不会因此失配
+  ---
+  duration_ms: 107.6153
+  type: 'test'
+  ...
+# Subtest: P1-01m 隐藏记录遇到"路径被重新使用"时不得错误隐藏新对象
+ok 935 - P1-01m 隐藏记录遇到"路径被重新使用"时不得错误隐藏新对象
+  ---
+  duration_ms: 90.0083
+  type: 'test'
+  ...
+# Subtest: P1-01m2 隐藏的文件被外部删除：记录标记 missing，不影响其它条目
+ok 936 - P1-01m2 隐藏的文件被外部删除：记录标记 missing，不影响其它条目
+  ---
+  duration_ms: 68.3379
+  type: 'test'
+  ...
+# Subtest: P1-01n 隐藏后按大小写不敏感匹配（Windows 语义），且只保留一条记录
+ok 937 - P1-01n 隐藏后按大小写不敏感匹配（Windows 语义），且只保留一条记录
+  ---
+  duration_ms: 71.6137
+  type: 'test'
+  ...
+# Subtest: P1-01o 配置写入失败：抛出持久化错误，内存隐藏集合不得"看起来成功"
+ok 938 - P1-01o 配置写入失败：抛出持久化错误，内存隐藏集合不得"看起来成功"
+  ---
+  duration_ms: 47.175
+  type: 'test'
+  ...
+# Subtest: P1-02a 过滤先于分页：total / nextCursor 与可见条数一致，不会翻到"全隐藏"的空页
+ok 939 - P1-02a 过滤先于分页：total / nextCursor 与可见条数一致，不会翻到"全隐藏"的空页
+  ---
+  duration_ms: 124.4111
+  type: 'test'
+  ...
+# Subtest: P1-02b 逐页遍历不会因为隐藏而漏项或重复
+ok 940 - P1-02b 逐页遍历不会因为隐藏而漏项或重复
+  ---
+  duration_ms: 162.3068
+  type: 'test'
+  ...
+# Subtest: P1-02c includeHidden=1 时隐藏项回来，hiddenCount 仍然表示隐藏条数
+ok 941 - P1-02c includeHidden=1 时隐藏项回来，hiddenCount 仍然表示隐藏条数
+  ---
+  duration_ms: 115.3628
+  type: 'test'
+  ...
+# Subtest: P1-02d 链接节点不支持隐藏：与"打不开链接"同一条边界（路径经过重解析点）
+ok 942 - P1-02d 链接节点不支持隐藏：与"打不开链接"同一条边界（路径经过重解析点）
+  ---
+  duration_ms: 102.4978
+  type: 'test'
+  ...
+# Subtest: P1-02e 项目根自身不可隐藏（那是"移除项目"的语义，属于另一个能力）
+ok 943 - P1-02e 项目根自身不可隐藏（那是"移除项目"的语义，属于另一个能力）
+  ---
+  duration_ms: 95.5043
+  type: 'test'
+  ...
+# Subtest: P1-02f 隐藏记录查询需要令牌与合法项目
+ok 944 - P1-02f 隐藏记录查询需要令牌与合法项目
+  ---
+  duration_ms: 94.9739
+  type: 'test'
+  ...
+# Subtest: P1-03a 客户端把 includeHidden 真实发给 Host，并把 hidden 标记带进结果
+ok 945 - P1-03a 客户端把 includeHidden 真实发给 Host，并把 hidden 标记带进结果
+  ---
+  duration_ms: 58.231
+  type: 'test'
+  ...
+# Subtest: P1-03b 客户端的隐藏 / 取消隐藏调用可用，且报告 changed 语义
+ok 946 - P1-03b 客户端的隐藏 / 取消隐藏调用可用，且报告 changed 语义
+  ---
+  duration_ms: 78.4962
+  type: 'test'
+  ...
+# Subtest: P1-03c 隐藏记录查询客户端与服务端一致（含失效状态）
+ok 947 - P1-03c 隐藏记录查询客户端与服务端一致（含失效状态）
+  ---
+  duration_ms: 56.0807
+  type: 'test'
+  ...
+# Subtest: P1-03d 隐藏标记穿过 entryToNode / applyPage / materializeTree 全程不丢
+ok 948 - P1-03d 隐藏标记穿过 entryToNode / applyPage / materializeTree 全程不丢
+  ---
+  duration_ms: 0.3593
+  type: 'test'
+  ...
+# Subtest: P1-03e reducer：显示隐藏项是真实状态，切换后层表仍需重新取（TREE_RESET 保留展开态）
+ok 949 - P1-03e reducer：显示隐藏项是真实状态，切换后层表仍需重新取（TREE_RESET 保留展开态）
+  ---
+  duration_ms: 0.1568
+  type: 'test'
+  ...
+# Subtest: P1-03f 菜单判定：文件/文件夹/链接可隐藏；隐藏项给"取消隐藏"；项目根与空白区不提供
+ok 950 - P1-03f 菜单判定：文件/文件夹/链接可隐藏；隐藏项给"取消隐藏"；项目根与空白区不提供
+  ---
+  duration_ms: 0.1924
+  type: 'test'
+  ...
+# Subtest: P1-03g 菜单判定：Demo / Legacy / 未授权项目明确禁用并给出原因（不隐藏入口）
+ok 951 - P1-03g 菜单判定：Demo / Legacy / 未授权项目明确禁用并给出原因（不隐藏入口）
+  ---
+  duration_ms: 0.075
+  type: 'test'
+  ...
+# Subtest: P1-03h 提示文案：隐藏后必须说清"文件没被删除"
+ok 952 - P1-03h 提示文案：隐藏后必须说清"文件没被删除"
+  ---
+  duration_ms: 0.1314
+  type: 'test'
+  ...
+[ws:hidden-refresh] refreshed project=project-a path=note.md
+# Subtest: P1-04a 隐藏正在编辑的文件：会话与草稿不受影响，保存照常落盘
+ok 953 - P1-04a 隐藏正在编辑的文件：会话与草稿不受影响，保存照常落盘
+  ---
+  duration_ms: 82.7314
+  type: 'test'
+  ...
+# Subtest: P1-04b 隐藏不影响"另一个文件"的会话；也不会顺手关闭任何视图
+ok 954 - P1-04b 隐藏不影响"另一个文件"的会话；也不会顺手关闭任何视图
+  ---
+  duration_ms: 57.4902
+  type: 'test'
+  ...
+[ws:hidden-refresh] refreshed project=project-a path=note.md
+# Subtest: P1-04c 隐藏后保存：保存换了 inode，但隐藏记录必须跟着刷新（文件不得"复活"）
+ok 955 - P1-04c 隐藏后保存：保存换了 inode，但隐藏记录必须跟着刷新（文件不得"复活"）
+  ---
+  duration_ms: 86.9255
+  type: 'test'
+  ...
+# Subtest: P1-05a 隐藏后在工作台内改名：旧记录失效但不影响新名字，改名不被记录拦住
+ok 956 - P1-05a 隐藏后在工作台内改名：旧记录失效但不影响新名字，改名不被记录拦住
+  ---
+  duration_ms: 84.0313
+  type: 'test'
+  ...
+# Subtest: P1-05b 隐藏目录里新增文件：新文件不会因为父目录的记录而被当成旧对象
+ok 957 - P1-05b 隐藏目录里新增文件：新文件不会因为父目录的记录而被当成旧对象
+  ---
+  duration_ms: 66.2466
+  type: 'test'
+  ...
+# Subtest: R1-01a 真实链路：Host 有 1 个隐藏项时，层表与工具栏计数都是 1
+ok 958 - R1-01a 真实链路：Host 有 1 个隐藏项时，层表与工具栏计数都是 1
+  ---
+  duration_ms: 71.9912
+  type: 'test'
+  ...
+# Subtest: R1-01b 切换"显示隐藏项"后计数保持 1（视图开关不改变计数语义）
+ok 959 - R1-01b 切换"显示隐藏项"后计数保持 1（视图开关不改变计数语义）
+  ---
+  duration_ms: 67.3385
+  type: 'test'
+  ...
+# Subtest: R1-01c 展开子目录：每一层各自计数，合计等于各层隐藏条目之和（不是"全项目数"）
+ok 960 - R1-01c 展开子目录：每一层各自计数，合计等于各层隐藏条目之和（不是"全项目数"）
+  ---
+  duration_ms: 89.1747
+  type: 'test'
+  ...
+# Subtest: R1-01d 分页追加不丢计数：每一页都带同一层的真实值
+ok 961 - R1-01d 分页追加不丢计数：每一页都带同一层的真实值
+  ---
+  duration_ms: 69.5547
+  type: 'test'
+  ...
+# Subtest: R1-01e 0 与"字段缺失"必须区分：缺失保留旧值，0 覆盖为 0
+ok 962 - R1-01e 0 与"字段缺失"必须区分：缺失保留旧值，0 覆盖为 0
+  ---
+  duration_ms: 0.4465
+  type: 'test'
+  ...
+# Subtest: R1-01f 取消隐藏后计数归零；重启后仍然正确（值来自 Host，不是本地推算）
+ok 963 - R1-01f 取消隐藏后计数归零；重启后仍然正确（值来自 Host，不是本地推算）
+  ---
+  duration_ms: 121.7199
+  type: 'test'
+  ...
+# Subtest: R1-02a 正常隐藏文件保存后仍隐藏，保存响应报告 refreshed
+ok 964 - R1-02a 正常隐藏文件保存后仍隐藏，保存响应报告 refreshed
+  ---
+  duration_ms: 95.3834
+  type: 'test'
+  ...
+# Subtest: R1-02b rebound 对象保存后不得恢复 active（新对象不被旧记录吞掉）
+ok 965 - R1-02b rebound 对象保存后不得恢复 active（新对象不被旧记录吞掉）
+  ---
+  duration_ms: 90.012
+  type: 'test'
+  ...
+# Subtest: R1-02c Provider 的提交身份可证明：正常保存等于磁盘对象，提交后被替换则不等
+ok 966 - R1-02c Provider 的提交身份可证明：正常保存等于磁盘对象，提交后被替换则不等
+  ---
+  duration_ms: 29.1074
+  type: 'test'
+  ...
+# Subtest: R1-02d 判定表：只有能证明"原对象延续"才允许刷新
+ok 967 - R1-02d 判定表：只有能证明"原对象延续"才允许刷新
+  ---
+  duration_ms: 0.5066
+  type: 'test'
+  ...
+# Subtest: R1-03a 保存期间用户取消隐藏：旧刷新不得重新创建记录
+ok 968 - R1-03a 保存期间用户取消隐藏：旧刷新不得重新创建记录
+  ---
+  duration_ms: 66.319
+  type: 'test'
+  ...
+# Subtest: R1-03b 取消隐藏后又重新隐藏：旧刷新不得覆盖新记录
+ok 969 - R1-03b 取消隐藏后又重新隐藏：旧刷新不得覆盖新记录
+  ---
+  duration_ms: 76.5841
+  type: 'test'
+  ...
+# Subtest: R1-03c 条件提交写盘失败：内存与磁盘保持一致，不产生半更新状态
+ok 970 - R1-03c 条件提交写盘失败：内存与磁盘保持一致，不产生半更新状态
+  ---
+  duration_ms: 61.5929
+  type: 'test'
+  ...
+# Subtest: R1-03d 条件提交与其它配置提交交错时不丢状态（记录集合按预期合并）
+ok 971 - R1-03d 条件提交与其它配置提交交错时不丢状态（记录集合按预期合并）
+  ---
+  duration_ms: 92.4907
+  type: 'test'
+  ...
+# Subtest: R1-04a 保存成功但隐藏元数据刷新失败：正文 COMMITTED + failed + 诊断事件
+ok 972 - R1-04a 保存成功但隐藏元数据刷新失败：正文 COMMITTED + failed + 诊断事件
+  ---
+  duration_ms: 96.6017
+  type: 'test'
+  ...
+# Subtest: R1-04b 刷新被跳过时同样可诊断（reason 明确），且不改变保存结论
+ok 973 - R1-04b 刷新被跳过时同样可诊断（reason 明确），且不改变保存结论
+  ---
+  duration_ms: 87.013
+  type: 'test'
+  ...
+# Subtest: R1-10a 一个项目保存/刷新隐藏身份不影响另一个项目与其会话
+ok 974 - R1-10a 一个项目保存/刷新隐藏身份不影响另一个项目与其会话
+  ---
+  duration_ms: 120.6838
+  type: 'test'
+  ...
+# Subtest: P2-01a 普通文件回收：源消失、payload 就位、记录 stored、树里消失、证据可查
+ok 975 - P2-01a 普通文件回收：源消失、payload 就位、记录 stored、树里消失、证据可查
+  ---
+  duration_ms: 107.8768
+  type: 'test'
+  ...
+# Subtest: P2-01b 恢复：回到原路径、对象身份不变、树里回来、记录 restored
+ok 976 - P2-01b 恢复：回到原路径、对象身份不变、树里回来、记录 restored
+  ---
+  duration_ms: 138.4304
+  type: 'test'
+  ...
+# Subtest: P2-01c 二进制文件：不做文本解码也能回收与恢复，字节完全不变
+ok 977 - P2-01c 二进制文件：不做文本解码也能回收与恢复，字节完全不变
+  ---
+  duration_ms: 134.5125
+  type: 'test'
+  ...
+# Subtest: P2-01d 链接 / junction 全部拒绝，且零磁盘副作用
+ok 978 - P2-01d 链接 / junction 全部拒绝，且零磁盘副作用
+  ---
+  duration_ms: 46.334
+  type: 'test'
+  ...
+# Subtest: P2-01e 目录拒绝：本阶段只支持普通文件
+ok 979 - P2-01e 目录拒绝：本阶段只支持普通文件
+  ---
+  duration_ms: 42.7968
+  type: 'test'
+  ...
+# Subtest: P2-01f 恢复时原位置已有同名文件：409 拒绝，绝不覆盖
+ok 980 - P2-01f 恢复时原位置已有同名文件：409 拒绝，绝不覆盖
+  ---
+  duration_ms: 137.8813
+  type: 'test'
+  ...
+# Subtest: P2-01g 回收区目标冲突：不覆盖回收区里已有的对象
+ok 981 - P2-01g 回收区目标冲突：不覆盖回收区里已有的对象
+  ---
+  duration_ms: 141.0905
+  type: 'test'
+  ...
+# Subtest: P2-01h opId 幂等重放：同一 opId 不产生第二次移动；换个路径必须冲突
+ok 982 - P2-01h opId 幂等重放：同一 opId 不产生第二次移动；换个路径必须冲突
+  ---
+  duration_ms: 103.3772
+  type: 'test'
+  ...
+# Subtest: P2-01i 容量上限：已有 500 条未解决记录时拒绝第 501 个
+ok 983 - P2-01i 容量上限：已有 500 条未解决记录时拒绝第 501 个
+  ---
+  duration_ms: 60.0141
+  type: 'test'
+  ...
+# Subtest: P2-01j 项目撤销：回收记录不被静默删除，payload 仍在磁盘
+ok 984 - P2-01j 项目撤销：回收记录不被静默删除，payload 仍在磁盘
+  ---
+  duration_ms: 122.0169
+  type: 'test'
+  ...
+# Subtest: P2-01k 保留目录不出现在文件树与递归清单里（total / 快照都不含它）
+ok 985 - P2-01k 保留目录不出现在文件树与递归清单里（total / 快照都不含它）
+  ---
+  duration_ms: 99.8257
+  type: 'test'
+  ...
+# Subtest: P2-01l 保留路径在全部公开入口都被拒绝（不是靠"越界"间接拒绝）
+ok 986 - P2-01l 保留路径在全部公开入口都被拒绝（不是靠"越界"间接拒绝）
+  ---
+  duration_ms: 101.8734
+  type: 'test'
+  ...
+# Subtest: P2-01m 有活动 View 时拒绝回收：409 + blockedBy，文件与草稿都不动
+ok 987 - P2-01m 有活动 View 时拒绝回收：409 + blockedBy，文件与草稿都不动
+  ---
+  duration_ms: 45.0829
+  type: 'test'
+  ...
+# Subtest: P2-01n 有未保存草稿时拒绝回收：草稿保留、状态可查
+ok 988 - P2-01n 有未保存草稿时拒绝回收：草稿保留、状态可查
+  ---
+  duration_ms: 46.7635
+  type: 'test'
+  ...
+# Subtest: P2-01o 配置意图写入失败：拒绝且零磁盘副作用（文件未移动、无回收区目录）
+ok 989 - P2-01o 配置意图写入失败：拒绝且零磁盘副作用（文件未移动、无回收区目录）
+  ---
+  duration_ms: 53.775
+  type: 'test'
+  ...
+# Subtest: P2-01p 移动成功但状态提交失败：202 UNKNOWN，重启后对账提升为 stored，可恢复
+ok 990 - P2-01p 移动成功但状态提交失败：202 UNKNOWN，重启后对账提升为 stored，可恢复
+  ---
+  duration_ms: 157.2809
+  type: 'test'
+  ...
+# Subtest: P2-01q 意图已写但文件从未移动（崩溃在移动之前）：重启对账判 aborted，文件不动
+ok 991 - P2-01q 意图已写但文件从未移动（崩溃在移动之前）：重启对账判 aborted，文件不动
+  ---
+  duration_ms: 61.5448
+  type: 'test'
+  ...
+# Subtest: P2-01r 恢复中断（已移回、状态未提交）：重启对账提升 restored，不重复移动
+ok 992 - P2-01r 恢复中断（已移回、状态未提交）：重启对账提升 restored，不重复移动
+  ---
+  duration_ms: 167.0723
+  type: 'test'
+  ...
+# Subtest: P2-01s 回收区对象被外部替换：判 conflicted（不是 missing），恢复被拒绝
+ok 993 - P2-01s 回收区对象被外部替换：判 conflicted（不是 missing），恢复被拒绝
+  ---
+  duration_ms: 124.47
+  type: 'test'
+  ...
+# Subtest: P2-01t 删除前源对象被替换：Provider 按 expectedIdentity 拒绝，替换对象毫发无损
+ok 994 - P2-01t 删除前源对象被替换：Provider 按 expectedIdentity 拒绝，替换对象毫发无损
+  ---
+  duration_ms: 10.1101
+  type: 'test'
+  ...
+# Subtest: R1-01a 回收：占位被同名 0 字节外部文件替换 → 拒绝且绝不覆盖外部对象
+ok 995 - R1-01a 回收：占位被同名 0 字节外部文件替换 → 拒绝且绝不覆盖外部对象
+  ---
+  duration_ms: 32.615
+  type: 'test'
+  ...
+# Subtest: R1-01b 回收：占位被删除（名字空出）→ 重新排他占位一次并成功移动
+ok 996 - R1-01b 回收：占位被删除（名字空出）→ 重新排他占位一次并成功移动
+  ---
+  duration_ms: 33.8923
+  type: 'test'
+  ...
+# Subtest: R1-01c 恢复：目标占位被同名 0 字节外部文件替换 → 拒绝且外部文件字节不变
+ok 997 - R1-01c 恢复：目标占位被同名 0 字节外部文件替换 → 拒绝且外部文件字节不变
+  ---
+  duration_ms: 59.2852
+  type: 'test'
+  ...
+# Subtest: R1-01d 恢复：目标占位被删除 → 重新占位并成功恢复
+ok 998 - R1-01d 恢复：目标占位被删除 → 重新占位并成功恢复
+  ---
+  duration_ms: 44.8323
+  type: 'test'
+  ...
+# Subtest: R1-02a marker 被符号链接替换（内容伪装成合法标记）→ 回收区不可用，外部 sentinel 一字节不变
+ok 999 - R1-02a marker 被符号链接替换（内容伪装成合法标记）→ 回收区不可用，外部 sentinel 一字节不变
+  ---
+  duration_ms: 24.575
+  type: 'test'
+  ...
+# Subtest: R1-02b marker 被硬链接替换（内容合法但 inode 外部共享）→ 拒绝，外部文件不变
+ok 1000 - R1-02b marker 被硬链接替换（内容合法但 inode 外部共享）→ 拒绝，外部文件不变
+  ---
+  duration_ms: 16.6903
+  type: 'test'
+  ...
+# Subtest: R1-02c marker 被目录替换 → 回收区不可用（不是"标记缺失"）
+ok 1001 - R1-02c marker 被目录替换 → 回收区不可用（不是"标记缺失"）
+  ---
+  duration_ms: 13.8516
+  type: 'test'
+  ...
+# Subtest: R1-02d marker 身份变化（项目被复制）→ 用临时文件 + rename 安全更新，内容与目录身份一致
+ok 1002 - R1-02d marker 身份变化（项目被复制）→ 用临时文件 + rename 安全更新，内容与目录身份一致
+  ---
+  duration_ms: 40.9767
+  type: 'test'
+  ...
+# Subtest: R1-02e .gitignore 被符号链接替换 → 拒绝初始化，外部 sentinel 不变
+ok 1003 - R1-02e .gitignore 被符号链接替换 → 拒绝初始化，外部 sentinel 不变
+  ---
+  duration_ms: 25.9267
+  type: 'test'
+  ...
+# Subtest: R1-02f 崩溃在"marker 已写、.gitignore 未写"之间：下次初始化必须补写
+ok 1004 - R1-02f 崩溃在"marker 已写、.gitignore 未写"之间：下次初始化必须补写
+  ---
+  duration_ms: 37.9782
+  type: 'test'
+  ...
+# Subtest: R1-05a opId 目录里存在陌生文件 → 拒绝，陌生文件与源文件都不变
+ok 1005 - R1-05a opId 目录里存在陌生文件 → 拒绝，陌生文件与源文件都不变
+  ---
+  duration_ms: 29.7866
+  type: 'test'
+  ...
+# Subtest: R1-05b manifest 的 opId 与目录不匹配 → 拒绝（不把别人的清单当自己的）
+ok 1006 - R1-05b manifest 的 opId 与目录不匹配 → 拒绝（不把别人的清单当自己的）
+  ---
+  duration_ms: 20.8123
+  type: 'test'
+  ...
+# Subtest: R1-05c opId 目录被符号链接替换到根外 → 拒绝，外部目录不被写入
+ok 1007 - R1-05c opId 目录被符号链接替换到根外 → 拒绝，外部目录不被写入
+  ---
+  duration_ms: 16.895
+  type: 'test'
+  ...
+# Subtest: R1-05d payload 位置被目录占据 → 拒绝，目录不被删除
+ok 1008 - R1-05d payload 位置被目录占据 → 拒绝，目录不被删除
+  ---
+  duration_ms: 19.6138
+  type: 'test'
+  ...
+# Subtest: R1-06a trashPayloadFacts 区分 present / missing / unsafe
+ok 1009 - R1-06a trashPayloadFacts 区分 present / missing / unsafe
+  ---
+  duration_ms: 40.5133
+  type: 'test'
+  ...
+# Subtest: R1-06b payload 的父目录被符号链接替换到根外：unsafe，不得沿链接读出外部对象
+ok 1010 - R1-06b payload 的父目录被符号链接替换到根外：unsafe，不得沿链接读出外部对象
+  ---
+  duration_ms: 43.1734
+  type: 'test'
+  ...
+# Subtest: R1-02g 标记被链接替换后，恢复同样必须拒绝（回收区整体不可用）
+ok 1011 - R1-02g 标记被链接替换后，恢复同样必须拒绝（回收区整体不可用）
+  ---
+  duration_ms: 43.7724
+  type: 'test'
+  ...
+# Subtest: R1-03a 两个项目同时提交同一 opId：只有一个成功，另一个在磁盘移动之前被拒绝
+ok 1012 - R1-03a 两个项目同时提交同一 opId：只有一个成功，另一个在磁盘移动之前被拒绝
+  ---
+  duration_ms: 151.6316
+  type: 'test'
+  ...
+# Subtest: R2-06 屏障保证两个并发请求都已越过重放检查，再同时进入 Store 提交
+ok 1013 - R2-06 屏障保证两个并发请求都已越过重放检查，再同时进入 Store 提交
+  ---
+  duration_ms: 96.4308
+  type: 'test'
+  ...
+# Subtest: R1-03b GET /api/trash/op 跨项目查询不泄露路径，同项目查询正常返回
+ok 1014 - R1-03b GET /api/trash/op 跨项目查询不泄露路径，同项目查询正常返回
+  ---
+  duration_ms: 92.7487
+  type: 'test'
+  ...
+# Subtest: R1-03c 不存在的 opId 仍返回空结果（不泄露任何信息）
+ok 1015 - R1-03c 不存在的 opId 仍返回空结果（不泄露任何信息）
+  ---
+  duration_ms: 37.2412
+  type: 'test'
+  ...
+# Subtest: R1-03d 项目已撤销：查询回收事务不得泄露记录详情
+ok 1016 - R1-03d 项目已撤销：查询回收事务不得泄露记录详情
+  ---
+  duration_ms: 126.4838
+  type: 'test'
+  ...
+# Subtest: R1-03e beginTrash 重放：同项目同路径同身份才重放；任一不符一律 ERR_OP_ID_CONFLICT
+ok 1017 - R1-03e beginTrash 重放：同项目同路径同身份才重放；任一不符一律 ERR_OP_ID_CONFLICT
+  ---
+  duration_ms: 40.0433
+  type: 'test'
+  ...
+# Subtest: R1-03f commitTrashState 必须同时匹配项目、根令牌、路径与身份，否则 skipped-conflict
+ok 1018 - R1-03f commitTrashState 必须同时匹配项目、根令牌、路径与身份，否则 skipped-conflict
+  ---
+  duration_ms: 42.6326
+  type: 'test'
+  ...
+# Subtest: R1-03g commitTrashState 找不到 opId 时不得"顺手"更新别人的记录
+ok 1019 - R1-03g commitTrashState 找不到 opId 时不得"顺手"更新别人的记录
+  ---
+  duration_ms: 29.4227
+  type: 'test'
+  ...
+# Subtest: R1-04a trashOutcomeOf 状态映射表：pending/restoring 一律 unknown，绝不报 trashed
+ok 1020 - R1-04a trashOutcomeOf 状态映射表：pending/restoring 一律 unknown，绝不报 trashed
+  ---
+  duration_ms: 0.2257
+  type: 'test'
+  ...
+# Subtest: R1-04b 回收结果未确认（pending）时用同一 opId 重试：202 UNKNOWN，不再移动一次
+ok 1021 - R1-04b 回收结果未确认（pending）时用同一 opId 重试：202 UNKNOWN，不再移动一次
+  ---
+  duration_ms: 100.0036
+  type: 'test'
+  ...
+# Subtest: R1-04c aborted / conflicted / missing 记录重放：一律 409，不虚报回收成功
+ok 1022 - R1-04c aborted / conflicted / missing 记录重放：一律 409，不虚报回收成功
+  ---
+  duration_ms: 56.036
+  type: 'test'
+  ...
+# Subtest: R1-04d 已回收（stored）记录重放：200 APPLIED，不产生第二次移动
+ok 1023 - R1-04d 已回收（stored）记录重放：200 APPLIED，不产生第二次移动
+  ---
+  duration_ms: 96.6075
+  type: 'test'
+  ...
+# Subtest: R1-04e GET /api/trash/op 按真实状态返回（pending 不得报 trashed）
+ok 1024 - R1-04e GET /api/trash/op 按真实状态返回（pending 不得报 trashed）
+  ---
+  duration_ms: 109.7084
+  type: 'test'
+  ...
+# Subtest: R1-01e Host 恢复：目标占位被同名 0 字节外部文件替换 → 409，外部文件与 payload 都完好
+ok 1025 - R1-01e Host 恢复：目标占位被同名 0 字节外部文件替换 → 409，外部文件与 payload 都完好
+  ---
+  duration_ms: 137.6608
+  type: 'test'
+  ...
+# Subtest: R1-01f Host 回收：payload 占位被外部对象替换 → 409，外部对象不被覆盖、源文件留在原处
+ok 1026 - R1-01f Host 回收：payload 占位被外部对象替换 → 409，外部对象不被覆盖、源文件留在原处
+  ---
+  duration_ms: 97.0553
+  type: 'test'
+  ...
+# Subtest: R1-06a 表驱动：pending 的六种磁盘事实
+ok 1027 - R1-06a 表驱动：pending 的六种磁盘事实
+  ---
+  duration_ms: 0.3945
+  type: 'test'
+  ...
+# Subtest: R1-06b 表驱动：stored 的五种磁盘事实
+ok 1028 - R1-06b 表驱动：stored 的五种磁盘事实
+  ---
+  duration_ms: 0.2108
+  type: 'test'
+  ...
+# Subtest: R1-06c 表驱动：restoring 必须先比对 payload 身份，只有匹配才允许回退 stored
+ok 1029 - R1-06c 表驱动：restoring 必须先比对 payload 身份，只有匹配才允许回退 stored
+  ---
+  duration_ms: 0.1462
+  type: 'test'
+  ...
+# Subtest: R1-06d 表驱动：任何参与判定的探测异常都不得落到 missing
+ok 1030 - R1-06d 表驱动：任何参与判定的探测异常都不得落到 missing
+  ---
+  duration_ms: 0.1161
+  type: 'test'
+  ...
+# Subtest: R1-06e payload 被符号链接替换：对账判 conflicted（不是 missing），落盘一致
+ok 1031 - R1-06e payload 被符号链接替换：对账判 conflicted（不是 missing），落盘一致
+  ---
+  duration_ms: 63.3417
+  type: 'test'
+  ...
+# Subtest: R1-06f payload 被目录替换：对账判 conflicted，不删除该目录
+ok 1032 - R1-06f payload 被目录替换：对账判 conflicted，不删除该目录
+  ---
+  duration_ms: 57.2917
+  type: 'test'
+  ...
+# Subtest: R1-06g payload 的父目录被链接替换到根外：对账判 conflicted，不沿链接读外部对象
+ok 1033 - R1-06g payload 的父目录被链接替换到根外：对账判 conflicted，不沿链接读外部对象
+  ---
+  duration_ms: 60.9804
+  type: 'test'
+  ...
+# Subtest: R1-06h restoring 且 payload 身份不匹配：判 conflicted，绝不回退成 stored
+ok 1034 - R1-06h restoring 且 payload 身份不匹配：判 conflicted，绝不回退成 stored
+  ---
+  duration_ms: 59.1595
+  type: 'test'
+  ...
+# Subtest: R1-06k payload 被链接替换且原位置为空：旧实现会误判 missing，必须是 conflicted
+ok 1035 - R1-06k payload 被链接替换且原位置为空：旧实现会误判 missing，必须是 conflicted
+  ---
+  duration_ms: 64.1304
+  type: 'test'
+  ...
+# Subtest: R1-06l payload 被目录替换且原位置为空：旧实现会误判 missing，必须是 conflicted
+ok 1036 - R1-06l payload 被目录替换且原位置为空：旧实现会误判 missing，必须是 conflicted
+  ---
+  duration_ms: 61.9409
+  type: 'test'
+  ...
+# Subtest: R1-06i pending 但原位置是另一个对象：判 conflicted，不把替换对象当成原文件
+ok 1037 - R1-06i pending 但原位置是另一个对象：判 conflicted，不把替换对象当成原文件
+  ---
+  duration_ms: 52.1647
+  type: 'test'
+  ...
+# Subtest: R1-06j stored 且两端都可靠缺失：判 missing（真实丢失才报丢失）
+ok 1038 - R1-06j stored 且两端都可靠缺失：判 missing（真实丢失才报丢失）
+  ---
+  duration_ms: 52.0902
+  type: 'test'
+  ...
+# Subtest: R2-02a 回收：占位 close 失败 → UNKNOWN，不 rename、不谎报零变更
+ok 1039 - R2-02a 回收：占位 close 失败 → UNKNOWN，不 rename、不谎报零变更
+  ---
+  duration_ms: 32.5068
+  type: 'test'
+  ...
+# Subtest: R2-02b 恢复：占位 close 失败 → UNKNOWN，回收区对象不被移动
+ok 1040 - R2-02b 恢复：占位 close 失败 → UNKNOWN，回收区对象不被移动
+  ---
+  duration_ms: 44.7859
+  type: 'test'
+  ...
+# Subtest: R2-03z 正常回收后恢复仍然成功（安全校验没有破坏原有功能）
+ok 1041 - R2-03z 正常回收后恢复仍然成功（安全校验没有破坏原有功能）
+  ---
+  duration_ms: 43.8102
+  type: 'test'
+  ...
+# Subtest: R2-03a opId 目录被塞入陌生文件 → 拒绝恢复且不删除陌生对象
+ok 1042 - R2-03a opId 目录被塞入陌生文件 → 拒绝恢复且不删除陌生对象
+  ---
+  duration_ms: 44.4373
+  type: 'test'
+  ...
+# Subtest: R2-03b 清单 identity 被篡改 → 拒绝恢复
+ok 1043 - R2-03b 清单 identity 被篡改 → 拒绝恢复
+  ---
+  duration_ms: 55.2663
+  type: 'test'
+  ...
+# Subtest: R2-03c 清单 originalPath 被篡改 → 拒绝恢复
+ok 1044 - R2-03c 清单 originalPath 被篡改 → 拒绝恢复
+  ---
+  duration_ms: 48.9708
+  type: 'test'
+  ...
+# Subtest: R2-03d 清单 opId 被篡改 → 拒绝恢复
+ok 1045 - R2-03d 清单 opId 被篡改 → 拒绝恢复
+  ---
+  duration_ms: 52.9397
+  type: 'test'
+  ...
+# Subtest: R2-03e 清单缺失 → 拒绝恢复
+ok 1046 - R2-03e 清单缺失 → 拒绝恢复
+  ---
+  duration_ms: 42.2139
+  type: 'test'
+  ...
+# Subtest: R2-03f payload 被替换为符号链接 → 拒绝恢复，外部 sentinel 字节不变
+ok 1047 - R2-03f payload 被替换为符号链接 → 拒绝恢复，外部 sentinel 字节不变
+  ---
+  duration_ms: 40.8273
+  type: 'test'
+  ...
+# Subtest: R2-03g 清单被替换为符号链接 → 拒绝恢复，外部 sentinel 字节不变
+ok 1048 - R2-03g 清单被替换为符号链接 → 拒绝恢复，外部 sentinel 字节不变
+  ---
+  duration_ms: 48.1414
+  type: 'test'
+  ...
+# Subtest: R2-03h opId 目录里出现陌生目录或遗留临时文件 → 拒绝恢复
+ok 1049 - R2-03h opId 目录里出现陌生目录或遗留临时文件 → 拒绝恢复
+  ---
+  duration_ms: 42.1233
+  type: 'test'
+  ...
+# Subtest: R2-03i opId 目录里出现陌生子目录 → 拒绝恢复
+ok 1050 - R2-03i opId 目录里出现陌生子目录 → 拒绝恢复
+  ---
+  duration_ms: 42.5117
+  type: 'test'
+  ...
+# Subtest: R2-03j payload 被追加字节（清单 size 小于实际大小）→ 拒绝恢复
+ok 1051 - R2-03j payload 被追加字节（清单 size 小于实际大小）→ 拒绝恢复
+  ---
+  duration_ms: 42.5736
+  type: 'test'
+  ...
+# Subtest: R2-03k payload 被截断（清单 size 大于实际大小）→ 拒绝恢复
+ok 1052 - R2-03k payload 被截断（清单 size 大于实际大小）→ 拒绝恢复
+  ---
+  duration_ms: 39.0342
+  type: 'test'
+  ...
+# Subtest: R2-03l 清单 size 为负数 → 拒绝恢复（形状不可信）
+ok 1053 - R2-03l 清单 size 为负数 → 拒绝恢复（形状不可信）
+  ---
+  duration_ms: 47.6254
+  type: 'test'
+  ...
+# Subtest: R2-03m 清单 size 为非整数或非法类型 → 拒绝恢复（形状不可信）
+ok 1054 - R2-03m 清单 size 为非整数或非法类型 → 拒绝恢复（形状不可信）
+  ---
+  duration_ms: 197.8565
+  type: 'test'
+  ...
+# Subtest: R2-03n 清单 deletedAt 为非法日期 → 拒绝恢复
+ok 1055 - R2-03n 清单 deletedAt 为非法日期 → 拒绝恢复
+  ---
+  duration_ms: 194.3365
+  type: 'test'
+  ...
+# Subtest: R2-03o 清单 deletedAt 能被 Date.parse 解析但不是约定格式 → 拒绝恢复
+ok 1056 - R2-03o 清单 deletedAt 能被 Date.parse 解析但不是约定格式 → 拒绝恢复
+  ---
+  duration_ms: 192.4801
+  type: 'test'
+  ...
+# Subtest: R2-03q 记录里的 size 与清单不一致 → 拒绝恢复（清单不能自证）
+ok 1057 - R2-03q 记录里的 size 与清单不一致 → 拒绝恢复（清单不能自证）
+  ---
+  duration_ms: 48.0041
+  type: 'test'
+  ...
+# Subtest: R2-03p 系统生成的时间戳与正确 size 可以正常恢复（格式校验不误伤）
+ok 1058 - R2-03p 系统生成的时间戳与正确 size 可以正常恢复（格式校验不误伤）
+  ---
+  duration_ms: 46.1212
+  type: 'test'
+  ...
+# Subtest: R2-04a 临时文件被换成另一个普通文件 → 不写标记、不搬源文件
+ok 1059 - R2-04a 临时文件被换成另一个普通文件 → 不写标记、不搬源文件
+  ---
+  duration_ms: 21.276
+  type: 'test'
+  ...
+# Subtest: R2-04b 临时文件被换成符号链接 → 不写标记、外部 sentinel 不变
+ok 1060 - R2-04b 临时文件被换成符号链接 → 不写标记、外部 sentinel 不变
+  ---
+  duration_ms: 24.762
+  type: 'test'
+  ...
+# Subtest: R2-04c 临时文件被换成硬链接（nlink > 1）→ 不写标记
+ok 1061 - R2-04c 临时文件被换成硬链接（nlink > 1）→ 不写标记
+  ---
+  duration_ms: 21.3859
+  type: 'test'
+  ...
+# Subtest: R2-04d 临时文件被删除 → 不写标记、不抛异常
+ok 1062 - R2-04d 临时文件被删除 → 不写标记、不抛异常
+  ---
+  duration_ms: 16.7564
+  type: 'test'
+  ...
+# Subtest: R2-04e 临时文件未被替换时标记正常写入（复核不误伤正常路径）
+ok 1063 - R2-04e 临时文件未被替换时标记正常写入（复核不误伤正常路径）
+  ---
+  duration_ms: 37.4857
+  type: 'test'
+  ...
+# Subtest: R1-01a 占位建立后 payload 被追加字节 → 拒绝恢复，payload 留在回收区
+ok 1064 - R1-01a 占位建立后 payload 被追加字节 → 拒绝恢复，payload 留在回收区
+  ---
+  duration_ms: 48.672
+  type: 'test'
+  ...
+# Subtest: R1-01b 占位建立后 payload 被截断 → 拒绝恢复，payload 留在回收区
+ok 1065 - R1-01b 占位建立后 payload 被截断 → 拒绝恢复，payload 留在回收区
+  ---
+  duration_ms: 49.7889
+  type: 'test'
+  ...
+# Subtest: R1-01c 不注入改动时正常恢复仍然成功（最终复核不误伤）
+ok 1066 - R1-01c 不注入改动时正常恢复仍然成功（最终复核不误伤）
+  ---
+  duration_ms: 47.5008
+  type: 'test'
+  ...
+# Subtest: R1-02a 长度判定：只接受非负安全整数
+ok 1067 - R1-02a 长度判定：只接受非负安全整数
+  ---
+  duration_ms: 0.2228
+  type: 'test'
+  ...
+# Subtest: R1-02b 配置里出现超出安全整数的 size → 整份配置判为不可用
+ok 1068 - R1-02b 配置里出现超出安全整数的 size → 整份配置判为不可用
+  ---
+  duration_ms: 0.307
+  type: 'test'
+  ...
+# Subtest: R1-02c 恢复时传入非法 expectedSize → 直接拒绝（ERR_COMMAND_INVALID）
+ok 1069 - R1-02c 恢复时传入非法 expectedSize → 直接拒绝（ERR_COMMAND_INVALID）
+  ---
+  duration_ms: 36.0771
+  type: 'test'
+  ...
+# Subtest: R2-02a C1（占位归属复核之后）追加 payload 字节 → 拒绝恢复
+ok 1070 - R2-02a C1（占位归属复核之后）追加 payload 字节 → 拒绝恢复
+  ---
+  duration_ms: 49.1395
+  type: 'test'
+  ...
+# Subtest: R2-02b C1（占位归属复核之后）截断 payload → 拒绝恢复
+ok 1071 - R2-02b C1（占位归属复核之后）截断 payload → 拒绝恢复
+  ---
+  duration_ms: 47.4714
+  type: 'test'
+  ...
+# Subtest: R2-02c 只在 C1 记录而不改动时正常恢复仍然成功（调整顺序不误伤）
+ok 1072 - R2-02c 只在 C1 记录而不改动时正常恢复仍然成功（调整顺序不误伤）
+  ---
+  duration_ms: 45.8386
+  type: 'test'
+  ...
+# Subtest: R2-01a 记录属于旧的 rootToken：快速重放必须 409，不得返回 APPLIED
+ok 1073 - R2-01a 记录属于旧的 rootToken：快速重放必须 409，不得返回 APPLIED
+  ---
+  duration_ms: 64.4975
+  type: 'test'
+  ...
+# Subtest: R2-01b 归属完全一致的重放：仍然幂等，不重复移动磁盘对象
+ok 1074 - R2-01b 归属完全一致的重放：仍然幂等，不重复移动磁盘对象
+  ---
+  duration_ms: 99.0812
+  type: 'test'
+  ...
+# Subtest: R2-02c 回收占位 close 失败：202 UNKNOWN，记录不得变成 stored
+ok 1075 - R2-02c 回收占位 close 失败：202 UNKNOWN，记录不得变成 stored
+  ---
+  duration_ms: 71.9384
+  type: 'test'
+  ...
+# Subtest: R2-02d 恢复占位 close 失败：202 UNKNOWN，记录不得被回退成 stored
+ok 1076 - R2-02d 恢复占位 close 失败：202 UNKNOWN，记录不得被回退成 stored
+  ---
+  duration_ms: 112.6832
+  type: 'test'
+  ...
+# Subtest: P2-02 七种状态各自有明确的标签 / 语气 / 是否可恢复
+ok 1077 - P2-02 七种状态各自有明确的标签 / 语气 / 是否可恢复
+  ---
+  duration_ms: 0.451
+  type: 'test'
+  ...
+# Subtest: P2-02 行视图：名称取原路径末段，路径原样展示，busy 时不可点恢复
+ok 1078 - P2-02 行视图：名称取原路径末段，路径原样展示，busy 时不可点恢复
+  ---
+  duration_ms: 0.4496
+  type: 'test'
+  ...
+# Subtest: P2-02 大小与时间格式化：不编造，异常值显示为 —
+ok 1079 - P2-02 大小与时间格式化：不编造，异常值显示为 —
+  ---
+  duration_ms: 0.2389
+  type: 'test'
+  ...
+# Subtest: P2-02 菜单：普通文件可回收，目录/链接/项目根禁用并给出原因
+ok 1080 - P2-02 菜单：普通文件可回收，目录/链接/项目根禁用并给出原因
+  ---
+  duration_ms: 0.2541
+  type: 'test'
+  ...
+# Subtest: P2-02 文案：回收区满 / 同名冲突用产品规定的原话
+ok 1081 - P2-02 文案：回收区满 / 同名冲突用产品规定的原话
+  ---
+  duration_ms: 0.1683
+  type: 'test'
+  ...
+# Subtest: P2-02 面板：演示模式与无项目时明确不支持，而不是显示空列表
+ok 1082 - P2-02 面板：演示模式与无项目时明确不支持，而不是显示空列表
+  ---
+  duration_ms: 0.1516
+  type: 'test'
+  ...
+# Subtest: P2-02 面板：没读到 ≠ 空——loading / error / 空列表三态分开
+ok 1083 - P2-02 面板：没读到 ≠ 空——loading / error / 空列表三态分开
+  ---
+  duration_ms: 0.2514
+  type: 'test'
+  ...
+# Subtest: P2-02 面板：在途 / 待核对都只禁用对应那一行
+ok 1084 - P2-02 面板：在途 / 待核对都只禁用对应那一行
+  ---
+  duration_ms: 0.1608
+  type: 'test'
+  ...
+# Subtest: P2-02 导航徽标：未知不显示数字，已知才显示
+ok 1085 - P2-02 导航徽标：未知不显示数字，已知才显示
+  ---
+  duration_ms: 0.1205
+  type: 'test'
+  ...
+# Subtest: P2-02 reducer：读取失败不覆盖已有条目，重新读取时保留旧列表
+ok 1086 - P2-02 reducer：读取失败不覆盖已有条目，重新读取时保留旧列表
+  ---
+  duration_ms: 0.1452
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 reducer：刷新不解除在途，且只动对应的那一个 opId
+ok 1087 - P2-02-R1 reducer：刷新不解除在途，且只动对应的那一个 opId
+  ---
+  duration_ms: 0.2229
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 reducer：待核对只由终态列表收敛，stored 仍保持禁用
+ok 1088 - P2-02-R1 reducer：待核对只由终态列表收敛，stored 仍保持禁用
+  ---
+  duration_ms: 0.186
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 reducer：换工作区 / 切模式都丢弃旧回收区缓存
+ok 1089 - P2-02-R1 reducer：换工作区 / 切模式都丢弃旧回收区缓存
+  ---
+  duration_ms: 0.1058
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 reducer：换工作区后读取失败显示错误，不回填旧工作区数据
+ok 1090 - P2-02-R1 reducer：换工作区后读取失败显示错误，不回填旧工作区数据
+  ---
+  duration_ms: 0.1018
+  type: 'test'
+  ...
+# Subtest: P2-02 reducer：项目按桶隔离，移除项目时连回收区视图一起清掉
+ok 1091 - P2-02 reducer：项目按桶隔离，移除项目时连回收区视图一起清掉
+  ---
+  duration_ms: 0.1296
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 自动加载键：换工作区（同项目 id）必然重新读取
+ok 1092 - P2-02-R1 自动加载键：换工作区（同项目 id）必然重新读取
+  ---
+  duration_ms: 0.1292
+  type: 'test'
+  ...
+# Subtest: P2-02 导航持久化：trash 是合法 navKey，未知值仍然被拒绝
+ok 1093 - P2-02 导航持久化：trash 是合法 navKey，未知值仍然被拒绝
+  ---
+  duration_ms: 0.1521
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 台账：只接受合法结构，任何可疑内容整体判损坏
+ok 1094 - P2-02-R1.1 台账：只接受合法结构，任何可疑内容整体判损坏
+  ---
+  duration_ms: 0.8562
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 台账：按 工作区 + 项目 + opId 隔离，写入失败要如实返回
+ok 1095 - P2-02-R1.1 台账：按 工作区 + 项目 + opId 隔离，写入失败要如实返回
+  ---
+  duration_ms: 0.392
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 台账：只有终态或记录消失才解除（stored/读取失败都保留）
+ok 1096 - P2-02-R1.1 台账：只有终态或记录消失才解除（stored/读取失败都保留）
+  ---
+  duration_ms: 0.3267
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 重启：内存清空后仅凭台账也必须保持禁用
+ok 1097 - P2-02-R1.1 重启：内存清空后仅凭台账也必须保持禁用
+  ---
+  duration_ms: 0.2605
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 台账不可用：所有恢复关闭并给出原因（fail-closed）
+ok 1098 - P2-02-R1.1 台账不可用：所有恢复关闭并给出原因（fail-closed）
+  ---
+  duration_ms: 0.1633
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 reducer：切换工作区模式同样丢弃回收区缓存
+ok 1099 - P2-02-R1.1 reducer：切换工作区模式同样丢弃回收区缓存
+  ---
+  duration_ms: 0.0913
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 台账原子性：并发两次预留都不丢（内存与 localStorage 一致）
+ok 1100 - P2-02-R1.2 台账原子性：并发两次预留都不丢（内存与 localStorage 一致）
+  ---
+  duration_ms: 1.0211
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 容量：满仓不淘汰，最多 64 条，第 65 条被拒且第一条仍在
+ok 1101 - P2-02-R1.2 容量：满仓不淘汰，最多 64 条，第 65 条被拒且第一条仍在
+  ---
+  duration_ms: 10.8049
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 容量：62 条时两个并发恢复各占一位，都 UNKNOWN 也不丢记录
+ok 1102 - P2-02-R1.2 容量：62 条时两个并发恢复各占一位，都 UNKNOWN 也不丢记录
+  ---
+  duration_ms: 11.9424
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 容量：63 条时两个恢复只有一个能预留，另一个必须被挡
+ok 1103 - P2-02-R1.2 容量：63 条时两个恢复只有一个能预留，另一个必须被挡
+  ---
+  duration_ms: 9.7538
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 台账：写盘前按实际字节校验，绝不写入下次必判损坏的数据
+ok 1104 - P2-02-R1.2 台账：写盘前按实际字节校验，绝不写入下次必判损坏的数据
+  ---
+  duration_ms: 0.6673
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 文案：损坏时关闭恢复，且不引导用户清除本应用数据
+ok 1105 - P2-02-R1.2 文案：损坏时关闭恢复，且不引导用户清除本应用数据
+  ---
+  duration_ms: 0.0983
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 reducer：A 的收尾不得清掉 B 的同 opId 在途，A→B→A 也不行
+ok 1106 - P2-02-R1.2 reducer：A 的收尾不得清掉 B 的同 opId 在途，A→B→A 也不行
+  ---
+  duration_ms: 0.2664
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 reducer：同一工作区切项目后，旧项目的在途仍能正常结算
+ok 1107 - P2-02-R1.2 reducer：同一工作区切项目后，旧项目的在途仍能正常结算
+  ---
+  duration_ms: 0.1117
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 台账：记录集合没变、只有状态变坏时 refresh 必须返回"有变化"
+ok 1108 - P2-02-R1.2.1-R1 台账：记录集合没变、只有状态变坏时 refresh 必须返回"有变化"
+  ---
+  duration_ms: 0.2323
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 文案：外部删除导致的失效有独立说明，且不引导用户清空数据
+ok 1109 - P2-02-R1.2.1-R1 文案：外部删除导致的失效有独立说明，且不引导用户清空数据
+  ---
+  duration_ms: 0.1018
+  type: 'test'
+  ...
+# Subtest: P2-02 读取：BEGIN → LOADED，数量与记录来自 Host 回执
+ok 1110 - P2-02 读取：BEGIN → LOADED，数量与记录来自 Host 回执
+  ---
+  duration_ms: 0.9376
+  type: 'test'
+  ...
+# Subtest: P2-02 读取：单飞——并发两次只发一个请求
+ok 1111 - P2-02 读取：单飞——并发两次只发一个请求
+  ---
+  duration_ms: 0.2358
+  type: 'test'
+  ...
+# Subtest: P2-02 读取：切到别的项目后，迟到的列表不得落地
+ok 1112 - P2-02 读取：切到别的项目后，迟到的列表不得落地
+  ---
+  duration_ms: 0.1954
+  type: 'test'
+  ...
+# Subtest: P2-02 读取：切到 Demo 后，迟到的列表不得落地
+ok 1113 - P2-02 读取：切到 Demo 后，迟到的列表不得落地
+  ---
+  duration_ms: 0.205
+  type: 'test'
+  ...
+# Subtest: P2-02 读取：失败写 LOAD_ERROR（带可读文案），不当成空列表
+ok 1114 - P2-02 读取：失败写 LOAD_ERROR（带可读文案），不当成空列表
+  ---
+  duration_ms: 0.1786
+  type: 'test'
+  ...
+# Subtest: P2-02 回收：成功后刷新父层、刷新列表并提示"未永久删除"
+ok 1115 - P2-02 回收：成功后刷新父层、刷新列表并提示"未永久删除"
+  ---
+  duration_ms: 0.6546
+  type: 'test'
+  ...
+# Subtest: P2-02 回收：UNKNOWN 只做一次只读核对，绝不重发移动
+ok 1116 - P2-02 回收：UNKNOWN 只做一次只读核对，绝不重发移动
+  ---
+  duration_ms: 0.2733
+  type: 'test'
+  ...
+# Subtest: P2-02 回收：本地有活动标签/草稿时直接阻断，不发请求
+ok 1117 - P2-02 回收：本地有活动标签/草稿时直接阻断，不发请求
+  ---
+  duration_ms: 0.1222
+  type: 'test'
+  ...
+# Subtest: P2-02 回收：回收区满时使用产品规定的提示
+ok 1118 - P2-02 回收：回收区满时使用产品规定的提示
+  ---
+  duration_ms: 0.2431
+  type: 'test'
+  ...
+# Subtest: P2-02 回收：同一路径并发提交只发一次（单飞）
+ok 1119 - P2-02 回收：同一路径并发提交只发一次（单飞）
+  ---
+  duration_ms: 0.2485
+  type: 'test'
+  ...
+# Subtest: P2-02 回收：结果回来时已切走项目 → stale，且不弹提示
+ok 1120 - P2-02 回收：结果回来时已切走项目 → stale，且不弹提示
+  ---
+  duration_ms: 0.1416
+  type: 'test'
+  ...
+# Subtest: P2-02 恢复：stored 才可恢复；成功后刷新原父层并提示
+ok 1121 - P2-02 恢复：stored 才可恢复；成功后刷新原父层并提示
+  ---
+  duration_ms: 0.6031
+  type: 'test'
+  ...
+# Subtest: P2-02 恢复：非 stored 状态一律拒绝，且不发请求
+ok 1122 - P2-02 恢复：非 stored 状态一律拒绝，且不发请求
+  ---
+  duration_ms: 0.1462
+  type: 'test'
+  ...
+# Subtest: P2-02 恢复：原位置同名文件 → 用规定文案提示，不覆盖
+ok 1123 - P2-02 恢复：原位置同名文件 → 用规定文案提示，不覆盖
+  ---
+  duration_ms: 0.2815
+  type: 'test'
+  ...
+# Subtest: P2-02 恢复：UNKNOWN 只核对一次、不重发、busy 必须解除
+ok 1124 - P2-02 恢复：UNKNOWN 只核对一次、不重发、busy 必须解除
+  ---
+  duration_ms: 0.2755
+  type: 'test'
+  ...
+# Subtest: P2-02 恢复：同一 opId 并发只发一次；不同 opId 互不阻塞
+ok 1125 - P2-02 恢复：同一 opId 并发只发一次；不同 opId 互不阻塞
+  ---
+  duration_ms: 9.7562
+  type: 'test'
+  ...
+# Subtest: P2-02 恢复：结果回来时已切模式 → stale，不宣布成功
+ok 1126 - P2-02 恢复：结果回来时已切模式 → stale，不宣布成功
+  ---
+  duration_ms: 0.35
+  type: 'test'
+  ...
+# Subtest: P2-02 确认框：打开时不发请求；有阻断原因就直接进 blocked（不给确认按钮）
+ok 1127 - P2-02 确认框：打开时不发请求；有阻断原因就直接进 blocked（不给确认按钮）
+  ---
+  duration_ms: 0.2337
+  type: 'test'
+  ...
+# Subtest: P2-02 确认框：取消 = 状态置空，一个请求都不发（零磁盘修改）
+ok 1128 - P2-02 确认框：取消 = 状态置空，一个请求都不发（零磁盘修改）
+  ---
+  duration_ms: 0.096
+  type: 'test'
+  ...
+# Subtest: P2-02 确认框：ready 时恰好提交一次，成功落到"可在回收区恢复"
+ok 1129 - P2-02 确认框：ready 时恰好提交一次，成功落到"可在回收区恢复"
+  ---
+  duration_ms: 0.2192
+  type: 'test'
+  ...
+# Subtest: P2-02 确认框：UNKNOWN 落到 warn（不宣布成功）；REJECTED 落到 error
+ok 1130 - P2-02 确认框：UNKNOWN 落到 warn（不宣布成功）；REJECTED 落到 error
+  ---
+  duration_ms: 0.1435
+  type: 'test'
+  ...
+# Subtest: P2-02 确认框：提交时已切走工作区 → 直接关闭，不宣布任何结论
+ok 1131 - P2-02 确认框：提交时已切走工作区 → 直接关闭，不宣布任何结论
+  ---
+  duration_ms: 0.0791
+  type: 'test'
+  ...
+# Subtest: P2-02 确认框：确认框打开后用户又打开了该文件 → 提交时回到 blocked
+ok 1132 - P2-02 确认框：确认框打开后用户又打开了该文件 → 提交时回到 blocked
+  ---
+  duration_ms: 0.087
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 恢复：列表确认之前不解除在途（延迟 GET）
+ok 1133 - P2-02-R1 恢复：列表确认之前不解除在途（延迟 GET）
+  ---
+  duration_ms: 1.2399
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 恢复：列表刷新失败 → 旧 stored 不得重新开放恢复
+ok 1134 - P2-02-R1 恢复：列表刷新失败 → 旧 stored 不得重新开放恢复
+  ---
+  duration_ms: 0.3562
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 恢复：列表仍是 stored（Host 尚未提交）→ 继续保持禁用
+ok 1135 - P2-02-R1 恢复：列表仍是 stored（Host 尚未提交）→ 继续保持禁用
+  ---
+  duration_ms: 0.3818
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 并发恢复：A 完成只解除 A，B 保持；刷新也不清 B
+ok 1136 - P2-02-R1 并发恢复：A 完成只解除 A，B 保持；刷新也不清 B
+  ---
+  duration_ms: 6.2648
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 回收：切走项目后收到 REJECTED → stale，不提示、不刷新
+ok 1137 - P2-02-R1 回收：切走项目后收到 REJECTED → stale，不提示、不刷新
+  ---
+  duration_ms: 0.586
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 恢复：切走项目后收到 REJECTED → stale，不提示、不解除别人的界面
+ok 1138 - P2-02-R1 恢复：切走项目后收到 REJECTED → stale，不提示、不解除别人的界面
+  ---
+  duration_ms: 0.4437
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 回收：项目已切走 → 零 POST、零刷新
+ok 1139 - P2-02-R1 回收：项目已切走 → 零 POST、零刷新
+  ---
+  duration_ms: 0.1353
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 回收：项目不可用 → 明确阻断，零 POST
+ok 1140 - P2-02-R1 回收：项目不可用 → 明确阻断，零 POST
+  ---
+  duration_ms: 0.1411
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 恢复：切走项目 → 零 POST（不能只看 entry.state）
+ok 1141 - P2-02-R1 恢复：切走项目 → 零 POST（不能只看 entry.state）
+  ---
+  duration_ms: 0.1223
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 恢复：项目不可用 → 明确阻断，零 POST
+ok 1142 - P2-02-R1 恢复：项目不可用 → 明确阻断，零 POST
+  ---
+  duration_ms: 0.0813
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 恢复：工作区身份变了（同项目 id）→ stale，不落地
+ok 1143 - P2-02-R1 恢复：工作区身份变了（同项目 id）→ stale，不落地
+  ---
+  duration_ms: 0.3107
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 确认框：切项目 / 换工作区 / 换代次 → 不属于当前界面
+ok 1144 - P2-02-R1 确认框：切项目 / 换工作区 / 换代次 → 不属于当前界面
+  ---
+  duration_ms: 0.1455
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 确认框：归属不符时确认 = 零 POST、零磁盘修改
+ok 1145 - P2-02-R1 确认框：归属不符时确认 = 零 POST、零磁盘修改
+  ---
+  duration_ms: 0.2376
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 读取：换工作区后各发一次，旧响应不写新桶
+ok 1146 - P2-02-R1.1 读取：换工作区后各发一次，旧响应不写新桶
+  ---
+  duration_ms: 0.2178
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 回收：A 未结束时在 B 用同 projectId/path 发起 → 两个请求，互不复用
+ok 1147 - P2-02-R1.1 回收：A 未结束时在 B 用同 projectId/path 发起 → 两个请求，互不复用
+  ---
+  duration_ms: 0.2274
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 恢复：同一 opId 跨工作区也不得复用 Promise
+ok 1148 - P2-02-R1.1 恢复：同一 opId 跨工作区也不得复用 Promise
+  ---
+  duration_ms: 12.8223
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.1 台账闸：不可用时恢复直接拒绝，连 GET/POST 都不发
+ok 1149 - P2-02-R1.1 台账闸：不可用时恢复直接拒绝，连 GET/POST 都不发
+  ---
+  duration_ms: 0.7604
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 恢复：POST 之前就已预留台账，结算期间关页面也不会丢
+ok 1150 - P2-02-R1.2 恢复：POST 之前就已预留台账，结算期间关页面也不会丢
+  ---
+  duration_ms: 0.5031
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 恢复：列表确认到终态后释放预留
+ok 1151 - P2-02-R1.2 恢复：列表确认到终态后释放预留
+  ---
+  duration_ms: 0.2692
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 恢复：明确 REJECTED（零副作用）释放预留
+ok 1152 - P2-02-R1.2 恢复：明确 REJECTED（零副作用）释放预留
+  ---
+  duration_ms: 0.2364
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 恢复：UNKNOWN 保留预留（重启后仍然拦着）
+ok 1153 - P2-02-R1.2 恢复：UNKNOWN 保留预留（重启后仍然拦着）
+  ---
+  duration_ms: 0.2936
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 恢复：台账满仓 → 零 POST、零 GET
+ok 1154 - P2-02-R1.2 恢复：台账满仓 → 零 POST、零 GET
+  ---
+  duration_ms: 7.3398
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 恢复：台账写盘失败 → 零 POST（不能假装有保护）
+ok 1155 - P2-02-R1.2 恢复：台账写盘失败 → 零 POST（不能假装有保护）
+  ---
+  duration_ms: 0.289
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 恢复：63 条时两个并发恢复只有一个能发出请求
+ok 1156 - P2-02-R1.2 恢复：63 条时两个并发恢复只有一个能发出请求
+  ---
+  duration_ms: 9.0123
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 恢复：台账里已有同一 opId → Controller 直接拒绝，零 POST/GET/query
+ok 1157 - P2-02-R1.2.1 恢复：台账里已有同一 opId → Controller 直接拒绝，零 POST/GET/query
+  ---
+  duration_ms: 0.6785
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 恢复：UNKNOWN 之后再次调用 → 零 POST（exists 不是授权）
+ok 1158 - P2-02-R1.2.1 恢复：UNKNOWN 之后再次调用 → 零 POST（exists 不是授权）
+  ---
+  duration_ms: 0.4051
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 恢复：成功对账解除待核对后，允许新的合法恢复
+ok 1159 - P2-02-R1.2.1 恢复：成功对账解除待核对后，允许新的合法恢复
+  ---
+  duration_ms: 0.454
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 恢复：另一个页面刚写入同 opId（本页尚未收到事件）→ 零 POST 且镜像立即同步
+ok 1160 - P2-02-R1.2.1-R1 恢复：另一个页面刚写入同 opId（本页尚未收到事件）→ 零 POST 且镜像立即同步
+  ---
+  duration_ms: 0.1952
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 台账被外部删除：绕过界面直接调 Controller，零 POST/GET/query
+ok 1161 - P2-02-R1.2.1-R1 台账被外部删除：绕过界面直接调 Controller，零 POST/GET/query
+  ---
+  duration_ms: 0.2769
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 镜像：release / reconcile 锁内读到别的页面记录后同样要同步（哪怕结论是 unchanged）
+ok 1162 - P2-02-R1.2.1-R1 镜像：release / reconcile 锁内读到别的页面记录后同样要同步（哪怕结论是 unchanged）
+  ---
+  duration_ms: 0.213
+  type: 'test'
+  ...
+# Subtest: P2-02 回收：真实移动文件，列表出现记录，文件树里不再有它
+ok 1163 - P2-02 回收：真实移动文件，列表出现记录，文件树里不再有它
+  ---
+  duration_ms: 109.9944
+  type: 'test'
+  ...
+# Subtest: P2-02 恢复：文件回到原路径，字节一致，状态变 restored
+ok 1164 - P2-02 恢复：文件回到原路径，字节一致，状态变 restored
+  ---
+  duration_ms: 142.378
+  type: 'test'
+  ...
+# Subtest: P2-02 恢复冲突：原位置已有同名文件 → 409，双方内容都不变
+ok 1165 - P2-02 恢复冲突：原位置已有同名文件 → 409，双方内容都不变
+  ---
+  duration_ms: 139.6338
+  type: 'test'
+  ...
+# Subtest: P2-02 项目隔离：A 的回收记录不会出现在 B，reducer 也按桶存放
+ok 1166 - P2-02 项目隔离：A 的回收记录不会出现在 B，reducer 也按桶存放
+  ---
+  duration_ms: 96.9743
+  type: 'test'
+  ...
+# Subtest: P2-02 七种状态：不可恢复的四类原样回传，且 canRestore 一律 false
+ok 1167 - P2-02 七种状态：不可恢复的四类原样回传，且 canRestore 一律 false
+  ---
+  duration_ms: 33.6386
+  type: 'test'
+  ...
+# Subtest: P2-02 opId 核对：已回收→trashed，无记录→none，跨项目→拒绝
+ok 1168 - P2-02 opId 核对：已回收→trashed，无记录→none，跨项目→拒绝
+  ---
+  duration_ms: 100.6083
+  type: 'test'
+  ...
+# Subtest: P2-02 客户端：回收请求不带任何路径/身份字段，恢复请求没有 targetPath
+ok 1169 - P2-02 客户端：回收请求不带任何路径/身份字段，恢复请求没有 targetPath
+  ---
+  duration_ms: 142.7578
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 客户端：APPLIED 但没有 entry → UNKNOWN（不报被拒绝）
+ok 1170 - P2-02-R1 客户端：APPLIED 但没有 entry → UNKNOWN（不报被拒绝）
+  ---
+  duration_ms: 0.8426
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 编排：客户端给出 UNKNOWN 时只核对一次、绝不重发
+ok 1171 - P2-02-R1 编排：客户端给出 UNKNOWN 时只核对一次、绝不重发
+  ---
+  duration_ms: 1.4711
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 客户端：APPLIED 但 entry 非法 → UNKNOWN，不重发
+ok 1172 - P2-02-R1 客户端：APPLIED 但 entry 非法 → UNKNOWN，不重发
+  ---
+  duration_ms: 0.455
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 客户端：500 可能已有副作用 → UNKNOWN；409 才是明确拒绝
+ok 1173 - P2-02-R1 客户端：500 可能已有副作用 → UNKNOWN；409 才是明确拒绝
+  ---
+  duration_ms: 0.5455
+  type: 'test'
+  ...
+# Subtest: P2-02-R1 客户端：503 项目不可用是前置拒绝，不进入"未确认"
+ok 1174 - P2-02-R1 客户端：503 项目不可用是前置拒绝，不进入"未确认"
+  ---
+  duration_ms: 0.2718
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 真实链路：恢复前预留，成功后等列表终态才释放
+ok 1175 - P2-02-R1.2 真实链路：恢复前预留，成功后等列表终态才释放
+  ---
+  duration_ms: 142.2981
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2 真实链路：不存在的记录 → 明确拒绝并释放预留
+ok 1176 - P2-02-R1.2 真实链路：不存在的记录 → 明确拒绝并释放预留
+  ---
+  duration_ms: 42.0978
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 跨标签页：镜像过期的一方不得覆盖对方刚写入的记录
+ok 1177 - P2-02-R1.2.1 跨标签页：镜像过期的一方不得覆盖对方刚写入的记录
+  ---
+  duration_ms: 0.5958
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 跨标签页：63 条时两个页面同时申请最后一个位置，只有一个拿到授权
+ok 1178 - P2-02-R1.2.1 跨标签页：63 条时两个页面同时申请最后一个位置，只有一个拿到授权
+  ---
+  duration_ms: 8.7853
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 跨标签页：同一 opId 在另一个页面申请 → exists，绝不授权
+ok 1179 - P2-02-R1.2.1 跨标签页：同一 opId 在另一个页面申请 → exists，绝不授权
+  ---
+  duration_ms: 0.4064
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 跨标签页：释放同样走锁，不能用旧快照覆盖对方的新记录
+ok 1180 - P2-02-R1.2.1 跨标签页：释放同样走锁，不能用旧快照覆盖对方的新记录
+  ---
+  duration_ms: 0.2882
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 跨标签页：收敛也必须锁内重读，不能把别人的记录一起删掉
+ok 1181 - P2-02-R1.2.1 跨标签页：收敛也必须锁内重读，不能把别人的记录一起删掉
+  ---
+  duration_ms: 0.2252
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 无 Web Locks：恢复整体关闭，绝不退回不安全的写盘
+ok 1182 - P2-02-R1.2.1 无 Web Locks：恢复整体关闭，绝不退回不安全的写盘
+  ---
+  duration_ms: 0.2035
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 Web Locks：所有写操作都用同一个固定锁名、独占模式
+ok 1183 - P2-02-R1.2.1 Web Locks：所有写操作都用同一个固定锁名、独占模式
+  ---
+  duration_ms: 0.4694
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 字节：纯 ASCII 台账可正常读写
+ok 1184 - P2-02-R1.2.1 字节：纯 ASCII 台账可正常读写
+  ---
+  duration_ms: 0.3887
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 字节：非 ASCII 的超限台账必须判损坏（按字节，不按字符数）
+ok 1185 - P2-02-R1.2.1 字节：非 ASCII 的超限台账必须判损坏（按字节，不按字符数）
+  ---
+  duration_ms: 0.2313
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 字节：写入前按字节拒写，且不留下会被判损坏的数据
+ok 1186 - P2-02-R1.2.1 字节：写入前按字节拒写，且不留下会被判损坏的数据
+  ---
+  duration_ms: 0.1887
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 字节：恰好达到上限可读，再多一个字节即判损坏
+ok 1187 - P2-02-R1.2.1 字节：恰好达到上限可读，再多一个字节即判损坏
+  ---
+  duration_ms: 0.152
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 时间：合法 ISO 8601 UTC 仍然兼容
+ok 1188 - P2-02-R1.2.1 时间：合法 ISO 8601 UTC 仍然兼容
+  ---
+  duration_ms: 0.1208
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 时间：越界日期与不规范写法一律拒绝
+ok 1189 - P2-02-R1.2.1 时间：越界日期与不规范写法一律拒绝
+  ---
+  duration_ms: 0.2516
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 时间：非法时间戳不会被当成"没有记录"而放行
+ok 1190 - P2-02-R1.2.1 时间：非法时间戳不会被当成"没有记录"而放行
+  ---
+  duration_ms: 0.1714
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 授权表：只有 reserved 授权新的恢复 POST
+ok 1191 - P2-02-R1.2.1 授权表：只有 reserved 授权新的恢复 POST
+  ---
+  duration_ms: 0.0825
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1 跨标签页：storage 事件用 refresh 同步镜像（只动显示，不写盘）
+ok 1192 - P2-02-R1.2.1 跨标签页：storage 事件用 refresh 同步镜像（只动显示，不写盘）
+  ---
+  duration_ms: 0.1626
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 首次启动：没有台账是合法的空台账，不是损坏
+ok 1193 - P2-02-R1.2.1-R1 首次启动：没有台账是合法的空台账，不是损坏
+  ---
+  duration_ms: 0.0739
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 外部 removeItem：保留内存待核对、状态失效、写操作全关、不重建
+ok 1194 - P2-02-R1.2.1-R1 外部 removeItem：保留内存待核对、状态失效、写操作全关、不重建
+  ---
+  duration_ms: 0.2613
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 外部 localStorage.clear：event.key === null 同样进入失效保护
+ok 1195 - P2-02-R1.2.1-R1 外部 localStorage.clear：event.key === null 同样进入失效保护
+  ---
+  duration_ms: 0.1634
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 删除之后再写入空台账：本页仍保持失效，refresh 不得解除
+ok 1196 - P2-02-R1.2.1-R1 删除之后再写入空台账：本页仍保持失效，refresh 不得解除
+  ---
+  duration_ms: 0.1876
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 外部写入非法 JSON：保留内存记录、进入 corrupt、不覆盖原始字节
+ok 1197 - P2-02-R1.2.1-R1 外部写入非法 JSON：保留内存记录、进入 corrupt、不覆盖原始字节
+  ---
+  duration_ms: 0.1976
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 无关 key 的 storage 事件不影响台账
+ok 1198 - P2-02-R1.2.1-R1 无关 key 的 storage 事件不影响台账
+  ---
+  duration_ms: 0.1545
+  type: 'test'
+  ...
+# Subtest: P2-02-R1.2.1-R1 删除事件尚未到达：reserve 不得把已知记录覆盖成"只剩新的这一条"
+ok 1199 - P2-02-R1.2.1-R1 删除事件尚未到达：reserve 不得把已知记录覆盖成"只剩新的这一条"
+  ---
+  duration_ms: 0.1418
+  type: 'test'
+  ...
+1..1199
+# tests 1199
+# suites 0
+# pass 1197
+# fail 0
+# cancelled 0
+# skipped 2
+# todo 0
+# duration_ms 42630.8923

@@ -1,0 +1,332 @@
+{
+  "run": "ux-02c-03-p2-02-r1.2.1-r1",
+  "baseline": "6b6c53d31aa4288b25f6a4ab6b3e02fb07920c74",
+  "environment": {
+    "chrome": "Headless Chrome 158.0.8127.36 (CDP 9335)",
+    "vite": "127.0.0.1:5278 → 代理到 Host 127.0.0.1:5277",
+    "host": "托管 Multi（workspace-store = weavespace-test/p202-r121/store），项目 proj-a",
+    "storage": "真实 localStorage（同一 profile 的两个同源标签页共享）",
+    "locks": "真实 navigator.locks（未打桩）",
+    "network": "每个标签页 Fetch.enable 拦截 /api/trash/restore，计数并回 202 UNKNOWN",
+    "真实恢复记录": "op-r121r1-0001（p.md，由 POST /api/trash/entry 真实移入回收区）"
+  },
+  "summary": {
+    "total": 25,
+    "passed": 25,
+    "failed": []
+  },
+  "checks": {
+    "A 一次 UNKNOWN 恢复后写下台账记录 X": true,
+    "A 的行显示「待核对」且禁用恢复": true,
+    "B 已同步到 X（行显示「待核对」）": true,
+    "B 收到 storage 事件：key=台账、newValue=null": true,
+    "B 显示「被删除/失效」提示": true,
+    "B 仍保留 X 的待核对状态": true,
+    "B 的恢复按钮被关闭": true,
+    "磁盘上的台账确实已被删除（没有重建）": true,
+    "B 强制绕过 disabled 点击 → 0 次 POST": true,
+    "A 全程只发出 1 次 POST": true,
+    "B 收到 key === null 的 storage 事件（clear）": true,
+    "clear 之后 B 也进入失效保护": true,
+    "clear 之后 B 仍保留 X 的待核对状态": true,
+    "clear 之后强制点击 → 0 次 POST": true,
+    "B 进入「已损坏」并关闭恢复": true,
+    "B 保留内存里的待核对记录": true,
+    "B 没有覆盖原始损坏字节": true,
+    "损坏时强制点击 → 0 次 POST": true,
+    "D 前提：B 启动时读到空台账 → 显示「可恢复」": true,
+    "D 前提：写盘之后 B 的界面仍是「可恢复」（镜像未同步）": true,
+    "B 的 Controller 在锁内读到 X → 零 POST（exists 不是授权）": true,
+    "B 的界面立刻同步成「待核对」": true,
+    "B 给出\"上一次结果还没确认\"的说明": true,
+    "后续 storage 事件不会让 B 的界面倒退": true,
+    "后续 storage 事件也不会产生 POST": true
+  },
+  "detail": {
+    "A 一次 UNKNOWN 恢复后写下台账记录 X": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-a\",\"opId\":\"op-r121r1-0001\",\"createdAt\":\"2026-11-25T16:39:38.535Z\"}]}",
+    "A 的行显示「待核对」且禁用恢复": {
+      "name": "p.md",
+      "badge": "待核对",
+      "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+      "hasButton": true,
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "B 已同步到 X（行显示「待核对」）": {
+      "name": "p.md",
+      "badge": "待核对",
+      "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+      "hasButton": true,
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "B 收到 storage 事件：key=台账、newValue=null": [
+      {
+        "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:workspace:v1:last",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:trash-pending:v1",
+        "newValue": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574"
+      },
+      {
+        "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:workspace:v1:last",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:trash-pending:v1",
+        "newValue": null
+      }
+    ],
+    "B 显示「被删除/失效」提示": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+    "B 仍保留 X 的待核对状态": {
+      "name": "p.md",
+      "badge": "待核对",
+      "note": "暂时不能恢复：请先看回收区顶部的说明。",
+      "hasButton": true,
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "B 的恢复按钮被关闭": {
+      "name": "p.md",
+      "badge": "待核对",
+      "note": "暂时不能恢复：请先看回收区顶部的说明。",
+      "hasButton": true,
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "磁盘上的台账确实已被删除（没有重建）": null,
+    "B 强制绕过 disabled 点击 → 0 次 POST": 0,
+    "A 全程只发出 1 次 POST": 1,
+    "scenarioA": {
+      "ledger": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-a\",\"opId\":\"op-r121r1-0001\",\"createdAt\":\"2026-11-25T16:39:38.535Z\"}]}",
+      "rowA": {
+        "name": "p.md",
+        "badge": "待核对",
+        "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+        "hasButton": true,
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "events": [
+        {
+          "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:workspace:v1:last",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:trash-pending:v1",
+          "newValue": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574"
+        },
+        {
+          "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:workspace:v1:last",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:trash-pending:v1",
+          "newValue": null
+        }
+      ],
+      "blocked": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+      "after": {
+        "name": "p.md",
+        "badge": "待核对",
+        "note": "暂时不能恢复：请先看回收区顶部的说明。",
+        "hasButton": true,
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "postsA": 1,
+      "postsB": 0
+    },
+    "B 收到 key === null 的 storage 事件（clear）": [
+      {
+        "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:workspace:v1:last",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:trash-pending:v1",
+        "newValue": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574"
+      },
+      {
+        "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:workspace:v1:last",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": null,
+        "newValue": null
+      }
+    ],
+    "clear 之后 B 也进入失效保护": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+    "clear 之后 B 仍保留 X 的待核对状态": {
+      "name": "p.md",
+      "badge": "待核对",
+      "note": "暂时不能恢复：请先看回收区顶部的说明。",
+      "hasButton": true,
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "clear 之后强制点击 → 0 次 POST": 0,
+    "scenarioB": {
+      "postsA": 1,
+      "events": [
+        {
+          "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:workspace:v1:last",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:trash-pending:v1",
+          "newValue": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574"
+        },
+        {
+          "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:workspace:v1:last",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": null,
+          "newValue": null
+        }
+      ],
+      "blocked": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+      "after": {
+        "name": "p.md",
+        "badge": "待核对",
+        "note": "暂时不能恢复：请先看回收区顶部的说明。",
+        "hasButton": true,
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "postsB": 0
+    },
+    "B 进入「已损坏」并关闭恢复": "本机的「待核对」记录已损坏，无法确认哪些恢复还没有结论；为避免重复恢复，回收区的恢复操作暂时关闭。请不要重置或删除本站数据（会连同这条保护一起删除），等待后续的核对与修复流程。",
+    "B 保留内存里的待核对记录": {
+      "name": "p.md",
+      "badge": "待核对",
+      "note": "暂时不能恢复：请先看回收区顶部的说明。",
+      "hasButton": true,
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "B 没有覆盖原始损坏字节": "{\"version\":1,\"records\":[{\"workspaceKey\":",
+    "损坏时强制点击 → 0 次 POST": 0,
+    "scenarioC": {
+      "postsA": 1,
+      "blocked": "本机的「待核对」记录已损坏，无法确认哪些恢复还没有结论；为避免重复恢复，回收区的恢复操作暂时关闭。请不要重置或删除本站数据（会连同这条保护一起删除），等待后续的核对与修复流程。",
+      "after": {
+        "name": "p.md",
+        "badge": "待核对",
+        "note": "暂时不能恢复：请先看回收区顶部的说明。",
+        "hasButton": true,
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "raw": "{\"version\":1,\"records\":[{\"workspaceKey\":",
+      "postsB": 0
+    },
+    "D 前提：B 启动时读到空台账 → 显示「可恢复」": {
+      "name": "p.md",
+      "badge": "可恢复",
+      "note": "文件在回收区里，可以恢复到原位置。",
+      "hasButton": true,
+      "buttonDisabled": false,
+      "rowCount": 4
+    },
+    "D 前提：写盘之后 B 的界面仍是「可恢复」（镜像未同步）": {
+      "name": "p.md",
+      "badge": "可恢复",
+      "note": "文件在回收区里，可以恢复到原位置。",
+      "hasButton": true,
+      "buttonDisabled": false,
+      "rowCount": 4
+    },
+    "B 的 Controller 在锁内读到 X → 零 POST（exists 不是授权）": 0,
+    "B 的界面立刻同步成「待核对」": {
+      "name": "p.md",
+      "badge": "待核对",
+      "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+      "hasButton": true,
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "B 给出\"上一次结果还没确认\"的说明": true,
+    "后续 storage 事件不会让 B 的界面倒退": {
+      "name": "p.md",
+      "badge": "待核对",
+      "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+      "hasButton": true,
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "后续 storage 事件也不会产生 POST": 0,
+    "scenarioD": {
+      "ledger": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-a\",\"opId\":\"op-r121r1-0001\",\"createdAt\":\"2026-11-25T16:40:15.931Z\"}]}",
+      "beforeB": {
+        "name": "p.md",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false,
+        "rowCount": 4
+      },
+      "staleB": {
+        "name": "p.md",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false,
+        "rowCount": 4
+      },
+      "afterB": {
+        "name": "p.md",
+        "badge": "待核对",
+        "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+        "hasButton": true,
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "hint": true,
+      "afterEvent": {
+        "name": "p.md",
+        "badge": "待核对",
+        "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+        "hasButton": true,
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "postsA": 1,
+      "postsB": 0
+    }
+  },
+  "note": "场景 A 与场景 B 的截图字节相同：删除与 clear 的可见后果按设计一致（同一条失效提示 + 同一条待核对记录），区别在 storage 事件形状（见 detail.scenarioA/B 的 events）。"
+}
