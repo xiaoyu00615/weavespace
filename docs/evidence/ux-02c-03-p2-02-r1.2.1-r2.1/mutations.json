@@ -1,0 +1,109 @@
+{
+  "baselineSha256": {
+    "apps/shell/src/state/trash-ledger.ts": "20e25a91cc076c0ece8e7bcd12713504034ecbb8f63866976c2ce93beb71de0a",
+    "apps/shell/src/state/trash.ts": "5b92ffc7d0a8b16dc70584cc218ba96557a6f0a03cfaf849563fb5a4a91ad49d"
+  },
+  "results": [
+    {
+      "id": "A",
+      "desc": "持久化失效只改内存标记，仍然继续授权",
+      "file": "apps/shell/src/state/trash-ledger.ts",
+      "mutatedSha": "1b59fcd9140d",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 19 - R2.1-01 持久化失效：主台账仍有合法数据、本页还没收到事件，reserve 也必须直接不可用"
+        ]
+      }
+    },
+    {
+      "id": "B",
+      "desc": "失效写入用本页旧快照覆盖（不锁内重读合并）",
+      "file": "apps/shell/src/state/trash-ledger.ts",
+      "mutatedSha": "db7a62366eff",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 20 - R2.1-02 失效写入必须锁内合并：不得抹掉另一页面刚预留的记录"
+        ]
+      }
+    },
+    {
+      "id": "C",
+      "desc": "把保护记录损坏当成\"首次使用\"重新初始化",
+      "file": "apps/shell/src/state/trash-ledger.ts",
+      "mutatedSha": "3cda030432c7",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 23 - R2.1-03 主台账有效、保护记录损坏：禁止恢复且不覆盖原数据",
+          "not ok 24 - R2.1-03 主台账不存在、保护记录损坏：同样禁止恢复"
+        ]
+      }
+    },
+    {
+      "id": "D",
+      "desc": "预留完成后不复核身份，直接发 POST",
+      "file": "apps/shell/src/state/trash.ts",
+      "mutatedSha": "0a67ca21c12d",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "95": [],
+        "96": [
+          "not ok 54 - P2-02-R2.1-04 预留期间切到别的工作区：零 POST、返回 stale、不污染新工作区",
+          "not ok 55 - P2-02-R2.1-04 预留期间切到同工作区的另一个项目：零 POST、返回 stale",
+          "not ok 56 - P2-02-R2.1-04 预留恰好占满第 64 个位置：不得因为\"满了\"而拒绝已获得的授权"
+        ],
+        "98": [],
+        "99": []
+      }
+    },
+    {
+      "id": "E",
+      "desc": "复核失败时用\"当前身份\"释放（会误删别的工作区记录）",
+      "file": "apps/shell/src/state/trash.ts",
+      "mutatedSha": "2728f5e7fbd6",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "95": [],
+        "96": [
+          "not ok 29 - P2-02-R1 恢复：切走项目后收到 REJECTED → stale，不提示、不解除别人的界面",
+          "not ok 54 - P2-02-R2.1-04 预留期间切到别的工作区：零 POST、返回 stale、不污染新工作区",
+          "not ok 55 - P2-02-R2.1-04 预留期间切到同工作区的另一个项目：零 POST、返回 stale"
+        ],
+        "98": [],
+        "99": []
+      }
+    },
+    {
+      "id": "F",
+      "desc": "读不到保护记录时仍用旧快照写盘",
+      "file": "apps/shell/src/state/trash-ledger.ts",
+      "mutatedSha": "1839fcf1408a",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 21 - R2.1-02 失效写入：读不出保护记录时不得用过期快照覆盖"
+        ]
+      }
+    }
+  ]
+}

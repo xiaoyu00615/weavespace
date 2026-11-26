@@ -14,7 +14,7 @@
  * 2. 保护记录读不出来 → 上层按 `unavailable` 处理（fail-closed），绝不猜；
  * 3. 这里只负责"存/取"，不做业务判断（判断在 `trash-ledger.ts` 的 store 里）。
  */
-import { parseTrashPendingRecord, type TrashPendingRecord } from './trash-ledger.ts';
+import { MAX_TRASH_PENDING, parseTrashPendingRecord, type TrashPendingRecord } from './trash-ledger.ts';
 
 export const TRASH_GUARD_VERSION = 1 as const;
 /** 固定库名 + 表名：同源所有标签页共用同一份保护记录。 */
@@ -29,9 +29,24 @@ export interface TrashGuardRecord {
   readonly invalidated: boolean;
 }
 
+/**
+ * 保护记录的读取结果（R2.1-03）。
+ *
+ * `null` 把"不存在"和"存在但读不懂"混成一个值，调用方只能当成"首次使用"，
+ * 于是损坏的数据会被一份新的空记录覆盖——UNKNOWN 就此消失。四态是必须的。
+ */
+export type TrashGuardRead =
+  /** 确实没有这条记录（首次使用 / R1 升级）。 */
+  | { readonly status: 'missing' }
+  | { readonly status: 'valid'; readonly record: TrashGuardRecord }
+  /** 有数据但解析不了（版本不认识 / 字段非法 / 超边界）：**不许覆盖**。 */
+  | { readonly status: 'corrupt' }
+  /** 读不到（IndexedDB 不可用 / 事务失败）：状态无法确认。 */
+  | { readonly status: 'unavailable' };
+
 /** 保护记录的存取接口（浏览器用 IndexedDB，测试用内存假件）。 */
 export interface TrashGuardStorage {
-  read(): Promise<TrashGuardRecord | null>;
+  read(): Promise<TrashGuardRead>;
   write(record: TrashGuardRecord): Promise<boolean>;
 }
 
@@ -53,6 +68,8 @@ export function decodeTrashGuard(raw: unknown): TrashGuardRecord | null {
   if (row.version !== TRASH_GUARD_VERSION) return null;
   if (typeof row.invalidated !== 'boolean') return null;
   if (!Array.isArray(row.records)) return null;
+  // 超出数量边界等于"这份数据我读不全"：拒绝，绝不截断（截断就会淘汰待核对记录）
+  if (row.records.length > MAX_TRASH_PENDING) return null;
   const records: TrashPendingRecord[] = [];
   const seen = new Set<string>();
   for (const item of row.records) {
@@ -64,6 +81,17 @@ export function decodeTrashGuard(raw: unknown): TrashGuardRecord | null {
     records.push(parsed);
   }
   return { version: TRASH_GUARD_VERSION, records, invalidated: row.invalidated };
+}
+
+/**
+ * 原始值 → 四态（R2.1-03）。
+ *
+ * 只有 `undefined` / `null` 才是"确实不存在"；任何"有值但解析不了"都必须是 `corrupt`。
+ */
+export function decodeTrashGuardValue(raw: unknown): TrashGuardRead {
+  if (raw === undefined || raw === null) return { status: 'missing' };
+  const record = decodeTrashGuard(raw);
+  return record ? { status: 'valid', record } : { status: 'corrupt' };
 }
 
 /** IndexedDB 的最小形状（不引入 DOM 类型依赖，也便于测试注入）。 */
@@ -177,9 +205,12 @@ export function createIndexedDbGuardStorage(factory?: IdbFactoryLike | null): Tr
 
   return {
     async read() {
-      const raw = await withStore<unknown>('readonly', (store) => ({ request: store.get(TRASH_GUARD_KEY) }));
-      if (raw === undefined || raw === null) return null;
-      return decodeTrashGuard(raw);
+      try {
+        const raw = await withStore<unknown>('readonly', (store) => ({ request: store.get(TRASH_GUARD_KEY) }));
+        return decodeTrashGuardValue(raw);
+      } catch {
+        return { status: 'unavailable' };
+      }
     },
     async write(record) {
       try {
@@ -200,8 +231,9 @@ export function createIndexedDbGuardStorage(factory?: IdbFactoryLike | null): Tr
  * 用于"浏览器没有 IndexedDB / 被策略禁用"：**不能**退回 R1 的"只有主台账"。
  */
 export function createUnavailableGuardStorage(reason = 'IndexedDB unavailable'): TrashGuardStorage {
+  void reason;
   return {
-    read: () => Promise.reject(new Error(reason)),
-    write: () => Promise.resolve(false),
+    read: async () => ({ status: 'unavailable' }),
+    write: async () => false,
   };
 }

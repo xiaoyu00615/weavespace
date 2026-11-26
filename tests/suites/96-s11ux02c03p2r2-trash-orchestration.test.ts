@@ -105,6 +105,8 @@ interface Harness {
   externalDelete(): boolean;
   /** 台账闸文案：与 Provider 的 `restoreGate` 同源。 */
   gate(): string | null;
+  /** 让下一次 reservePending 卡在 deferred 上（验证预留是异步的）。 */
+  deferNextReserve(): { release(): void };
   /** 模拟 React 镜像：订阅 store 后保存的最后一份快照。 */
   mirror(): TrashLedgerSnapshot;
   /** 订阅者被通知了多少次。 */
@@ -156,6 +158,7 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
    * 模拟 Provider 的 `useSyncExternalStore`：订阅 → 每次通知都换成最新快照。
    * 与真实 React 的差别只有"何时重画"，"看到的是哪一版数据"完全一致。
    */
+  let reserveGate: Promise<void> | null = null;
   let mirror = ledgerStore.snapshot();
   let mirrorUpdates = 0;
   ledgerStore.subscribe(() => {
@@ -234,6 +237,11 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
      * 必须拒绝（R1.2.1-01）。
      */
     reservePending: async (target) => {
+      if (reserveGate) {
+        const gate = reserveGate;
+        reserveGate = null;
+        await gate;
+      }
       const outcome = await ledgerStore.reserve({ ...target, createdAt: '2026-11-24T00:00:00.000Z' });
       // 与 Provider 用同一个授权函数：只有 reserved 放行
       if (trashReserveAuthorizes(outcome)) return { ok: true as const };
@@ -322,6 +330,13 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
         loaded: true,
       });
       return outcome.status;
+    },
+    deferNextReserve() {
+      let release!: () => void;
+      reserveGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { release: () => release() };
     },
     seedExternally(records) {
       storage.setItem(TRASH_LEDGER_KEY, encodeTrashLedger(records));
@@ -1470,4 +1485,70 @@ test('P2-02-R1.2.1-R1 镜像：release / reconcile 锁内读到别的页面记�
     ['op-foreign-0001', 'op-foreign-0002'],
     'release 即使返回 unchanged 也要同步锁内读到的记录',
   );
+});
+
+/* ================================================================== */
+/* R2.1-04：预留是异步的，POST 前必须重新核对身份                          */
+/* ================================================================== */
+
+test('P2-02-R2.1-04 预留期间切到别的工作区：零 POST、返回 stale、不污染新工作区', async () => {
+  const h = makeHarness();
+  const gate = h.deferNextReserve();
+
+  const pending = h.controller.restore(PROJ, entry());
+
+  // 预留还没完成就切到工作区 B（同 opId 的另一条待核对属于 B）
+  h.setIdentity({ workspaceKey: 'b1b2c3d4e5f60718', epoch: 2, activeProjectId: OTHER });
+  const seeded = await h.host.reservePending({
+    workspaceKey: 'b1b2c3d4e5f60718',
+    projectId: OTHER,
+    opId: OP,
+  });
+  assert.equal(seeded.ok, true, 'B 自己的预留是合法的');
+
+  gate.release();
+  const result = await pending;
+
+  assert.equal(result.status, 'stale', '归属已变：静默丢弃，不弹旧项目的提示');
+  assert.equal(h.calls.restore, 0, '零副作用 POST');
+  assert.equal(h.calls.list, 0, '连核对都不该发');
+  assert.deepEqual(h.notices, [], '不能给用户看旧工作区的提示');
+  assert.equal(
+    h.actions.some((action) => action.type === 'TRASH_BUSY'),
+    false,
+    '不该在切走之后还写 busy 标记',
+  );
+  assert.deepEqual(
+    h.ledger().map((item) => `${item.workspaceKey}:${item.opId}`),
+    [`b1b2c3d4e5f60718:${OP}`],
+    'A 的预留安全结算，B 的同 opId 记录不得被误删',
+  );
+});
+
+test('P2-02-R2.1-04 预留期间切到同工作区的另一个项目：零 POST、返回 stale', async () => {
+  const h = makeHarness();
+  const gate = h.deferNextReserve();
+
+  const pending = h.controller.restore(PROJ, entry());
+  h.setIdentity({ activeProjectId: OTHER });
+  gate.release();
+  const result = await pending;
+
+  assert.equal(result.status, 'stale');
+  assert.equal(h.calls.restore, 0);
+  assert.deepEqual(h.ledger(), [], '这次预留没有发送任何请求：可以安全结算');
+});
+
+test('P2-02-R2.1-04 预留恰好占满第 64 个位置：不得因为"满了"而拒绝已获得的授权', async () => {
+  const h = makeHarness({ restore: () => new Promise(() => undefined) });
+  await h.prefillLedger(MAX_TRASH_PENDING - 1);
+  const gate = h.deferNextReserve();
+
+  const pending = h.controller.restore(PROJ, entry());
+  h.setIdentity({ activeProjectId: OTHER });
+  gate.release();
+  const result = await pending;
+
+  assert.equal(result.status, 'stale', '不能退回成"台账已满"');
+  assert.equal(h.calls.restore, 0);
 });

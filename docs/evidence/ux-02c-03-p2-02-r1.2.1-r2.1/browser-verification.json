@@ -1,0 +1,136 @@
+{
+  "run": "ux-02c-03-p2-02-r1.2.1-r2.1",
+  "baseline": "700de7a6df9443b20ad59de9def4f90065fff318",
+  "environment": {
+    "chrome": "Headless Chrome 158.0.8127.38（CDP 9336）",
+    "vite": "127.0.0.1:5278 → 代理 Host 127.0.0.1:5277",
+    "host": "托管 Multi（weavespace-test/p202-r121/store），项目 proj-a",
+    "storage": "真实 localStorage + 真实 IndexedDB（weavespace-trash-guard-v1）",
+    "locks": "真实 navigator.locks（仅在临界区加固定延时放大窗口，不改应用逻辑）",
+    "network": "每个标签页 Fetch.enable 拦截 /api/trash/restore，计数并回 202 UNKNOWN"
+  },
+  "summary": {
+    "total": 16,
+    "passed": 16,
+    "failed": []
+  },
+  "checks": {
+    "A 产生一条 UNKNOWN 待核对": true,
+    "保护记录里也有这条": true,
+    "A 把失效标记写进保护记录": true,
+    "新页面仍显示「待核对」": true,
+    "新页面仍是失效状态（恢复没有重新开放）": true,
+    "新页面强制点击 → 0 次 POST": true,
+    "A 全程只发 1 次 POST": true,
+    "损坏时明确关闭恢复": true,
+    "损坏时强制点击 → 0 次 POST": true,
+    "损坏的原始数据没有被覆盖": true,
+    "A 只发过 1 次 POST": true,
+    "切换身份后一个 POST 都不发": true,
+    "这次预留已安全结算（台账里没有留下无副作用的新记录）": true,
+    "并发预留同一行只有 1 次 POST": true,
+    "台账里只留下一条记录（没有重复占位）": true,
+    "保护记录与主台账一致": true
+  },
+  "detail": {
+    "A 产生一条 UNKNOWN 待核对": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-a\",\"opId\":\"op-r121r1-0001\",\"createdAt\":\"2026-11-26T01:08:51.399Z\"}]}",
+    "保护记录里也有这条": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "projectId": "proj-a",
+          "opId": "op-r121r1-0001",
+          "createdAt": "2026-11-26T01:08:51.399Z"
+        }
+      ],
+      "invalidated": false
+    },
+    "A 把失效标记写进保护记录": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "projectId": "proj-a",
+          "opId": "op-r121r1-0001",
+          "createdAt": "2026-11-26T01:08:51.399Z"
+        }
+      ],
+      "invalidated": true
+    },
+    "新页面仍显示「待核对」": {
+      "name": "p.md",
+      "badge": "待核对",
+      "buttonDisabled": true
+    },
+    "新页面仍是失效状态（恢复没有重新开放）": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+    "新页面强制点击 → 0 次 POST": 0,
+    "A 全程只发 1 次 POST": 1,
+    "scenarioA": {
+      "rawLedger": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-a\",\"opId\":\"op-r121r1-0001\",\"createdAt\":\"2026-11-26T01:08:51.399Z\"}]}",
+      "guardA": {
+        "version": 1,
+        "records": [
+          {
+            "workspaceKey": "c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+            "projectId": "proj-a",
+            "opId": "op-r121r1-0001",
+            "createdAt": "2026-11-26T01:08:51.399Z"
+          }
+        ],
+        "invalidated": true
+      },
+      "rowC": {
+        "name": "p.md",
+        "badge": "待核对",
+        "buttonDisabled": true
+      },
+      "blockedC": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+      "posts": 0,
+      "postsA": 1
+    },
+    "损坏时明确关闭恢复": "本机的「待核对」记录已损坏，无法确认哪些恢复还没有结论；为避免重复恢复，回收区的恢复操作暂时关闭。请不要重置或删除本站数据（会连同这条保护一起删除），等待后续的核对与修复流程。",
+    "损坏时强制点击 → 0 次 POST": 0,
+    "损坏的原始数据没有被覆盖": {
+      "version": 1,
+      "records": "not-an-array",
+      "invalidated": false
+    },
+    "A 只发过 1 次 POST": 1,
+    "scenarioB": {
+      "blocked": "本机的「待核对」记录已损坏，无法确认哪些恢复还没有结论；为避免重复恢复，回收区的恢复操作暂时关闭。请不要重置或删除本站数据（会连同这条保护一起删除），等待后续的核对与修复流程。",
+      "posts": 0,
+      "guardD": {
+        "version": 1,
+        "records": "not-an-array",
+        "invalidated": false
+      },
+      "postsA": 1
+    },
+    "切换身份后一个 POST 都不发": 0,
+    "这次预留已安全结算（台账里没有留下无副作用的新记录）": [],
+    "scenarioC": {
+      "posts": 0,
+      "records": []
+    },
+    "并发预留同一行只有 1 次 POST": {
+      "a": 1,
+      "b": 0
+    },
+    "台账里只留下一条记录（没有重复占位）": [
+      "op-r121r1-0001"
+    ],
+    "保护记录与主台账一致": [
+      "op-r121r1-0001"
+    ],
+    "scenarioD": {
+      "posts": {
+        "a": 1,
+        "b": 0
+      },
+      "records": [
+        "op-r121r1-0001"
+      ]
+    }
+  }
+}

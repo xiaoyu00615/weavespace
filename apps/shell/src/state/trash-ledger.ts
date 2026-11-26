@@ -36,7 +36,7 @@
  *   发布一次快照，否则"锁内重读拿到了别的页面的记录、界面却还显示可恢复"。
  */
 import type { TrashEntryDto } from '../client/client-api.ts';
-import type { TrashGuardRecord, TrashGuardStorage } from './trash-ledger-guard.ts';
+import type { TrashGuardRead, TrashGuardStorage } from './trash-ledger-guard.ts';
 import { TRASH_TERMINAL_STATES } from './types.ts';
 import type { StorageLike } from './workspace-persistence.ts';
 
@@ -626,25 +626,47 @@ export function createTrashLedgerStore(
     return true;
   };
 
-  /**
-   * 把"失效"写进保护记录（尽力而为）。
-   *
-   * 即使这一笔失败，下次启动仍会由"保护记录里有记录、主台账却是空"重新判出失效，
-   * 所以这里是加固而不是唯一依据；失败不打断当前操作，也绝不把失效改成正常。
-   */
-  const writeInvalidation = async (): Promise<void> => {
-    if (!guard) return;
+  /** 读保护记录：异常一律折算成 `unavailable`（调用方只需判断四态）。 */
+  const readGuard = async (): Promise<TrashGuardRead> => {
+    if (!guard) return { status: 'missing' };
     try {
-      await guard.write({ version: 1, records: current, invalidated: true });
+      return await guard.read();
     } catch {
-      // 忽略：内存标记已经生效，下一次写操作会再试
+      return { status: 'unavailable' };
     }
   };
+
+  /**
+   * 把"失效"写进保护记录（R2.1-02）。
+   *
+   * 必须在锁内**重读**再合并：
+   * - 另一个页面可能刚预留了新记录，本页的 `current` 是旧快照，直接写会把它抹掉；
+   * - 读不到 / 读不懂时**一个字节都不写**：宁可少写一次，也不能拿过期快照覆盖持久层；
+   * - 永远只写 `invalidated: true`，不存在"把失效写回正常"的分支；
+   * - 合并后超过容量时不写（绝不淘汰未核对记录）。
+   */
+  const mergeInvalidationLocked = async (): Promise<void> => {
+    if (!guard) return;
+    const state = await readGuard();
+    if (state.status === 'unavailable' || state.status === 'corrupt') return;
+    const existing = state.status === 'valid' ? state.record.records : [];
+    const merged = unionRecords(existing, current);
+    // 内存先跟上耐久真相（即使这一笔不写，本页也不该比保护记录更旧）
+    current = merged;
+    if (merged.length > MAX_TRASH_PENDING) return;
+    if (state.status === 'valid' && state.record.invalidated && merged.length === existing.length) return;
+    try {
+      await guard.write({ version: 1, records: merged, invalidated: true });
+    } catch {
+      // 忽略：内存标记已经生效，下次操作会再试
+    }
+  };
+
   const persistInvalidation = async (): Promise<void> => {
     if (!guard) return;
     try {
       // 锁是不可重入的：这里在锁外，可以自己取锁
-      await coordination.runExclusive(() => writeInvalidation());
+      await coordination.runExclusive(() => mergeInvalidationLocked());
     } catch {
       // 忽略：同上
     }
@@ -675,20 +697,27 @@ export function createTrashLedgerStore(
       await coordination.runExclusive(async () => {
         const main = readTrashLedger(storage);
         readStatus = main.status;
-        let record: TrashGuardRecord | null;
-        try {
-          record = await guard!.read();
-        } catch {
+        const state = await readGuard();
+        if (state.status === 'unavailable') {
           readStatus = 'unavailable';
           return;
         }
-        if (!record) {
+        if (state.status === 'corrupt') {
+          /*
+           * 有数据但读不懂：**不许**当成"首次使用"去初始化一份新的空记录——
+           * 那会把损坏的原始数据连同其中的待核对记录一起覆盖掉（R2.1-03）。
+           */
+          readStatus = 'corrupt';
+          return;
+        }
+        if (state.status === 'missing') {
           // 首次使用（或 R1 台账）：把当前已知记录迁进保护记录
           if (readStatus !== 'ok') return;
           const ok = await guard!.write({ version: 1, records: current, invalidated: false });
           if (!ok) readStatus = 'unavailable';
           return;
         }
+        const record = state.record;
         if (record.invalidated) invalidated = true;
         const mainRecords = main.status === 'ok' ? main.records : current;
         current = unionRecords(mainRecords, record.records);
@@ -696,7 +725,7 @@ export function createTrashLedgerStore(
           // 保护记录里还有待核对，主台账却是空的：被删掉了，不是"首次使用"
           invalidated = true;
           if (!record.invalidated) {
-            await guard!.write({ version: 1, records: current, invalidated: true });
+            await mergeInvalidationLocked();
           }
         }
       });
@@ -726,15 +755,25 @@ export function createTrashLedgerStore(
     /** null = 没有独立保护记录（单层模式）；否则就是保护记录里的记录。 */
     let guardRecords: readonly TrashPendingRecord[] | null = null;
     if (guard) {
-      let record: TrashGuardRecord | null;
-      try {
-        record = await guard.read();
-      } catch {
+      const state = await readGuard();
+      if (state.status === 'unavailable') return false;
+      if (state.status === 'corrupt') {
+        // 读不懂就不写、不判"缺失"，整体 fail-closed（R2.1-03）
+        readStatus = 'corrupt';
         return false;
       }
-      if (record) {
-        if (record.invalidated) invalidated = true;
-        guardRecords = record.records;
+      if (state.status === 'valid') {
+        current = unionRecords(current, state.record.records);
+        if (state.record.invalidated) {
+          /*
+           * R2.1-01：持久化失效是**结论**，不是提示。
+           * 之前这里只把内存标记翻成 true 就继续往下走，主台账仍有合法数据时
+           * 还会 `return true`，于是 reserve 照常写盘并返回 reserved —— 等于授权。
+           */
+          invalidated = true;
+          return false;
+        }
+        guardRecords = state.record.records;
       } else {
         // 保护记录还没有（R1 升级途中 / 被别人清掉）：不构成"缺失"的证据
         guardRecords = [];
@@ -758,7 +797,7 @@ export function createTrashLedgerStore(
         // 保护记录里还有待核对，主台账却是空：异常缺失
         invalidated = true;
         current = unionRecords(current, guardRecords);
-        await writeInvalidation();
+        await mergeInvalidationLocked();
         return false;
       }
       current = unionRecords(main.records, guardRecords);
@@ -768,7 +807,7 @@ export function createTrashLedgerStore(
     // 单层模式（R1 兼容）：主台账就是唯一真相
     if (main.records.length === 0 && current.length > 0) {
       invalidated = true;
-      await writeInvalidation();
+      await mergeInvalidationLocked();
       return false;
     }
     current = main.records;

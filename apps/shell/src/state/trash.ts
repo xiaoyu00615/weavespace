@@ -855,6 +855,36 @@ export function createTrashController(host: TrashHost): TrashController {
         const reserved = await host.reservePending(target);
         if (!reserved.ok) return { status: 'rejected', message: reserved.message };
 
+        /*
+         * R2.1-04：预留是**异步**的（要拿跨标签页锁、要先写两层存储），等待窗口足够长到
+         * 用户切走工作区 / 切项目、或者本地多出新的阻断条件。授权只对"发起时的那个身份
+         * + 那个项目"成立，所以发 POST 之前必须再核对一次——预留成功不等于可以无条件发。
+         *
+         * 这里**不重新预留**：已经拿到的位置就是这次操作的授权，不能再占一个，
+         * 也不能因为"台账恰好被这次预留填满"而反过来拒绝。
+         */
+        const gateAfterReserve = host.preflight(projectId);
+        if (!owned(projectId, snapshot)) {
+          /*
+           * 归属已变：一个请求都不发。用**发起时的身份**（`target`）撤掉预留，
+           * 碰不到别的工作区 / 别的事务的同 opId；台账此刻若已失效，
+           * 释放会被 store 拒绝（不写盘），记录下来保守保留。
+           */
+          await host.releasePending(target);
+          return { status: 'stale' };
+        }
+        if (!gateAfterReserve.ok) {
+          await host.releasePending(target);
+          return gateAfterReserve.kind === 'stale'
+            ? { status: 'stale' }
+            : { status: 'rejected', message: gateAfterReserve.message };
+        }
+        const blockersAfterReserve = host.blockers(projectId, entry.path);
+        if (blockersAfterReserve.length > 0) {
+          await host.releasePending(target);
+          return { status: 'blocked', reasons: blockersAfterReserve };
+        }
+
         host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: true, scope });
         try {
           let outcome: TrashActionOutcome;

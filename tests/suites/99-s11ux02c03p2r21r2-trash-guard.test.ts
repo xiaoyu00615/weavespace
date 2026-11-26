@@ -14,10 +14,12 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import * as guardModule from '../../apps/shell/src/state/trash-ledger-guard.ts';
 import {
   createInlineCoordination,
   createTrashLedgerStore,
   encodeTrashLedger,
+  MAX_TRASH_PENDING,
   readTrashLedger,
   TRASH_LEDGER_KEY,
   trashReserveAuthorizes,
@@ -64,7 +66,7 @@ function memoryGuard(initial: TrashGuardRecord | null = null): { box: GuardBox; 
     read: async () => {
       box.reads += 1;
       if (box.failRead) throw new Error('indexeddb unavailable');
-      return box.record;
+      return box.record ? { status: 'valid' as const, record: box.record } : { status: 'missing' as const };
     },
     write: async (next) => {
       box.writes.push(next);
@@ -415,4 +417,174 @@ test('R2-04 验证脚本：全部通过退出 0，任一失败退出 1（不是�
   const passing = spawnSync(process.execPath, [script, '--self-test-pass'], { encoding: 'utf8' });
   assert.equal(passing.status, 0, `合成通过必须退出 0；stdout=${passing.stdout} stderr=${passing.stderr}`);
   assert.match(passing.stdout, /"exitCode":0/);
+});
+
+/* ================================================================== */
+/* R2.1：双层事务收敛                                                    */
+/* ================================================================== */
+
+test('R2.1-01 持久化失效：主台账仍有合法数据、本页还没收到事件，reserve 也必须直接不可用', async () => {
+  const storage = memoryStorage();
+  const { box, guard } = memoryGuard();
+  const coordination = inline();
+  const A = newStore(storage, guard, coordination);
+  const B = newStore(storage, guard, coordination);
+  await A.ready();
+  await B.ready();
+
+  await A.reserve(record('op-persist-state1'));
+  await B.refresh();
+  assert.equal(B.records().length, 1, '前提：B 已经知道这条');
+
+  // A 被外部事件判为失效并把标记写进保护记录；主台账**保持有效**
+  A.applyExternalEvent({ key: null, newValue: null });
+  await coordination.runExclusive(() => undefined); // 等 A 的失效写入（同一把锁）落盘
+  assert.equal(box.record?.invalidated, true);
+  assert.deepEqual(storedIds(storage), ['op-persist-state1'], '前提：主台账仍然合法');
+
+  // B 还没收到任何 storage 事件：只靠持久化标记就必须挡住
+  const outcome = await B.reserve(record('op-persist-state2'));
+  assert.equal(outcome.status, 'unavailable', '持久化失效必须阻断操作，不能返回 reserved');
+  assert.equal(trashReserveAuthorizes(outcome), false);
+  assert.equal(B.status(), 'invalidated');
+  assert.deepEqual(storedIds(storage), ['op-persist-state1'], '不得写入主台账');
+  assert.deepEqual(B.records().map((item) => item.opId), ['op-persist-state1'], '已知记录保留');
+  assert.match(B.blockMessage() ?? '', /删除|失效/);
+  assert.deepEqual(guardIds(box), ['op-persist-state1'], '不得覆盖保护记录');
+});
+
+test('R2.1-02 失效写入必须锁内合并：不得抹掉另一页面刚预留的记录', async () => {
+  const storage = memoryStorage();
+  const { box, guard } = memoryGuard();
+  const coordination = inline();
+  const A = newStore(storage, guard, coordination);
+  const B = newStore(storage, guard, coordination);
+  await A.ready();
+  await B.ready();
+
+  await A.reserve(record('op-merge-x0001'));
+  await B.refresh();
+  assert.deepEqual(B.records().map((item) => item.opId), ['op-merge-x0001']);
+
+  // A 又预留了一条，B 的镜像还是旧的
+  assert.equal((await A.reserve(record('op-merge-y0002'))).status, 'reserved');
+  assert.deepEqual(guardIds(box).sort(), ['op-merge-x0001', 'op-merge-y0002']);
+
+  // B 失效并落盘：必须锁内重读再合并，不能拿自己的旧快照覆盖
+  B.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: null });
+  await coordination.runExclusive(() => undefined);
+
+  assert.deepEqual(guardIds(box).sort(), ['op-merge-x0001', 'op-merge-y0002'], '两条都必须留在保护记录里');
+  assert.equal(box.record?.invalidated, true, '不得把失效写回正常');
+
+  const reopened = newStore(storage, guard, coordination);
+  await reopened.ready();
+  assert.equal(reopened.status(), 'invalidated');
+  assert.deepEqual(
+    reopened.records().map((item) => item.opId).sort(),
+    ['op-merge-x0001', 'op-merge-y0002'],
+    '重新初始化后两条都在',
+  );
+});
+
+test('R2.1-02 失效写入：读不出保护记录时不得用过期快照覆盖', async () => {
+  const storage = memoryStorage();
+  const { box, guard } = memoryGuard();
+  const coordination = inline();
+  const store = newStore(storage, guard, coordination);
+  await store.ready();
+  await store.reserve(record('op-merge-read01'));
+
+  const before = box.writes.length;
+  box.failRead = true;
+  store.applyExternalEvent({ key: null, newValue: null });
+  await coordination.runExclusive(() => undefined);
+
+  assert.equal(box.writes.length, before, '读不到就不许写：不能拿旧快照覆盖持久层');
+  assert.deepEqual(guardIds(box), ['op-merge-read01'], '保护记录原样保留');
+  assert.equal(store.status(), 'invalidated', '本页仍然进入失效');
+});
+
+/**
+ * R2.1-03 用的保护记录假件：读返回**四态**（missing / valid / corrupt / unavailable）。
+ *
+ * 旧接口只有一个 `record | null`，"存在但读不懂"与"不存在"无法区分——这正是缺陷本身，
+ * 所以这里按目标契约写，修复前会真实失败。
+ */
+function guardWithState(
+  state: () => { status: 'missing' } | { status: 'valid'; record: TrashGuardRecord } | { status: 'corrupt' } | { status: 'unavailable' },
+  onWrite?: (next: TrashGuardRecord) => boolean,
+) {
+  const writes: TrashGuardRecord[] = [];
+  const guard = {
+    read: async () => state(),
+    write: async (next: TrashGuardRecord) => {
+      writes.push(next);
+      return onWrite ? onWrite(next) : true;
+    },
+  } as unknown as TrashGuardStorage;
+  return { guard, writes };
+}
+
+test('R2.1-03 保护记录"存在但读不懂"必须与"不存在"分开（四态解析）', () => {
+  const decode = (guardModule as unknown as { decodeTrashGuardValue?: (raw: unknown) => { status: string } })
+    .decodeTrashGuardValue as (raw: unknown) => { status: string };
+  assert.equal(typeof decode, 'function', '必须有一个把原始值解析成四态的入口');
+  const valid = { version: 1, records: [record('op-decode-0001')], invalidated: false };
+
+  assert.equal(decode(undefined).status, 'missing');
+  assert.equal(decode(valid).status, 'valid');
+  assert.equal(decode({ ...valid, version: 2 }).status, 'corrupt');
+  assert.equal(decode({ ...valid, records: 'nope' }).status, 'corrupt');
+  assert.equal(
+    decode({ ...valid, records: Array.from({ length: MAX_TRASH_PENDING + 1 }, (_, i) => record(`op-over-${String(i).padStart(8, '0')}`)) }).status,
+    'corrupt',
+    '超出数量边界必须拒绝，而不是静默截断',
+  );
+  assert.equal(decode({ ...valid, invalidated: 'yes' }).status, 'corrupt');
+});
+
+test('R2.1-03 主台账有效、保护记录损坏：禁止恢复且不覆盖原数据', async () => {
+  const storage = memoryStorage();
+  const seedBox = memoryGuard();
+  const seed = newStore(storage, seedBox.guard);
+  await seed.ready();
+  await seed.reserve(record('op-corruptg-01'));
+
+  const rawRecord = seedBox.box.record;
+  const raw = JSON.stringify(rawRecord);
+  const { guard, writes } = guardWithState(() => ({ status: 'corrupt' }));
+
+  const store = newStore(storage, guard);
+  await store.ready();
+  assert.equal(store.status(), 'corrupt', '读得懂"读不懂"：状态必须是 corrupt 而不是 ok');
+  assert.ok(store.blockMessage(), '必须有可展示的关闭原因');
+  assert.equal((await store.reserve(record('op-corruptg-02'))).status, 'unavailable');
+  assert.equal(writes.length, 0, '损坏时一个字节都不许写');
+  assert.equal(JSON.stringify(seedBox.box.record), raw, '磁盘上的原数据必须原样保留');
+});
+
+test('R2.1-03 主台账不存在、保护记录损坏：同样禁止恢复', async () => {
+  const storage = memoryStorage();
+  const { guard, writes } = guardWithState(() => ({ status: 'corrupt' }));
+
+  const store = newStore(storage, guard);
+  await store.ready();
+  assert.equal(store.status(), 'corrupt');
+  assert.equal((await store.reserve(record('op-corruptg-03'))).status, 'unavailable');
+  assert.equal(writes.length, 0, '损坏时不许写');
+  assert.deepEqual(storedIds(storage), [], '也不许重建主台账');
+});
+
+test('R2.1-03 保护记录读不出来：Store 状态与快照必须更新为 unavailable', async () => {
+  const storage = memoryStorage();
+  const { guard } = guardWithState(() => ({ status: 'unavailable' }));
+  const store = newStore(storage, guard);
+  await store.ready();
+
+  assert.equal(store.status(), 'unavailable');
+  assert.match(store.blockMessage() ?? '', /不可用/);
+  assert.equal(store.snapshot().status, 'unavailable', '快照要跟着更新');
+  assert.ok(store.snapshot().blockMessage);
+  assert.equal((await store.reserve(record('op-unread-0001'))).status, 'unavailable');
 });
