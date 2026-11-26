@@ -1,0 +1,8 @@
+tests/suites/96-s11ux02c03p2r2-trash-orchestration.test.ts(217,22): error TS2554: Expected 3 arguments, but got 2.
+tests/suites/97-s11ux02c03p2r2-trash-shell-e2e.test.ts(184,35): error TS2554: Expected 3 arguments, but got 2.
+tests/suites/97-s11ux02c03p2r2-trash-shell-e2e.test.ts(217,35): error TS2554: Expected 3 arguments, but got 2.
+tests/suites/97-s11ux02c03p2r2-trash-shell-e2e.test.ts(382,20): error TS2554: Expected 3 arguments, but got 2.
+tests/suites/97-s11ux02c03p2r2-trash-shell-e2e.test.ts(478,44): error TS2554: Expected 3 arguments, but got 2.
+tests/suites/97-s11ux02c03p2r2-trash-shell-e2e.test.ts(530,36): error TS2554: Expected 3 arguments, but got 2.
+tests/suites/97-s11ux02c03p2r2-trash-shell-e2e.test.ts(612,36): error TS2554: Expected 3 arguments, but got 2.
+tests/suites/97-s11ux02c03p2r2-trash-shell-e2e.test.ts(624,36): error TS2554: Expected 3 arguments, but got 2.

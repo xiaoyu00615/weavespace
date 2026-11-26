@@ -18,12 +18,15 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  createDemoClient,
   createLiveClient,
+  TRASH_SEND_GATE_MESSAGES,
   type TrashActionOutcome,
   type TrashEntryDto,
   type TrashListOutcome,
   type TrashOpQueryOutcome,
   type TrashSendGate,
+  type WeaveSpaceClient,
 } from '../../apps/shell/src/client/client-api.ts';
 import {
   createTrashController,
@@ -174,6 +177,8 @@ function installFetch(options: { restoreStatus?: number } = {}): FetchHarness {
 interface Harness {
   host: TrashHost;
   controller: ReturnType<typeof createTrashController>;
+  /** 真实 live client（H1-T02～T04 要直接驱动它的发送链路）。 */
+  client: WeaveSpaceClient;
   net: FetchHarness;
   calls: { list: number; restore: number; query: number };
   actions: string[];
@@ -187,13 +192,20 @@ interface Harness {
   uninstall(): void;
 }
 
+interface HarnessOptions {
+  /** 第 N 次 `verifyPending()` 抛异常（1-based）：构造"最终裁决内部炸了"的真实链路。 */
+  readonly verifyThrowsOnCall?: number;
+  /** 适配层把 gate 换掉（模拟漏传/错传的旧适配层）。 */
+  readonly gateOverride?: TrashSendGate;
+}
+
 /**
  * 真实 Controller + 真实 Client API 的最小装配。
  *
  * 只有三处是假的：列表读取、只读核对、以及 `fetch` 本身。发送链路是真的：
  * `postTrashAction` → `sessionToken()`（真实 await）→ 最终裁决 → `request()` → `fetch()`。
  */
-function makeHarness(tokenPaused: boolean): Harness {
+function makeHarness(tokenPaused: boolean, options: HarnessOptions = {}): Harness {
   const originalFetch = globalThis.fetch;
   const net = installFetch();
   const release = tokenPaused ? net.pauseNextToken() : () => undefined;
@@ -218,6 +230,8 @@ function makeHarness(tokenPaused: boolean): Harness {
   const actions: string[] = [];
   const notices: string[] = [];
   const client = createLiveClient('http://host.test');
+  /** 只用于 H1-T06：让**最终裁决内部**（而不是早先那次复核）抛异常。 */
+  let verifyCalls = 0;
 
   const host: TrashHost = {
     port: {
@@ -238,9 +252,9 @@ function makeHarness(tokenPaused: boolean): Harness {
         replayed: false,
       }),
       // 真实发送链路：gate 会被 client-api 在令牌之后同步调用
-      restore: (projectId, opId, gate?: TrashSendGate) => {
+      restore: (projectId, opId, gate: TrashSendGate) => {
         calls.restore += 1;
-        return client.restoreTrash(projectId, opId, gate);
+        return client.restoreTrash(projectId, opId, options.gateOverride ?? gate);
       },
       query: async (projectId, opId): Promise<TrashOpQueryOutcome> => {
         calls.query += 1;
@@ -268,7 +282,9 @@ function makeHarness(tokenPaused: boolean): Harness {
       return { ok: false as const, message: ledgerStore.blockMessage() ?? '本机的「待核对」记录已满，恢复已关闭。' };
     },
     verifyPending: (target) => {
+      verifyCalls += 1;
       net.events.push('gate:verify');
+      if (options.verifyThrowsOnCall === verifyCalls) throw new Error('注入：台账读取抛出异常');
       return ledgerStore.verifyPending(target);
     },
     releasePending: async (target) => {
@@ -293,6 +309,7 @@ function makeHarness(tokenPaused: boolean): Harness {
   return {
     host,
     controller,
+    client,
     net,
     calls,
     actions,
@@ -463,6 +480,185 @@ test('R1-02D 预留恰好占满第 64 格：最终复核仍然放行，POST 恰�
     assert.equal(result.status, 'applied', '第 64 格是合法授权');
     assert.equal(h.net.posts, 1, '必须真的发出去（不是"满了所以拒绝"）');
     assert.equal(h.ledger().length, MAX_TRASH_PENDING);
+  } finally {
+    h.uninstall();
+  }
+});
+
+/* ================================================================== */
+/* H1（R1-H1）：最终发送授权强制化 + gate 异常的隔离                     */
+/* ================================================================== */
+/*
+ * R1 之后 gate 仍然是可选参数：任何一个模块只要写 `restoreTrash(projectId, opId)`，
+ * 就能绕过最终授权直接发一次真实恢复；而 gate 自己抛异常时，异常会一路冒到 Controller
+ * 的 catch，被当成"网络中断"记成 UNKNOWN——一笔根本没发出去的恢复进了「待核对」。
+ *
+ * 下面八条按 H1-T01～T08 编号，全部走真实 Client API（`postTrashAction` →
+ * `sessionToken()` → 裁决 → `fetch()`），只有 `fetch` 是桩。
+ */
+
+test('H1-T01 正常传入有效 gate：恢复成功，恰好一次 POST', async () => {
+  const h = makeHarness(false);
+  try {
+    const result = await h.controller.restore(PROJ, entry());
+    assert.equal(result.status, 'applied');
+    assert.equal(h.net.posts, 1, '恰好一次');
+    assert.deepEqual(h.net.restoreBodies, [{ projectId: PROJ, opId: OP }]);
+    /*
+     * 成功路径**不**在这里释放预留：控制器只负责"这次请求有没有发出去、结论可不可用"，
+     * 台账的收敛由 Provider 在"一次成功的列表读取"之后做（reconcile）。
+     * 这里只断言它没有被标成待核对。
+     */
+    assert.equal(h.actions.includes('TRASH_UNCONFIRMED'), false);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T02 运行时缺少 gate（JS 调用方/旧适配层）：NOT_SENT，零恢复 POST', async () => {
+  const h = makeHarness(false);
+  try {
+    // 类型必须要求 gate；这里刻意用类型断言绕过，模拟"运行时真的漏传"
+    const outcome = await h.client.restoreTrash(PROJ, OP, undefined as unknown as TrashSendGate);
+    assert.equal(outcome.status, 'NOT_SENT', JSON.stringify(outcome));
+    if (outcome.status !== 'NOT_SENT') return;
+    assert.equal(outcome.reason, 'blocked', 'fail-closed：与"没有授权"同性质');
+    assert.equal(outcome.message, TRASH_SEND_GATE_MESSAGES.unavailable);
+    assert.equal(h.net.posts, 0, '零恢复 POST（不是"发了但失败了"）');
+    assert.equal(h.net.tokenRequests, 1, '令牌先取到：保护发生在真正的 POST 边界上');
+    assert.equal(h.net.events.includes('post:restore'), false);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T02b 运行时 gate 不是函数：同样 NOT_SENT，零恢复 POST', async () => {
+  const h = makeHarness(false);
+  try {
+    const outcome = await h.client.restoreTrash(PROJ, OP, 'not-a-function' as unknown as TrashSendGate);
+    assert.equal(outcome.status, 'NOT_SENT');
+    if (outcome.status !== 'NOT_SENT') return;
+    assert.equal(outcome.reason, 'blocked');
+    assert.equal(outcome.message, TRASH_SEND_GATE_MESSAGES.unavailable);
+    assert.equal(h.net.posts, 0);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T03 gate 抛出异常：NOT_SENT（不是 UNKNOWN），零恢复 POST', async () => {
+  const h = makeHarness(false);
+  try {
+    const outcome = await h.client.restoreTrash(PROJ, OP, () => {
+      throw new Error('注入：凭证服务炸了');
+    });
+    assert.equal(outcome.status, 'NOT_SENT', '绝不能变成 UNKNOWN——那会触发只读核对并留下待核对');
+    if (outcome.status !== 'NOT_SENT') return;
+    assert.equal(outcome.reason, 'blocked');
+    assert.equal(outcome.message, TRASH_SEND_GATE_MESSAGES.threw);
+    assert.equal(h.net.posts, 0);
+    assert.equal(h.net.events.includes('post:restore'), false);
+    assert.equal(h.net.events.includes('query:op'), false, '没有 UNKNOWN，就没有只读核对');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T03b gate 返回无法识别的形状：fail-closed，零恢复 POST', async () => {
+  const h = makeHarness(false);
+  try {
+    const outcome = await h.client.restoreTrash(PROJ, OP, () => undefined as unknown as { ok: true });
+    assert.equal(outcome.status, 'NOT_SENT');
+    if (outcome.status !== 'NOT_SENT') return;
+    assert.equal(outcome.reason, 'blocked');
+    assert.equal(outcome.message, TRASH_SEND_GATE_MESSAGES.invalid);
+    assert.equal(h.net.posts, 0);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T04 gate 明确拒绝：NOT_SENT 带原样原因，零恢复 POST', async () => {
+  const h = makeHarness(false);
+  try {
+    const outcome = await h.client.restoreTrash(PROJ, OP, () => ({
+      ok: false,
+      kind: 'blocked',
+      message: '注入：权限已撤销',
+    }));
+    assert.equal(outcome.status, 'NOT_SENT');
+    if (outcome.status !== 'NOT_SENT') return;
+    assert.equal(outcome.reason, 'blocked');
+    assert.equal(outcome.message, '注入：权限已撤销', 'gate 给出的原因必须原样上抛');
+    assert.equal(h.net.posts, 0);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T05 gate 拒绝后不进入 UNKNOWN 核对，也不标"待核对"', async () => {
+  // 适配层把 gate 换成一个总是拒绝的实现（"错传 gate"的真实形态）
+  const h = makeHarness(false, {
+    gateOverride: () => ({ ok: false, kind: 'blocked', message: '注入：拒绝发送' }),
+  });
+  try {
+    const result = await h.controller.restore(PROJ, entry());
+
+    assert.equal(result.status, 'rejected', JSON.stringify(result));
+    assert.equal(h.net.posts, 0);
+    assert.equal(h.calls.query, 0, 'NOT_SENT 不是 UNKNOWN：不许做只读核对');
+    assert.equal(h.actions.includes('TRASH_UNCONFIRMED'), false, '不许把记录标成待核对');
+    assert.deepEqual(h.ledger(), [], '零副作用 → 预留正常释放');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T06 最终裁决内部抛异常：预留正常释放，不遗留待核对', async () => {
+  // 第 2 次 verifyPending 是"最终裁决"里的那次（第 1 次是发 POST 之前的快速失败）
+  const h = makeHarness(false, { verifyThrowsOnCall: 2 });
+  try {
+    const result = await h.controller.restore(PROJ, entry());
+
+    assert.equal(result.status, 'rejected', JSON.stringify(result));
+    assert.equal(result.message, TRASH_SEND_GATE_MESSAGES.threw);
+    assert.equal(h.net.posts, 0, '异常不等于已发送');
+    assert.equal(h.calls.query, 0, '不许进入 UNKNOWN 核对');
+    assert.equal(h.actions.includes('TRASH_UNCONFIRMED'), false);
+    assert.deepEqual(h.ledger().map((record) => record.opId), [], '预留必须被释放');
+    assert.equal(h.gate(), null, '台账仍然可用（没有被这次异常污染）');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T07 Demo 恢复：仍返回不支持，零请求、零磁盘副作用', async () => {
+  const h = makeHarness(false);
+  try {
+    const demo = createDemoClient([], {});
+    const outcome = await demo.restoreTrash(PROJ, OP, () => ({ ok: true }));
+    assert.equal(outcome.status, 'REJECTED', JSON.stringify(outcome));
+    if (outcome.status !== 'REJECTED') return;
+    assert.equal(outcome.errorCode, 'ERR_COMMAND_UNSUPPORTED');
+    assert.equal(outcome.httpStatus, 501);
+    assert.equal(h.net.posts, 0, '演示模式不发真实恢复请求');
+    assert.equal(h.net.tokenRequests, 0, '连会话令牌都不取');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-T08 最终发送顺序仍是：令牌 → 裁决 → POST', async () => {
+  const h = makeHarness(false);
+  try {
+    await h.controller.restore(PROJ, entry());
+    const order = h.net.events.filter(
+      (event) =>
+        event === 'token:request' || event === 'token:resolve' || event === 'gate:verify' || event === 'post:restore',
+    );
+    // 早先那次快速失败 + 最终裁决 = 两次；最后三件事必须是 令牌解析 → 最终裁决 → POST
+    assert.equal(order.filter((event) => event === 'gate:verify').length, 2);
+    assert.deepEqual(order.slice(-3), ['token:resolve', 'gate:verify', 'post:restore']);
   } finally {
     h.uninstall();
   }

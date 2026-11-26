@@ -790,10 +790,14 @@ export interface WeaveSpaceClient {
    * 目标由 Host 记录决定，客户端不提供 `targetPath`；原位置已有同名对象时
    * Host 返回 409 `ERR_ENTRY_EXISTS`，绝不覆盖。
    *
-   * `gate` 是发送前的最终裁决（R1-01）：它在会话令牌到手之后、`fetch()` 之前
-   * **同步**执行；返回不允许时一个字节都不会发出去（结果为 `NOT_SENT`）。
+   * `gate` 是发送前的最终裁决（R1-01），**必填**（R1-H1）：
+   * - 它在会话令牌到手之后、`fetch()` 之前**同步**执行；
+   * - 返回不允许时一个字节都不会发出去（结果为 `NOT_SENT`）。
+   *
+   * 为什么是必填而不是可选：可选参数会让"漏传"变成一次静默的、无授权的真实恢复。
+   * 运行时仍会再兜一层（见 `evaluateSendGate`）：JS 调用方 / 旧适配层漏传时 fail-closed。
    */
-  restoreTrash(projectId: string, opId: string, gate?: TrashSendGate): Promise<TrashActionOutcome>;
+  restoreTrash(projectId: string, opId: string, gate: TrashSendGate): Promise<TrashActionOutcome>;
   /** 只读核对某个 opId 的真实结果。 */
   queryTrashOp(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
 
@@ -862,6 +866,52 @@ const ZERO_SIDE_EFFECT_503_CODES: ReadonlySet<string> = new Set([
   'ERR_ROOT_IDENTITY_UNSUPPORTED',
   'ERR_STORE_RESTRICTED',
 ]);
+
+/* ---------------- 发送前裁决的运行时保护（R1-H1） ---------------- */
+
+/** 运行时漏传 gate（JS 调用方 / 旧适配层）：不可用即拒绝，绝不"假装检查过"。 */
+const TRASH_GATE_UNAVAILABLE_MESSAGE = '发送前授权检查不可用，已取消恢复（未发送请求）。';
+/** gate 自己抛了异常：它与"没有授权"同性质，不能冒泡成 UNKNOWN。 */
+const TRASH_GATE_THREW_MESSAGE = '发送前授权检查执行失败，已取消恢复（未发送请求）。';
+/** gate 返回了无法识别的形状：同样按拒绝处理（fail-closed）。 */
+const TRASH_GATE_INVALID_MESSAGE = '发送前授权检查返回了无法识别的结果，已取消恢复（未发送请求）。';
+
+/**
+ * 同步执行发送前裁决，并把三类"检查本身坏了"的情况收敛成**拒绝**（R1-H1-02 / H1-03）。
+ *
+ * 三条硬约束：
+ * 1. **同步**：不返回 Promise、不 `await`——它必须与紧随其后的 `fetch()` 处于同一个
+ *    同步片段里，否则又出现"检查通过、请求未发"的窗口；
+ * 2. **不抛**：异常在这里咽掉并转成 `blocked`。若让它冒泡，Controller 的
+ *    `catch` 会把它当成"网络中断"，于是一笔**根本没发出去**的恢复被写成待核对记录，
+ *    用户看到「待核对」而磁盘其实什么都没发生；
+ * 3. **fail-closed**：漏传 / 非函数 / 返回垃圾 → 一律拒绝（`blocked`，零请求）。
+ *
+ * 只把"检查坏了"和"检查说不行"归到同一个 `blocked`：两者对调用方的处理完全相同
+ * （零请求、可读原因、预留可安全释放），区别只在文案。
+ */
+function evaluateSendGate(gate: TrashSendGate | undefined): TrashSendDecision {
+  if (typeof gate !== 'function') {
+    return { ok: false, kind: 'blocked', message: TRASH_GATE_UNAVAILABLE_MESSAGE };
+  }
+  let raw: unknown;
+  try {
+    raw = gate();
+  } catch {
+    return { ok: false, kind: 'blocked', message: TRASH_GATE_THREW_MESSAGE };
+  }
+  if (typeof raw !== 'object' || raw === null || typeof (raw as { ok?: unknown }).ok !== 'boolean') {
+    return { ok: false, kind: 'blocked', message: TRASH_GATE_INVALID_MESSAGE };
+  }
+  return raw as TrashSendDecision;
+}
+
+/** 仅供测试与文档引用：三条固定文案。 */
+export const TRASH_SEND_GATE_MESSAGES = {
+  unavailable: TRASH_GATE_UNAVAILABLE_MESSAGE,
+  threw: TRASH_GATE_THREW_MESSAGE,
+  invalid: TRASH_GATE_INVALID_MESSAGE,
+} as const;
 
 
 
@@ -1615,11 +1665,17 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
     },
 
     async trashEntry(projectId, path, opId) {
-      return postTrashAction('/api/trash/entry', { projectId, path, opId }, projectId, opId);
+      // 移入回收区不依赖 R1 的最终裁决：没有"待核对预留"这回事（H1-01 注意条款）
+      return postTrashAction('/api/trash/entry', { projectId, path, opId }, projectId, opId, null);
     },
 
     async restoreTrash(projectId, opId, gate) {
-      return postTrashAction('/api/trash/restore', { projectId, opId }, projectId, opId, gate);
+      /*
+       * 恢复**必须**带裁决（R1-H1）。这里传的是包装对象而不是裸的 gate：
+       * 只有"恢复"这条路径会走到 `evaluateSendGate`，而 `trashEntry` 明确传 `null`，
+       * 于是"要不要检查"在类型与代码上都只有一种解释，不靠调用方自觉。
+       */
+      return postTrashAction('/api/trash/restore', { projectId, opId }, projectId, opId, { gate });
     },
 
     async queryTrashOp(projectId, opId) {
@@ -1668,16 +1724,20 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
    * 与结构变更同一纪律：**磁盘可能已经变了**的三种情况（网络异常、超时、202 UNKNOWN）
    * 一律返回 UNKNOWN 并保留 `opId`，由编排层做一次只读核对 + 人工确认提示。
    *
-   * R1-01：可选的 `gate` 在**令牌到手之后、请求发出之前**同步执行一次。
+   * R1-01：`sendGuard` 非空时，`gate` 在**令牌到手之后、请求发出之前**同步执行一次。
    * 从 `await sessionToken()` 结束到 `request(...)` 之间**不允许**再有任何 `await`——
    * `request()` 的第一句就是 `fetch()`，因此这里的同步片段就是真正的 POST 边界。
+   *
+   * R1-H1：`sendGuard` 用"包装对象 / null"而不是可选参数表达——
+   * - `null` ＝ 这条路径不需要裁决（只有 `trashEntry` 是这样）；
+   * - `{ gate }` ＝ 必须有裁决，且 `gate` 漏传 / 抛异常 / 返回垃圾一律 fail-closed。
    */
   async function postTrashAction(
     endpoint: string,
     requestBody: { projectId: string; path?: string; opId: string },
     projectId: string,
     opId: string,
-    gate?: TrashSendGate,
+    sendGuard: { readonly gate: TrashSendGate } | null,
   ): Promise<TrashActionOutcome> {
     let token: string;
     try {
@@ -1693,11 +1753,12 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       };
     }
     /*
-     * 最终裁决（R1-01）。这一行到下面 `request(...)` 之间的代码**必须**保持同步：
+     * 最终裁决（R1-01 / R1-H1-03）。这一段到下面 `request(...)` 之间**必须**保持同步：
      * 一旦插入 `await`，就又出现"检查通过、请求未发"的窗口，等于什么都没修。
+     * `evaluateSendGate` 自己把异常咽掉并转成 `blocked`，所以这里不会抛。
      */
-    if (gate) {
-      const decision = gate();
+    if (sendGuard) {
+      const decision = evaluateSendGate(sendGuard.gate);
       if (!decision.ok) {
         return {
           status: 'NOT_SENT',
@@ -2243,7 +2304,12 @@ export function createDemoClient(
       };
     },
 
-    async restoreTrash(projectId: string, opId: string) {
+    /**
+     * 演示模式没有真实回收记录，也**不执行** gate（R1-H1-04）：
+     * 这里没有任何请求要发，跑一次授权检查只会让"演示"看起来像"真能恢复"。
+     * 结果永远是明确的"不支持"，不制造假成功、不产生任何磁盘副作用。
+     */
+    async restoreTrash(projectId: string, opId: string, _gate: TrashSendGate) {
       return {
         status: 'REJECTED' as const,
         projectId,

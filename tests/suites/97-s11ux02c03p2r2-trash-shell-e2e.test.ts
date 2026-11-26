@@ -21,6 +21,7 @@ import { serializeConfig, type ConfigTrashEntry } from '../../apps/server/src/st
 import {
   createLiveClient,
   type TrashEntryDto,
+  type TrashSendGate,
   type WeaveSpaceClient,
 } from '../../apps/shell/src/client/client-api.ts';
 import { createTrashController, type TrashHost } from '../../apps/shell/src/state/trash.ts';
@@ -35,6 +36,13 @@ import { rootTokenOf } from '../../packages/storage/path-safety.ts';
 const PROJ_A = 'project-a';
 const PROJ_B = 'project-b';
 const OP = 'op-p202-e2e-0001';
+
+/**
+ * 本套件证明的是**传输链路**（真实 Host + 真实磁盘 + 真实 HTTP），不是授权本身。
+ * R1-H1 之后 `restoreTrash()` 的 gate 是必填参数，这里统一给一个"永远允许"的裁决，
+ * 让这一层不参与判定；授权本身由套件 100 的 H1-T01～T08 覆盖。
+ */
+const allowGate: TrashSendGate = () => ({ ok: true });
 
 interface Ctx {
   rootA: string;
@@ -181,7 +189,7 @@ test('P2-02 恢复：文件回到原路径，字节一致，状态变 restored',
   await withHost(async ({ rootA, client }) => {
     assert.equal((await client.trashEntry(PROJ_A, 'docs/guide.md', OP)).status, 'APPLIED');
 
-    const restored = await client.restoreTrash(PROJ_A, OP);
+    const restored = await client.restoreTrash(PROJ_A, OP, allowGate);
     assert.equal(restored.status, 'APPLIED', JSON.stringify(restored));
     if (restored.status !== 'APPLIED') return;
     assert.equal(restored.entry.state, 'restored');
@@ -214,7 +222,7 @@ test('P2-02 恢复冲突：原位置已有同名文件 → 409，双方内容都
     // 用户又在原位置建了一个同名文件（内容不同）
     await writeFile(join(rootA, 'a.md'), '# 新文件\n', 'utf8');
 
-    const conflict = await client.restoreTrash(PROJ_A, OP);
+    const conflict = await client.restoreTrash(PROJ_A, OP, allowGate);
     assert.equal(conflict.status, 'REJECTED', JSON.stringify(conflict));
     if (conflict.status !== 'REJECTED') return;
     assert.equal(conflict.errorCode, 'ERR_ENTRY_EXISTS');
@@ -379,7 +387,7 @@ test('P2-02 客户端：回收请求不带任何路径/身份字段，恢复请�
       const client = createLiveClient(server.url);
       void token;
       await client.trashEntry(PROJ_A, 'a.md', OP);
-      await client.restoreTrash(PROJ_A, OP);
+      await client.restoreTrash(PROJ_A, OP, allowGate);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -475,7 +483,8 @@ function playbackHost(client: WeaveSpaceClient, notices: string[]): PlaybackHost
     port: {
       list: (projectId) => client.listTrash(projectId),
       remove: (projectId, path, opId) => client.trashEntry(projectId, path, opId),
-      restore: (projectId, opId) => client.restoreTrash(projectId, opId),
+      // 适配层必须**转发** gate：漏传在运行时会被 Client API 判为 fail-closed（R1-H1）
+      restore: (projectId, opId, gate) => client.restoreTrash(projectId, opId, gate),
       query: (projectId, opId) => client.queryTrashOp(projectId, opId),
     },
     identity: () => ({
@@ -527,7 +536,7 @@ test('P2-02-R1 客户端：APPLIED 但没有 entry → UNKNOWN（不报被拒绝
     },
     async () => {
       const client = createLiveClient('http://stub.local');
-      const outcome = await client.restoreTrash(PROJ_A, OP);
+      const outcome = await client.restoreTrash(PROJ_A, OP, allowGate);
       assert.equal(outcome.status, 'UNKNOWN', '不能把"读不懂的回执"报成被拒绝（那会诱导用户再点一次）');
       assert.equal(outcome.status === 'UNKNOWN' ? outcome.opId : null, OP, '必须保留 opId 才能核对');
     },
@@ -609,7 +618,7 @@ test('P2-02-R1 客户端：500 可能已有副作用 → UNKNOWN；409 才是明
     },
     async () => {
       const client = createLiveClient('http://stub.local');
-      const outcome = await client.restoreTrash(PROJ_A, OP);
+      const outcome = await client.restoreTrash(PROJ_A, OP, allowGate);
       assert.equal(outcome.status, 'UNKNOWN', '5xx 不得当成零副作用的拒绝');
     },
   );
@@ -621,7 +630,7 @@ test('P2-02-R1 客户端：500 可能已有副作用 → UNKNOWN；409 才是明
     },
     async () => {
       const client = createLiveClient('http://stub.local');
-      const outcome = await client.restoreTrash(PROJ_A, OP);
+      const outcome = await client.restoreTrash(PROJ_A, OP, allowGate);
       assert.equal(outcome.status, 'REJECTED');
       assert.equal(outcome.status === 'REJECTED' ? outcome.errorCode : null, 'ERR_ENTRY_EXISTS');
     },

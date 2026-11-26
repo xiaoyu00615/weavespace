@@ -242,10 +242,11 @@ export interface DocumentActions {
   trashEntry(projectId: string, path: string, opId: string): Promise<TrashActionOutcome>;
   /** 恢复到原始路径：不提供目标参数（Host 记录即权威）。 */
   /**
-   * `gate` 是发送前的最终裁决（R1-01）：由回收区编排层给出，在会话令牌到手、
-   * 请求发出之前同步执行一次；返回不允许时一个请求都不会发出去。
+   * `gate` 是发送前的最终裁决（R1-01），**必填**（R1-H1）：
+   * 由回收区编排层给出，在会话令牌到手、请求发出之前同步执行一次；
+   * 返回不允许时一个请求都不会发出去。
    */
-  restoreTrash(projectId: string, opId: string, gate?: TrashSendGate): Promise<TrashActionOutcome>;
+  restoreTrash(projectId: string, opId: string, gate: TrashSendGate): Promise<TrashActionOutcome>;
   /** 按 `opId` 做一次只读核对（UNKNOWN 后唯一允许的后续动作）。 */
   queryTrashOp(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
 }

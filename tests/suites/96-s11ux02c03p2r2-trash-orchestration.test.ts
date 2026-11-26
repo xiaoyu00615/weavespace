@@ -212,9 +212,9 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
       calls.remove += 1;
       return rawPort.remove(projectId, path, opId);
     },
-    restore: async (projectId, opId) => {
+    restore: async (projectId, opId, gate) => {
       calls.restore += 1;
-      return rawPort.restore(projectId, opId);
+      return rawPort.restore(projectId, opId, gate);
     },
     query: async (projectId, opId) => {
       calls.query += 1;

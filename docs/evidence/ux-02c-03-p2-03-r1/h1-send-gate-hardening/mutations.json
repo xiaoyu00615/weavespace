@@ -1,0 +1,41 @@
+{
+  "at": "2026-11-26T18:30:09.253Z",
+  "baseline": "4825dfa764e7ac005b7e805956ab748e58bc9c04f85f97d46cc4c71490bd2b11",
+  "results": [
+    {
+      "id": "H1-A",
+      "what": "运行时保护退化：漏传/非函数时跳过检查，gate 异常直接冒泡",
+      "file": "apps/shell/src/client/client-api.ts",
+      "shaBefore": "4825dfa764e7ac005b7e805956ab748e58bc9c04f85f97d46cc4c71490bd2b11",
+      "shaMutated": "2b2c0129430b0da77dd60609b44ab2e4d4951970840b447358e39c7d6ef5123f",
+      "shaAfterRestore": "4825dfa764e7ac005b7e805956ab748e58bc9c04f85f97d46cc4c71490bd2b11",
+      "mutationChangedBytes": true,
+      "restoreExact": true,
+      "failedTests": [
+        "H1-T02 运行时缺少 gate（JS 调用方/旧适配层）：NOT_SENT，零恢复 POST",
+        "H1-T02b 运行时 gate 不是函数：同样 NOT_SENT，零恢复 POST",
+        "H1-T03 gate 抛出异常：NOT_SENT（不是 UNKNOWN），零恢复 POST",
+        "H1-T03b gate 返回无法识别的形状：fail-closed，零恢复 POST",
+        "H1-T06 最终裁决内部抛异常：预留正常释放，不遗留待核对"
+      ],
+      "verdict": "BITTEN",
+      "cleanAfterRestore": true
+    },
+    {
+      "id": "H1-B",
+      "what": "gate 异常不再转为 blocked，而是原样抛出（会被 Controller 当成 UNKNOWN）",
+      "file": "apps/shell/src/client/client-api.ts",
+      "shaBefore": "4825dfa764e7ac005b7e805956ab748e58bc9c04f85f97d46cc4c71490bd2b11",
+      "shaMutated": "f4ea22872e963e09643fb20eda5ad6c8c3be82dcbd2b3b2627a3e5cd7b868c93",
+      "shaAfterRestore": "4825dfa764e7ac005b7e805956ab748e58bc9c04f85f97d46cc4c71490bd2b11",
+      "mutationChangedBytes": true,
+      "restoreExact": true,
+      "failedTests": [
+        "H1-T03 gate 抛出异常：NOT_SENT（不是 UNKNOWN），零恢复 POST",
+        "H1-T06 最终裁决内部抛异常：预留正常释放，不遗留待核对"
+      ],
+      "verdict": "BITTEN",
+      "cleanAfterRestore": true
+    }
+  ]
+}

@@ -434,10 +434,12 @@ export interface TrashPort {
    * 恢复一条记录。
    *
    * `gate` 由编排层给出，传输层在"会话令牌到手、请求发出之前"**同步**调用一次
-   * （R1-01）。它不是"又一个早先的检查"，而是**最后一个**：返回不允许时零请求，
-   * 结果为 `NOT_SENT`。
+   * （R1-01）。它是**最后一个**门：返回不允许时零请求，结果为 `NOT_SENT`。
+   *
+   * **必填**（R1-H1-01）：可选参数会让"某个适配层忘了转发"变成一次无授权的真实恢复，
+   * 而那种漏传在运行时是完全静默的。实现方（含假端口）可以忽略它，但不能不接收。
    */
-  restore(projectId: string, opId: string, gate?: TrashSendGate): Promise<TrashActionOutcome>;
+  restore(projectId: string, opId: string, gate: TrashSendGate): Promise<TrashActionOutcome>;
   query(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
 }
 
