@@ -1,0 +1,21 @@
+=== typecheck ===
+> weavespace@0.0.0-p0 typecheck
+> tsc -p tsconfig.json
+
+=== typecheck:apps ===
+> tsc -p tsconfig.json
+
+
+> weavespace-server@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+=== build:shell ===
+computing gzip size...
+dist/index.html                   0.44 kB │ gzip:   0.33 kB
+dist/assets/index-BZQ0k3_1.css   23.51 kB │ gzip:   4.91 kB
+dist/assets/index-DFDaQQmf.js   451.81 kB │ gzip: 137.25 kB
+
+[32m✓ built in 1.24s[39m
+=== git diff --check ===
+warning: in the working copy of 'docs/evidence/ux-02c-03-p2-02-r1.2.1-r1/verify-browser.mjs', LF will be replaced by CRLF the next time Git touches it
+diff-check-exit=0

@@ -1,6 +1,24 @@
 import { newTab, ev, sleep, waitFor } from './cdp.mjs';
 import fs from 'node:fs';
 
+import { exitCodeFor, summarize } from './browser-verdict.mjs';
+
+/*
+ * 退出码只由**实际检查结果**决定（R2-04）：全部通过才 0，任一失败返回 1。
+ * 之前无条件 `process.exit(0)`，失败会被门禁误判为成功。
+ *
+ * `--self-test` / `--self-test-pass` 只跑判定逻辑本身（不连 Chrome），
+ * 供套件 99 验证"失败一定非零、通过一定为零"。
+ */
+if (process.argv.includes('--self-test') || process.argv.includes('--self-test-pass')) {
+  const synthetic = process.argv.includes('--self-test-pass')
+    ? { '合成-通过-1': true, '合成-通过-2': true }
+    : { '合成-通过': true, '合成-失败': false };
+  const verdict = summarize(synthetic);
+  console.log(JSON.stringify({ ...verdict, exitCode: exitCodeFor(verdict.failed) }));
+  process.exit(exitCodeFor(verdict.failed));
+}
+
 const APP = 'http://127.0.0.1:5278/';
 const KEY = 'ws:trash-pending:v1';
 const OP = 'op-r121r1-0001';
@@ -235,8 +253,8 @@ console.log('场景 D：exists 与镜像');
   await close(B);
 }
 
-const failed = Object.entries(result.checks).filter(([, ok]) => !ok).map(([k]) => k);
-result.summary = { total: Object.keys(result.checks).length, passed: Object.keys(result.checks).length - failed.length, failed };
+const failed = summarize(result.checks).failed;
+result.summary = summarize(result.checks);
 console.log('\nSUMMARY', JSON.stringify(result.summary));
 fs.writeFileSync(OUT + 'browser-verification-raw.json', JSON.stringify(result, null, 2));
-process.exit(0);
+process.exit(exitCodeFor(failed));

@@ -1,0 +1,95 @@
+{
+  "baselineSha256": "377a2c9e44f5cc3299a6ffd392f8ad45aefd97faf46ed3d9d8de6ed7b2a014e8",
+  "results": [
+    {
+      "id": "A",
+      "desc": "删除独立持久化保护记录（persist 不再写保护记录）",
+      "mutatedSha": "836be2c6f017",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 3 - R2-A3 外部 removeItem 后重开页面：保护记录仍在 → invalidated，记录不丢",
+          "not ok 4 - R2-A4 外部 clear 后重开页面：仍保留待核对并保持失效",
+          "not ok 6 - R2-A6 保护记录写入失败：不得授权，也不许先写主台账",
+          "not ok 7 - R2-A7 主台账写入失败：不算授权，但保护记录保留（保守多拦一次）",
+          "not ok 14 - R2-C reserve：锁内发现主台账异常缺失 → 保留记录、失效、不可用、快照更新",
+          "not ok 15 - R2-C release：锁内发现主台账异常缺失 → 保留记录、失效、不可用、快照更新",
+          "not ok 16 - R2-C reconcile：锁内发现主台账异常缺失 → 保留记录、失效、不可用、快照更新"
+        ]
+      }
+    },
+    {
+      "id": "B",
+      "desc": "把事件 newValue 换成回读当前 localStorage",
+      "mutatedSha": "c6e037602f89",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 9 - R2-B1 事件必须使用自己的 newValue，不能回读当前（已变空的）localStorage"
+        ]
+      }
+    },
+    {
+      "id": "C",
+      "desc": "移除 invalidated 的 sticky 保护（外部事件可以继续改状态）",
+      "mutatedSha": "fb7829c6d8e7",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 10 - R2-B2 删除之后再收到旧的非空事件：不得解除失效，也不得改回可恢复"
+        ]
+      }
+    },
+    {
+      "id": "D",
+      "desc": "移除 release 的异常缺失保护",
+      "mutatedSha": "74ec3465dfbf",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 15 - R2-C release：锁内发现主台账异常缺失 → 保留记录、失效、不可用、快照更新"
+        ]
+      }
+    },
+    {
+      "id": "E",
+      "desc": "移除 reconcile 的异常缺失保护",
+      "mutatedSha": "77de4ee3a5a7",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 16 - R2-C reconcile：锁内发现主台账异常缺失 → 保留记录、失效、不可用、快照更新"
+        ]
+      }
+    },
+    {
+      "id": "F",
+      "desc": "保护记录写入失败仍然授权 POST",
+      "mutatedSha": "a1988e424c65",
+      "bitten": true,
+      "failures": {
+        "95": [],
+        "96": [],
+        "98": [],
+        "99": [
+          "not ok 6 - R2-A6 保护记录写入失败：不得授权，也不许先写主台账"
+        ]
+      }
+    }
+  ]
+}

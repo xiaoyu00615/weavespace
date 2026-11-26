@@ -1,0 +1,246 @@
+{
+  "run": "ux-02c-03-p2-02-r1.2.1-r2",
+  "baseline": "856fa02d193b73327ffa8fecc169ec6f943462e8",
+  "environment": {
+    "chrome": "Headless Chrome 158.0.8127.38（CDP 9336）",
+    "vite": "127.0.0.1:5278 → 代理 Host 127.0.0.1:5277",
+    "host": "托管 Multi（weavespace-test/p202-r121/store），项目 proj-a",
+    "storage": "真实 localStorage + 真实 IndexedDB（weavespace-trash-guard-v1）",
+    "locks": "真实 navigator.locks",
+    "network": "每个标签页 Fetch.enable 拦截 /api/trash/restore，计数并回 202 UNKNOWN",
+    "被测记录": "op-r121r1-0001（p.md，真实移入回收区）"
+  },
+  "summary": {
+    "total": 20,
+    "passed": 20,
+    "failed": []
+  },
+  "checks": {
+    "A 一次 UNKNOWN 恢复后两层都有 X": true,
+    "A 的保护记录（IndexedDB）里也有 X": true,
+    "B 打开时就同步到 X": true,
+    "B 收到 newValue=null 的删除事件": true,
+    "B 显示失效提示": true,
+    "失效标记已落到 B 的保护记录里": true,
+    "刷新后仍显示「待核对」（记录没丢）": true,
+    "刷新后仍是失效状态（恢复没有重新开放）": true,
+    "刷新后强制点击 → 0 次 POST": true,
+    "A 全程只有 1 次 POST（拦截回 202）": true,
+    "重新打开页面后仍显示「待核对」": true,
+    "重新打开页面后仍是失效状态": true,
+    "重新打开页面后强制点击 → 0 次 POST": true,
+    "主台账没有被自动重建": true,
+    "竞争之后 B 仍保留 X": true,
+    "竞争之后 B 进入失效（不会停在\"可恢复\"）": true,
+    "竞争之后强制点击 → 0 次 POST": true,
+    "竞争之后刷新仍「待核对」": true,
+    "保护记录不可用时明确关闭恢复": true,
+    "保护记录不可用时强制点击 → 0 次 POST": true
+  },
+  "detail": {
+    "A 一次 UNKNOWN 恢复后两层都有 X": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-a\",\"opId\":\"op-r121r1-0001\",\"createdAt\":\"2026-11-26T00:44:34.486Z\"}]}",
+    "A 的保护记录（IndexedDB）里也有 X": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "projectId": "proj-a",
+          "opId": "op-r121r1-0001",
+          "createdAt": "2026-11-26T00:44:34.486Z"
+        }
+      ],
+      "invalidated": false
+    },
+    "B 打开时就同步到 X": {
+      "name": "p.md",
+      "badge": "待核对",
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "B 收到 newValue=null 的删除事件": [
+      {
+        "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:workspace:v1:last",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:trash-pending:v1",
+        "newValue": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574"
+      },
+      {
+        "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:workspace:v1:last",
+        "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+      },
+      {
+        "key": "ws:trash-pending:v1",
+        "newValue": null
+      }
+    ],
+    "B 显示失效提示": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+    "失效标记已落到 B 的保护记录里": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "projectId": "proj-a",
+          "opId": "op-r121r1-0001",
+          "createdAt": "2026-11-26T00:44:34.486Z"
+        }
+      ],
+      "invalidated": true
+    },
+    "刷新后仍显示「待核对」（记录没丢）": {
+      "name": "p.md",
+      "badge": "待核对",
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "刷新后仍是失效状态（恢复没有重新开放）": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+    "刷新后强制点击 → 0 次 POST": 0,
+    "A 全程只有 1 次 POST（拦截回 202）": 1,
+    "scenarioA": {
+      "ledger": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf\",\"projectId\":\"proj-a\",\"opId\":\"op-r121r1-0001\",\"createdAt\":\"2026-11-26T00:44:34.486Z\"}]}",
+      "guard": {
+        "version": 1,
+        "records": [
+          {
+            "workspaceKey": "c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+            "projectId": "proj-a",
+            "opId": "op-r121r1-0001",
+            "createdAt": "2026-11-26T00:44:34.486Z"
+          }
+        ],
+        "invalidated": false
+      },
+      "eventsB": [
+        {
+          "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:workspace:v1:last",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:trash-pending:v1",
+          "newValue": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574"
+        },
+        {
+          "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:workspace:v1:last",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:trash-pending:v1",
+          "newValue": null
+        }
+      ],
+      "blockedAfterReload": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+      "rowAfterReload": {
+        "name": "p.md",
+        "badge": "待核对",
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "posts": 0
+    },
+    "重新打开页面后仍显示「待核对」": {
+      "name": "p.md",
+      "badge": "待核对",
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "重新打开页面后仍是失效状态": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+    "重新打开页面后强制点击 → 0 次 POST": 0,
+    "主台账没有被自动重建": null,
+    "scenarioB": {
+      "posts": 0,
+      "blockedC": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+      "rowC": {
+        "name": "p.md",
+        "badge": "待核对",
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "ledger": null
+    },
+    "竞争之后 B 仍保留 X": {
+      "name": "p.md",
+      "badge": "待核对",
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "竞争之后 B 进入失效（不会停在\"可恢复\"）": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+    "竞争之后强制点击 → 0 次 POST": 0,
+    "竞争之后刷新仍「待核对」": {
+      "name": "p.md",
+      "badge": "待核对",
+      "buttonDisabled": true,
+      "rowCount": 4
+    },
+    "scenarioC": {
+      "events": [
+        {
+          "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:workspace:v1:last",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:trash-pending:v1",
+          "newValue": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574"
+        },
+        {
+          "key": "ws:workspace:v1:record:c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d41dc25d836e6bf",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:workspace:v1:last",
+          "newValue": "{\"version\":1,\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574df8589f620d4"
+        },
+        {
+          "key": "ws:trash-pending:v1",
+          "newValue": "{\"version\":1,\"records\":[{\"workspaceKey\":\"c258c9280dc3d207c2c8f62ef46cdd38c58b574"
+        },
+        {
+          "key": "ws:trash-pending:v1",
+          "newValue": null
+        }
+      ],
+      "rowAfter": {
+        "name": "p.md",
+        "badge": "待核对",
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "blocked": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+      "rowReload": {
+        "name": "p.md",
+        "badge": "待核对",
+        "buttonDisabled": true,
+        "rowCount": 4
+      },
+      "posts": 0,
+      "upstream": 1
+    },
+    "保护记录不可用时明确关闭恢复": "本机存储不可用，无法记录「待核对」状态；为避免重复恢复，回收区的恢复操作暂时关闭。",
+    "保护记录不可用时强制点击 → 0 次 POST": 0,
+    "scenarioD": {
+      "blocked": "本机存储不可用，无法记录「待核对」状态；为避免重复恢复，回收区的恢复操作暂时关闭。",
+      "posts": 0,
+      "upstream": 1
+    }
+  }
+}

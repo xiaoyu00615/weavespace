@@ -46,6 +46,7 @@ import {
   readTrashLedger,
   type LockManagerLike,
 } from './trash-ledger.ts';
+import { createIndexedDbGuardStorage } from './trash-ledger-guard.ts';
 import type { StorageLike } from './workspace-persistence.ts';
 import { useWorkspace } from './WorkspaceContext.tsx';
 import type { ClientMode, WorkspaceAction } from './types.ts';
@@ -144,9 +145,17 @@ export function TrashProvider({ children }: { children: ReactNode }) {
         : ((navigator as Navigator & { locks?: LockManagerLike }).locks ?? null);
     return createWebLockCoordination(locks);
   }, []);
+  /**
+   * 独立持久化保护记录（R2-01）。
+   *
+   * 主台账在 `localStorage` 里，任何页面都能把它删掉；删掉之后读回来与"首次使用"
+   * 完全同形。保护记录放在 IndexedDB：它先于任何授权写入，外部删除动不到它，
+   * 刷新页面后靠它把"这条 UNKNOWN 还没结论"重新认出来。
+   */
+  const guardStorage = useMemo(() => createIndexedDbGuardStorage(), []);
   const ledgerStore = useMemo(
-    () => createTrashLedgerStore(storage, ledgerRead, coordination),
-    [storage, ledgerRead, coordination],
+    () => createTrashLedgerStore(storage, ledgerRead, coordination, { guard: guardStorage }),
+    [storage, ledgerRead, coordination, guardStorage],
   );
   /**
    * 界面镜像 = store 快照（R1.2.1-R1）。

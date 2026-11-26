@@ -36,6 +36,7 @@
  *   发布一次快照，否则"锁内重读拿到了别的页面的记录、界面却还显示可恢复"。
  */
 import type { TrashEntryDto } from '../client/client-api.ts';
+import type { TrashGuardRecord, TrashGuardStorage } from './trash-ledger-guard.ts';
 import { TRASH_TERMINAL_STATES } from './types.ts';
 import type { StorageLike } from './workspace-persistence.ts';
 
@@ -103,7 +104,14 @@ export interface TrashPendingRecord {
  * （前者要核对已有记录，后者要处理存储本身）。放在同一个枚举里，是为了让
  * "能不能恢复"只有一个判断入口。
  */
-export type TrashLedgerStatus = 'ok' | 'full' | 'corrupt' | 'unavailable' | 'invalidated';
+export type TrashLedgerStatus =
+  | 'ok'
+  | 'full'
+  | 'corrupt'
+  | 'unavailable'
+  | 'invalidated'
+  /** 保护记录（IndexedDB）还没读完：此时一律按"不能恢复"处理（R2-01）。 */
+  | 'initializing';
 
 export type TrashLedgerRead =
   | { readonly status: 'ok'; readonly records: readonly TrashPendingRecord[] }
@@ -127,6 +135,9 @@ export function trashLedgerBlockMessage(status: TrashLedgerStatus): string | nul
      */
     return '本机的「待核对」记录已损坏，无法确认哪些恢复还没有结论；为避免重复恢复，回收区的恢复操作暂时关闭。请不要重置或删除本站数据（会连同这条保护一起删除），等待后续的核对与修复流程。';
   }
+  if (status === 'initializing') {
+    return '正在确认本机「待核对」保护记录，回收区的恢复操作暂时关闭（通常只需几十毫秒）。';
+  }
   if (status === 'invalidated') {
     /*
      * R1.2.1-R1：本页打开期间台账被另一个页面删除或清空。
@@ -146,7 +157,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function parseRecord(raw: unknown): TrashPendingRecord | null {
+export function parseTrashPendingRecord(raw: unknown): TrashPendingRecord | null {
   const row = asRecord(raw);
   if (!row) return null;
   const { workspaceKey, projectId, opId, createdAt } = row;
@@ -175,6 +186,16 @@ export function readTrashLedger(storage: StorageLike | null): TrashLedgerRead {
   } catch {
     return { status: 'unavailable' };
   }
+  return parseTrashLedgerValue(raw);
+}
+
+/**
+ * 解析"给定的一份台账文本"（R2-02）。
+ *
+ * `storage` 事件必须用它来读**事件自己的 newValue**：事件排队期间持久层可能已经
+ * 又被改过一次，回读当前值就会把"先写后删"里的那次写入读成空台账，从而丢掉 UNKNOWN。
+ */
+export function parseTrashLedgerValue(raw: string | null): TrashLedgerRead {
   if (raw === null) return { status: 'ok', records: [] };
   // 读与写用同一把尺子：按 UTF-8 实际字节，而不是字符串长度
   if (byteLengthOf(raw) > MAX_TRASH_LEDGER_BYTES) return { status: 'corrupt' };
@@ -192,7 +213,7 @@ export function readTrashLedger(storage: StorageLike | null): TrashLedgerRead {
   const records: TrashPendingRecord[] = [];
   const seen = new Set<string>();
   for (const item of body.records) {
-    const record = parseRecord(item);
+    const record = parseTrashPendingRecord(item);
     // 一条非法就整份判损坏：静默丢掉"看不懂的那条"等于把它重新开放
     if (!record) return { status: 'corrupt' };
     const key = recordKey(record);
@@ -461,7 +482,20 @@ export interface TrashLedgerSnapshot {
   readonly version: number;
 }
 
+/**
+ * store 的可选装配（R2-01）。
+ *
+ * `guard` 是**独立于 localStorage** 的保护记录（浏览器里是 IndexedDB）。
+ * 不传 = 退回 R1 的单层行为：只有主台账，外部删除后刷新就无从判断。
+ * 生产装配必须传；只有"这一层已经被别处证明"的单元测试才允许省略。
+ */
+export interface TrashLedgerStoreOptions {
+  readonly guard?: TrashGuardStorage;
+}
+
 export interface TrashLedgerStore {
+  /** 等保护记录初始化完成（没传 guard 时立即完成）。 */
+  ready(): Promise<void>;
   /** 当前状态（含容量用尽 / 无协调能力 / 被外部删除）。 */
   status(): TrashLedgerStatus;
   records(): readonly TrashPendingRecord[];
@@ -471,7 +505,7 @@ export interface TrashLedgerStore {
   subscribe(listener: () => void): () => void;
   /** 非空 = 此刻不能恢复；文案已可直接展示。 */
   blockMessage(): string | null;
-  /** 本页的保护是否已被外部删除 / 清空锁死（本页生命周期内不解除）。 */
+  /** 本页的保护是否已被外部删除 / 清空锁死（写进保护记录后跨刷新也不解除）。 */
   isInvalidated(): boolean;
   /**
    * 处理一个 `storage` 事件（R1.2.1-R1）。
@@ -506,33 +540,33 @@ export interface TrashLedgerStore {
 /**
  * 建一个台账 store。
  *
- * 纪律（R1.2 / R1.2.1 / R1.2.1-R1）：
- * 1. **每次读改写都在锁内重新读取 localStorage**：本地 `current` 可能已经被别的
- *    标签页写旧了，拿它做判断会覆盖别人的记录；
- * 2. 只有写盘成功才更新镜像并返回 `reserved`；
- * 3. 读失败（corrupt / unavailable）时**永不写盘**：原字节留着才有机会修复，
- *    同时**保留**内存里已经掌握的记录（丢掉它们等于放开保护）；
- * 4. 没有跨标签页协调能力 → `status()` 为 `unavailable`，一切写操作都拒绝；
- * 5. 被外部删除 / 清空 → `invalidated`，本页生命周期内不再解除，也不重建；
- * 6. 每次操作结束都 `publish()` 一次：界面是订阅者，不是"成功分支的副产品"。
+ * 纪律（R1.2 / R1.2.1 / R1.2.1-R1 / R2）：
+ * 1. **每次读改写都在锁内重新读取**：本地 `current` 可能已经被别的标签页写旧了；
+ * 2. 传了 `guard`（独立保护记录）时，**先写保护记录、再写主台账**，
+ *    两者都成功才可能授权 POST；
+ * 3. 保护记录说"还有待核对"，而主台账却读成空 → 这不是"首次使用"，是**被删掉了**：
+ *    进入 `invalidated`，保留记录、不写盘、不重建；
+ * 4. 保护记录读不出来 → `unavailable`（fail-closed），绝不退回单层写法；
+ * 5. 读失败（corrupt / unavailable）时永不写盘，但**保留**内存里已知的记录；
+ * 6. 每次操作结束都 `publish()`：界面是订阅者，不是"成功分支的副产品"。
  */
 export function createTrashLedgerStore(
   storage: StorageLike | null,
   initial: TrashLedgerRead,
   coordination: TrashLedgerCoordination,
+  options: TrashLedgerStoreOptions = {},
 ): TrashLedgerStore {
+  const guard = options.guard ?? null;
   let readStatus: TrashLedgerStatus = coordination.supported ? initial.status : 'unavailable';
   let current: readonly TrashPendingRecord[] = initial.status === 'ok' ? initial.records : [];
-  /**
-   * 页面级失效保护（R1.2.1-R1）。
-   *
-   * 一旦为 true，本页不再跟随持久层（否则别的页面写一份"空台账"就能解除保护），
-   * 所有写操作拒绝，内存记录原样保留。只有刷新页面才会重建 store。
-   */
+  /** 页面级失效（R1.2.1-R1 / R2-01）：一旦为 true，本页不再跟随持久层，写操作全关。 */
   let invalidated = false;
+  /** 保护记录是否已经读过（没有保护记录时视为立即就绪）。 */
+  let guardReady = guard === null;
 
   const status = (): TrashLedgerStatus => {
     if (!coordination.supported) return 'unavailable';
+    if (!guardReady) return 'initializing';
     if (invalidated) return 'invalidated';
     if (readStatus !== 'ok') return readStatus;
     return current.length >= MAX_TRASH_PENDING ? 'full' : 'ok';
@@ -547,6 +581,22 @@ export function createTrashLedgerStore(
   const signatureOf = (records: readonly TrashPendingRecord[]): string =>
     records.map((record) => recordKey(record)).join('|');
 
+  /**
+   * 合并两组记录，**只增不减**。
+   *
+   * 用于"外部写入"与"保护记录读取"：任何一层说某条还没结论，就不能因为另一层没有
+   * 它就当作已经结清。结清只有一条合法路径：`release` / `reconcile` 拿到结论后
+   * 显式移除，并把两层都写成新的集合。
+   */
+  const unionRecords = (
+    base: readonly TrashPendingRecord[],
+    extra: readonly TrashPendingRecord[],
+  ): readonly TrashPendingRecord[] => {
+    const seen = new Set(base.map((record) => recordKey(record)));
+    const added = extra.filter((record) => !seen.has(recordKey(record)));
+    return added.length === 0 ? base : [...base, ...added];
+  };
+
   let version = 0;
   let publishedStatus: TrashLedgerStatus = status();
   let publishedSignature = signatureOf(current);
@@ -558,12 +608,6 @@ export function createTrashLedgerStore(
   };
   const listeners = new Set<() => void>();
 
-  /**
-   * 发布快照：**状态或记录**任一变化都算变化，并同步通知订阅者。
-   *
-   * 只比记录签名是不够的（R1.2.1-R1）：`ok → corrupt`、`ok → invalidated` 时
-   * 记录集合可能完全没变，但界面必须立刻显示"恢复已关闭"。
-   */
   const publish = (): boolean => {
     const nextStatus = status();
     const nextSignature = signatureOf(current);
@@ -572,7 +616,6 @@ export function createTrashLedgerStore(
     publishedSignature = nextSignature;
     version += 1;
     snapshotCache = { status: nextStatus, records: current, blockMessage: blockMessageText(), version };
-    // 订阅者只允许读快照；任何一个抛错都不能影响 store 自身的一致性
     for (const listener of listeners) {
       try {
         listener();
@@ -584,33 +627,156 @@ export function createTrashLedgerStore(
   };
 
   /**
-   * 锁内：从存储重新读一遍，把镜像同步成最新。
+   * 把"失效"写进保护记录（尽力而为）。
    *
-   * `keepKnownWhenEmptied` 只给 `reserve` 用：持久层突然变成"空台账"，而本页明明
-   * 还知道有待核对记录——这不是首次使用，几乎只能是"外部刚删掉、事件还没送达"。
-   * 此时不采纳这个空集合（保留内存记录、拒绝写入），否则本次预留会把已知记录
-   * 从磁盘上抹掉。`release` / `reconcile` 不启用它：它们本来就是"拿结论换记录"，
-   * 采纳空集合是正确的（另一页面已把所有记录都结清）。
+   * 即使这一笔失败，下次启动仍会由"保护记录里有记录、主台账却是空"重新判出失效，
+   * 所以这里是加固而不是唯一依据；失败不打断当前操作，也绝不把失效改成正常。
    */
-  const reload = (options?: { keepKnownWhenEmptied?: boolean }): { read: TrashLedgerRead; lossDetected: boolean } => {
-    const before = current;
-    const fresh = readTrashLedger(storage);
-    readStatus = fresh.status;
-    // 读不懂 / 读不到：保留内存记录，交给调用方 fail-closed
-    if (fresh.status !== 'ok') return { read: fresh, lossDetected: false };
-    if (options?.keepKnownWhenEmptied && fresh.records.length === 0 && before.length > 0) {
-      return { read: fresh, lossDetected: true };
+  const writeInvalidation = async (): Promise<void> => {
+    if (!guard) return;
+    try {
+      await guard.write({ version: 1, records: current, invalidated: true });
+    } catch {
+      // 忽略：内存标记已经生效，下一次写操作会再试
     }
-    current = fresh.records;
-    return { read: fresh, lossDetected: false };
+  };
+  const persistInvalidation = async (): Promise<void> => {
+    if (!guard) return;
+    try {
+      // 锁是不可重入的：这里在锁外，可以自己取锁
+      await coordination.runExclusive(() => writeInvalidation());
+    } catch {
+      // 忽略：同上
+    }
   };
 
-  /** 采纳持久层内容（`refresh` / 外部写入共用）；不写盘。 */
-  const adoptFromStorage = (): boolean => {
-    if (!coordination.supported || invalidated) return false;
-    reload();
-    return publish();
+  /** 两层都写：保护记录先，主台账后；任一失败都不算"已保护"。 */
+  const persist = async (next: readonly TrashPendingRecord[]): Promise<boolean> => {
+    // 超过容量绝不写盘：写进去下次读会被判 corrupt，等于把所有人一起锁死
+    if (next.length > MAX_TRASH_PENDING) return false;
+    if (guard) {
+      if (!(await guard.write({ version: 1, records: next, invalidated }))) return false;
+    }
+    return writeTrashLedger(storage, next);
   };
+
+  /**
+   * 初始化：读保护记录，并与主台账对账（R2-01）。
+   *
+   * 规则就是任务书那张表：
+   * - 两层都没有 → 首次使用，写一份空保护记录；
+   * - 主台账有、保护记录没有 → **迁移**（R1 升级），一条都不许丢；
+   * - 保护记录有记录、主台账却是空/缺失 → 被外部删掉了 → `invalidated`；
+   * - 主台账损坏 → 保持 fail-closed，只把保护记录里的记录读进内存；
+   * - 保护记录读不出来 → `unavailable`。
+   */
+  const initFromGuard = async (): Promise<void> => {
+    try {
+      await coordination.runExclusive(async () => {
+        const main = readTrashLedger(storage);
+        readStatus = main.status;
+        let record: TrashGuardRecord | null;
+        try {
+          record = await guard!.read();
+        } catch {
+          readStatus = 'unavailable';
+          return;
+        }
+        if (!record) {
+          // 首次使用（或 R1 台账）：把当前已知记录迁进保护记录
+          if (readStatus !== 'ok') return;
+          const ok = await guard!.write({ version: 1, records: current, invalidated: false });
+          if (!ok) readStatus = 'unavailable';
+          return;
+        }
+        if (record.invalidated) invalidated = true;
+        const mainRecords = main.status === 'ok' ? main.records : current;
+        current = unionRecords(mainRecords, record.records);
+        if (main.status === 'ok' && main.records.length === 0 && current.length > 0) {
+          // 保护记录里还有待核对，主台账却是空的：被删掉了，不是"首次使用"
+          invalidated = true;
+          if (!record.invalidated) {
+            await guard!.write({ version: 1, records: current, invalidated: true });
+          }
+        }
+      });
+    } catch {
+      readStatus = 'unavailable';
+    } finally {
+      guardReady = true;
+      publish();
+    }
+  };
+
+  let readyPromise: Promise<void> | null = null;
+  const ensureReady = (): Promise<void> => {
+    if (!guard) return Promise.resolve();
+    if (!readyPromise) readyPromise = initFromGuard();
+    return readyPromise;
+  };
+
+  /**
+   * 锁内对账两层（所有写操作的公共前置）。
+   *
+   * 返回 false 表示"此刻无法证明安全"：读不到、读坏了、或者发现异常缺失。
+   * **异常缺失**（保护记录里还有记录、主台账却是空）会当场落到 `invalidated`，
+   * 这是 R2-03 要求的统一规则：三个写路径一视同仁。
+   */
+  const syncFromLayers = async (): Promise<boolean> => {
+    /** null = 没有独立保护记录（单层模式）；否则就是保护记录里的记录。 */
+    let guardRecords: readonly TrashPendingRecord[] | null = null;
+    if (guard) {
+      let record: TrashGuardRecord | null;
+      try {
+        record = await guard.read();
+      } catch {
+        return false;
+      }
+      if (record) {
+        if (record.invalidated) invalidated = true;
+        guardRecords = record.records;
+      } else {
+        // 保护记录还没有（R1 升级途中 / 被别人清掉）：不构成"缺失"的证据
+        guardRecords = [];
+      }
+    }
+
+    const main = readTrashLedger(storage);
+    readStatus = main.status;
+    if (main.status !== 'ok') return false;
+
+    if (guardRecords !== null) {
+      if (main.records.length === 0 && guardRecords.length === 0 && current.length > 0) {
+        /*
+         * 两层都空，本页却还记着：这是**另一页面正常结清**（它把两层都写成了空）。
+         * 与"被删除"的区别就在这里——删除动不到保护记录。
+         */
+        current = [];
+        return true;
+      }
+      if (main.records.length === 0 && guardRecords.length > 0) {
+        // 保护记录里还有待核对，主台账却是空：异常缺失
+        invalidated = true;
+        current = unionRecords(current, guardRecords);
+        await writeInvalidation();
+        return false;
+      }
+      current = unionRecords(main.records, guardRecords);
+      return true;
+    }
+
+    // 单层模式（R1 兼容）：主台账就是唯一真相
+    if (main.records.length === 0 && current.length > 0) {
+      invalidated = true;
+      await writeInvalidation();
+      return false;
+    }
+    current = main.records;
+    return true;
+  };
+
+  // 自动开始初始化：Provider 不必记得调用，守卫就绪时会自己 publish 一次
+  void ensureReady();
 
   return {
     status,
@@ -618,6 +784,7 @@ export function createTrashLedgerStore(
     snapshot: () => snapshotCache,
     blockMessage: blockMessageText,
     isInvalidated: () => invalidated,
+    ready: ensureReady,
 
     subscribe(listener) {
       listeners.add(listener);
@@ -626,79 +793,83 @@ export function createTrashLedgerStore(
       };
     },
 
-    refresh: adoptFromStorage,
-
+    /**
+     * 外部 `storage` 事件（R1.2.1-R1 / R2-02）。
+     *
+     * **只用事件自己携带的 `newValue`**：事件排队期间持久层可能又被改过一次，
+     * 回读当前值会把"先写入"读成"已经删除"，从而先清空内存再进入失效。
+     */
     applyExternalEvent(event) {
-      // 无关 key：本模块不认，也不该因为别的模块的清理而关闭恢复
       if (event.key !== null && event.key !== TRASH_LEDGER_KEY) return false;
       if (!coordination.supported) return false;
-      /*
-       * 失效已经是本页的最终结论：后续任何事件（包括"又写了一份合法空台账"）
-       * 都不得解除它。否则别的页面先删再建就能把保护洗白。
-       */
       if (invalidated) return false;
       if (event.key === null || event.newValue === null) {
-        /*
-         * `removeItem`（newValue === null）与 `localStorage.clear()`（key === null）。
-         *
-         * **不**把 current 换成空数组、**不**重建台账：那条记录背后是一次可能
-         * 已经动过盘的恢复，磁盘上没了不等于可以再恢复一次。
-         */
         invalidated = true;
+        void persistInvalidation();
         return publish();
       }
-      // 外部写入：可能是别的页面的正常追加，也可能是坏数据（readTrashLedger 判 corrupt）
-      return adoptFromStorage();
+      const parsed = parseTrashLedgerValue(event.newValue);
+      if (parsed.status !== 'ok') {
+        readStatus = parsed.status;
+        return publish();
+      }
+      readStatus = 'ok';
+      // 外部写入只做并集：别的页面少了一条，不能当成"已经结清"
+      current = unionRecords(current, parsed.records);
+      return publish();
+    },
+
+    refresh() {
+      if (!coordination.supported || invalidated) return false;
+      const parsed = readTrashLedger(storage);
+      readStatus = parsed.status;
+      if (parsed.status === 'ok') {
+        if (parsed.records.length === 0 && current.length > 0) {
+          invalidated = true;
+          void persistInvalidation();
+          return publish();
+        }
+        current = unionRecords(current, parsed.records);
+      }
+      return publish();
     },
 
     async reserve(record) {
-      if (!coordination.supported || invalidated) return { status: 'unavailable' };
-      // 写进去就读不回来的记录（键 / 时间格式非法）一律拒绝：否则下次启动会整份判 corrupt
-      if (!parseRecord(record)) return { status: 'invalid' };
+      if (!coordination.supported) return { status: 'unavailable' };
+      if (!parseTrashPendingRecord(record)) return { status: 'invalid' };
+      await ensureReady();
+      if (invalidated) return { status: 'unavailable' };
       let outcome: TrashReserveOutcome;
       try {
-        outcome = await coordination.runExclusive((): TrashReserveOutcome => {
-          // 排队等锁期间可能已经被别的页面删掉 / 清空
+        outcome = await coordination.runExclusive(async (): Promise<TrashReserveOutcome> => {
           if (invalidated) return { status: 'unavailable' };
-          // 锁内重读：别的标签页可能刚写过，本地镜像不可信
-          const { read, lossDetected } = reload({ keepKnownWhenEmptied: true });
-          if (lossDetected || read.status !== 'ok') return { status: 'unavailable' };
+          if (!(await syncFromLayers())) return { status: 'unavailable' };
           const result = reserveTrashPending(current, record);
-          /*
-           * `exists` 必须原样返回。调用方（Provider）会把它翻成"拒绝"：
-           * 同一个 opId 已经有一次没有结论的恢复，再发一次就是重复副作用。
-           * 注意此时 `current` 已经被锁内重读更新成别的页面写的那一份——
-           * 所以下面无论哪种结果都要 publish()。
-           */
           if (result.status === 'exists') return { status: 'exists' };
           if (result.status === 'full') return { status: 'full' };
-          if (!writeTrashLedger(storage, result.records)) return { status: 'write-failed' };
+          if (!(await persist(result.records))) return { status: 'write-failed' };
           current = result.records;
           return { status: 'reserved' };
         });
       } catch {
         outcome = { status: 'unavailable' };
       }
-      // 无论结论是什么，Store 可能已经因为锁内重读而变化：必须让界面跟上
       publish();
       return outcome;
     },
 
     async release(target) {
-      if (!coordination.supported || invalidated) return { status: 'unavailable' };
+      if (!coordination.supported) return { status: 'unavailable' };
+      await ensureReady();
+      if (invalidated) return { status: 'unavailable' };
       let outcome: TrashMutationOutcome;
       try {
-        outcome = await coordination.runExclusive((): TrashMutationOutcome => {
+        outcome = await coordination.runExclusive(async (): Promise<TrashMutationOutcome> => {
           if (invalidated) return { status: 'unavailable' };
-          const { read } = reload();
-          if (read.status !== 'ok') return { status: 'unavailable' };
+          if (!(await syncFromLayers())) return { status: 'unavailable' };
           const next = removeTrashPending(current, target);
           if (next === current) return { status: 'unchanged' };
-          /*
-           * 释放的失败语义与预留不同：这里是"结论已经有了"（终态 / 明确拒绝），
-           * 内存解除是安全的；落盘失败只会让重启后多拦一次，方向安全。
-           */
-          if (!writeTrashLedger(storage, next)) return { status: 'write-failed' };
+          if (!(await persist(next))) return { status: 'write-failed' };
           current = next;
           return { status: 'changed' };
         });
@@ -710,16 +881,17 @@ export function createTrashLedgerStore(
     },
 
     async reconcile(input) {
-      if (!coordination.supported || invalidated) return { status: 'unavailable' };
+      if (!coordination.supported) return { status: 'unavailable' };
+      await ensureReady();
+      if (invalidated) return { status: 'unavailable' };
       let outcome: TrashMutationOutcome;
       try {
-        outcome = await coordination.runExclusive((): TrashMutationOutcome => {
+        outcome = await coordination.runExclusive(async (): Promise<TrashMutationOutcome> => {
           if (invalidated) return { status: 'unavailable' };
-          const { read } = reload();
-          if (read.status !== 'ok') return { status: 'unavailable' };
+          if (!(await syncFromLayers())) return { status: 'unavailable' };
           const next = reconcileTrashPending(current, input);
           if (next === current) return { status: 'unchanged' };
-          if (!writeTrashLedger(storage, next)) return { status: 'write-failed' };
+          if (!(await persist(next))) return { status: 'write-failed' };
           current = next;
           return { status: 'changed' };
         });
