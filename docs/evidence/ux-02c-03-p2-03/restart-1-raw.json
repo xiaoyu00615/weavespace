@@ -1,0 +1,29 @@
+{
+  "run": "ux-02c-03-p2-03-restart-1",
+  "at": "2026-11-26T16:39:07.770Z",
+  "checks": {
+    "B6-1 回收成功且 Host 记录为 stored": true,
+    "B6-2 原文件已不在原位": true
+  },
+  "detail": {
+    "B6-1 回收成功且 Host 记录为 stored": {
+      "opId": "op-8e163742-bcba-4aa1-9ccf-ba1b9dc44b6a",
+      "path": "note.md",
+      "entryKind": "file",
+      "size": 23,
+      "deletedAt": "2026-11-26T16:39:17.227Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "phase1": {
+      "opId": "op-8e163742-bcba-4aa1-9ccf-ba1b9dc44b6a",
+      "hash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+    }
+  },
+  "injected": [],
+  "summary": {
+    "total": 2,
+    "passed": 2,
+    "failed": []
+  }
+}

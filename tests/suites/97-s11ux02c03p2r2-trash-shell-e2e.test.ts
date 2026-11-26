@@ -498,6 +498,7 @@ function playbackHost(client: WeaveSpaceClient, notices: string[]): PlaybackHost
         ? { ok: true as const }
         : { ok: false as const, message: `台账拒绝预留（${outcome.status}）` };
     },
+    verifyPending: (target) => store.verifyPending(target),
     releasePending: async (target) => {
       await store.release({ ...target, opIds: [target.opId] });
     },

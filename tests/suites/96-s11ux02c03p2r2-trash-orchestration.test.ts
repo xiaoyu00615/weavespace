@@ -107,6 +107,8 @@ interface Harness {
   gate(): string | null;
   /** 让下一次 reservePending 卡在 deferred 上（验证预留是异步的）。 */
   deferNextReserve(): { release(): void };
+  /** 预留成功之后、控制器发 POST 之前插一段同步动作（构造"授权后失效"）。 */
+  setAfterReserve(fn: (() => void) | null): void;
   /** 模拟 React 镜像：订阅 store 后保存的最后一份快照。 */
   mirror(): TrashLedgerSnapshot;
   /** 订阅者被通知了多少次。 */
@@ -159,6 +161,7 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
    * 与真实 React 的差别只有"何时重画"，"看到的是哪一版数据"完全一致。
    */
   let reserveGate: Promise<void> | null = null;
+  let afterReserve: (() => void) | null = null;
   let mirror = ledgerStore.snapshot();
   let mirrorUpdates = 0;
   ledgerStore.subscribe(() => {
@@ -244,7 +247,10 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
       }
       const outcome = await ledgerStore.reserve({ ...target, createdAt: '2026-11-24T00:00:00.000Z' });
       // 与 Provider 用同一个授权函数：只有 reserved 放行
-      if (trashReserveAuthorizes(outcome)) return { ok: true as const };
+      if (trashReserveAuthorizes(outcome)) {
+        afterReserve?.();
+        return { ok: true as const };
+      }
       if (outcome.status === 'exists') {
         return {
           ok: false as const,
@@ -263,6 +269,8 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
     releasePending: async (target) => {
       await ledgerStore.release({ ...target, opIds: [target.opId] });
     },
+    /** 与 Provider 同源：本次授权在发 POST 之前是否仍然成立。 */
+    verifyPending: (target) => ledgerStore.verifyPending(target),
     /**
      * 真实 Host 的发送前闸：live + multi + activeProjectId 一致 + 项目 READY。
      * 测试通过 `setProjectReady(false)` 模拟"项目此刻不可用"。
@@ -337,6 +345,9 @@ function makeHarness(port: Partial<TrashPort> = {}): Harness {
         release = resolve;
       });
       return { release: () => release() };
+    },
+    setAfterReserve(fn) {
+      afterReserve = fn;
     },
     seedExternally(records) {
       storage.setItem(TRASH_LEDGER_KEY, encodeTrashLedger(records));
@@ -1551,4 +1562,52 @@ test('P2-02-R2.1-04 预留恰好占满第 64 个位置：不得因为"满了"而
 
   assert.equal(result.status, 'stale', '不能退回成"台账已满"');
   assert.equal(h.calls.restore, 0);
+});
+
+/* ================================================================== */
+/* R2.1-A1 / A4：预留与发 POST 之间的一致性（P2-03 阶段 A）               */
+/* ================================================================== */
+
+test('P2-02-R2.1-A4 正常满仓前的最后一格：第 64 个位置允许一次真实 POST', async () => {
+  const h = makeHarness();
+  await h.prefillLedger(MAX_TRASH_PENDING - 1);
+  assert.equal(h.ledger().length, MAX_TRASH_PENDING - 1, '前提：已经占了 63 格');
+
+  const result = await h.controller.restore(PROJ, entry());
+
+  assert.equal(result.status, 'applied', '第 64 格是合法授权，必须真的发出去');
+  assert.equal(h.calls.restore, 1);
+  assert.equal(h.ledger().length, MAX_TRASH_PENDING, '这次预留把台账正好填满');
+});
+
+test('P2-02-R2.1-A4 第 65 个操作：台账已满 → 拒绝且零 POST', async () => {
+  const h = makeHarness();
+  await h.prefillLedger(MAX_TRASH_PENDING);
+  assert.equal(h.ledger().length, MAX_TRASH_PENDING);
+
+  const result = await h.controller.restore(PROJ, entry());
+
+  assert.equal(result.status, 'rejected');
+  assert.match((result as { message: string }).message, /已满/);
+  assert.equal(h.calls.restore, 0, '没有位置就一个请求都不发');
+  assert.equal(h.ledger().length, MAX_TRASH_PENDING);
+});
+
+test('P2-02-R2.1-A1 预留成功之后、发 POST 之前台账失效：零 POST，预留保守保留', async () => {
+  const h = makeHarness();
+  // 预留一成功就删台账（模拟另一个标签页在这段窗口里 removeItem）
+  h.setAfterReserve(() => {
+    h.externalDelete();
+  });
+
+  const result = await h.controller.restore(PROJ, entry());
+
+  assert.equal(result.status, 'rejected', '授权已经无效：不能发出去');
+  assert.equal(h.calls.restore, 0, '零副作用 POST');
+  assert.deepEqual(
+    h.ledger().map((record) => record.opId),
+    [OP],
+    '这条记录是"已经授权但没用上"的未知项：保守保留，不强行清除',
+  );
+  assert.equal(h.gate() !== null, true, '界面必须显示关闭原因');
 });

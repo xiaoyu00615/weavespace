@@ -1,0 +1,200 @@
+{
+  "run": "ux-02c-03-p2-03-tabs",
+  "at": "2026-11-26T16:37:51.165Z",
+  "checks": {
+    "B5-1 前提：A 把文件移入回收区": true,
+    "B5-2 两个标签页都看到这条可恢复记录": true,
+    "B5-3 并发恢复合计只发出一个 POST": true,
+    "B5-4 文件真的回到了原位置": true,
+    "B5-5 内容哈希与原始一致": true,
+    "B5-6 两个页面的台账都不再保留这条（先查这条，再谈整本是否为空）": true,
+    "B5-7 另一页刷新后收敛为「已恢复」，不会退回可恢复": true,
+    "B5-8 收敛后另一页也没有留下待核对": true,
+    "B5-9 前提：plain.txt 已在回收区": true,
+    "B5-10 磁盘未变：原位置仍为空": true,
+    "B5-11 Host 记录仍为 stored": true,
+    "B5-12 A 的台账保留了这条待核对": true,
+    "B5-13 A 的保护记录也有同一笔（跨刷新可用）": true,
+    "B5-14 B 同步到「待核对」": true,
+    "B5-15 B 重载后仍显示「待核对」": true,
+    "B5-16 B 的保护记录没有丢": true,
+    "B5-17 B 的台账也没有丢": true,
+    "B5-18 已在回收区准备好 64 条真实记录": true,
+    "B5-19 台账与保护记录都写到 64 条": true,
+    "B5-20 满仓时明确提示\"已满\"": true,
+    "B5-21 满仓时每一行都不能恢复": true,
+    "B5-22 一条记录取得终态后台账减到 63": true,
+    "B5-23 满仓提示消失": true,
+    "B5-24 容量释放后恢复按钮重新可用": true,
+    "B5-25 释放容量后真的能再恢复一条（真实磁盘）": true
+  },
+  "detail": {
+    "B5-1 前提：A 把文件移入回收区": {
+      "opId": "op-bbb3bfc8-4bec-410d-8205-ee69bdc9a333",
+      "path": "note.md",
+      "entryKind": "file",
+      "size": 23,
+      "deletedAt": "2026-11-26T16:38:04.257Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B5-2 两个标签页都看到这条可恢复记录": {
+      "rowA": {
+        "name": "note.md",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false
+      },
+      "rowB": {
+        "name": "note.md",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false
+      }
+    },
+    "B5-3 并发恢复合计只发出一个 POST": {
+      "a": 1,
+      "b": 0,
+      "urls": [
+        "http://127.0.0.1:5288/api/trash/restore"
+      ]
+    },
+    "B5-5 内容哈希与原始一致": {
+      "original": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+      "restored": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+    },
+    "B5-6 两个页面的台账都不再保留这条（先查这条，再谈整本是否为空）": {
+      "a": [],
+      "b": []
+    },
+    "B5-7 另一页刷新后收敛为「已恢复」，不会退回可恢复": {
+      "name": "note.md",
+      "badge": "已恢复",
+      "note": "文件已恢复到原位置。",
+      "hasButton": false,
+      "buttonDisabled": null
+    },
+    "B5-8 收敛后另一页也没有留下待核对": [],
+    "B5-9 前提：plain.txt 已在回收区": {
+      "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+      "path": "plain.txt",
+      "entryKind": "file",
+      "size": 28,
+      "deletedAt": "2026-11-26T16:38:18.089Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B5-12 A 的台账保留了这条待核对": [
+      {
+        "workspaceKey": "61abb6577ff47e5e5f3caee65d8a8821f8adc838df4dbce1e45c4dd160a74e58",
+        "projectId": "proj-a",
+        "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+        "createdAt": "2026-11-26T16:38:19.963Z"
+      }
+    ],
+    "B5-13 A 的保护记录也有同一笔（跨刷新可用）": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "61abb6577ff47e5e5f3caee65d8a8821f8adc838df4dbce1e45c4dd160a74e58",
+          "projectId": "proj-a",
+          "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+          "createdAt": "2026-11-26T16:38:19.963Z"
+        }
+      ],
+      "invalidated": false
+    },
+    "B5-14 B 同步到「待核对」": {
+      "name": "plain.txt",
+      "badge": "待核对",
+      "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+      "hasButton": true,
+      "buttonDisabled": true
+    },
+    "B5-15 B 重载后仍显示「待核对」": {
+      "name": "plain.txt",
+      "badge": "待核对",
+      "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+      "hasButton": true,
+      "buttonDisabled": true
+    },
+    "B5-16 B 的保护记录没有丢": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "61abb6577ff47e5e5f3caee65d8a8821f8adc838df4dbce1e45c4dd160a74e58",
+          "projectId": "proj-a",
+          "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+          "createdAt": "2026-11-26T16:38:19.963Z"
+        }
+      ],
+      "invalidated": false
+    },
+    "B5-17 B 的台账也没有丢": [
+      {
+        "workspaceKey": "61abb6577ff47e5e5f3caee65d8a8821f8adc838df4dbce1e45c4dd160a74e58",
+        "projectId": "proj-a",
+        "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+        "createdAt": "2026-11-26T16:38:19.963Z"
+      }
+    ],
+    "B5-2": {
+      "original": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "entry": "op-385cf0fe-d9c9-4145-8258-6b67038777b3"
+    },
+    "B5-18 已在回收区准备好 64 条真实记录": {
+      "created": 64,
+      "stored": 64
+    },
+    "B5-19 台账与保护记录都写到 64 条": 64,
+    "B5-20 满仓时明确提示\"已满\"": "本机的「待核对」记录已满（64 条），为避免再产生无法追踪的恢复，恢复操作暂时关闭。请先刷新回收区核对已有记录，等它们有了结论再试。",
+    "B5-21 满仓时每一行都不能恢复": [
+      {
+        "name": "bulk-63.txt",
+        "badge": "待核对",
+        "note": "暂时不能恢复：请先看回收区顶部的说明。",
+        "hasButton": true,
+        "buttonDisabled": true
+      },
+      {
+        "name": "bulk-62.txt",
+        "badge": "待核对",
+        "note": "暂时不能恢复：请先看回收区顶部的说明。",
+        "hasButton": true,
+        "buttonDisabled": true
+      },
+      {
+        "name": "bulk-61.txt",
+        "badge": "待核对",
+        "note": "暂时不能恢复：请先看回收区顶部的说明。",
+        "hasButton": true,
+        "buttonDisabled": true
+      }
+    ],
+    "B5-22 一条记录取得终态后台账减到 63": 63,
+    "B5-23 满仓提示消失": null,
+    "B5-24 容量释放后恢复按钮重新可用": {
+      "name": "plain.txt",
+      "badge": "可恢复",
+      "note": "文件在回收区里，可以恢复到原位置。",
+      "hasButton": true,
+      "buttonDisabled": false
+    },
+    "B5-25 释放容量后真的能再恢复一条（真实磁盘）": {
+      "restoredCount": 3
+    }
+  },
+  "injected": [
+    {
+      "check": "B5-2",
+      "how": "A 在 Request 阶段 failRequest（请求未到达 Host，磁盘不变）"
+    }
+  ],
+  "summary": {
+    "total": 25,
+    "passed": 25,
+    "failed": []
+  }
+}

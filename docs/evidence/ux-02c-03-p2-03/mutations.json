@@ -1,0 +1,80 @@
+{
+  "run": "ux-02c-03-p2-03",
+  "baselineSha256": "f7df22bf529bfdb8a9b714ed36a10a101077ceec1c85a1965a059a2f12734af1",
+  "results": [
+    {
+      "id": "A",
+      "desc": "异步读返回后不重新检查失效",
+      "mutatedSha": "150d8f434a1c",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "99": [
+          "not ok 26 - R2.1-A1 等 guard.read 期间收到外部删除：reserve 不得返回 reserved，也不得写主台账"
+        ]
+      }
+    },
+    {
+      "id": "B",
+      "desc": "persist 忽略失效仍写主台账",
+      "mutatedSha": "fff57843dce8",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "99": [
+          "not ok 27 - R2.1-A1 等 guard.write 期间收到外部删除：已落盘的保护记录保守保留，主台账不写",
+          "not ok 28 - R2.1-A1 保护记录已写、主台账未写时失效：不写主台账、不授权、记录留着"
+        ]
+      }
+    },
+    {
+      "id": "C",
+      "desc": "运行期读失败不更新状态",
+      "mutatedSha": "be5f493c69b5",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "99": [
+          "not ok 30 - R2.1-A2 运行期读取失败（不是首次初始化）：状态与快照都要变成 unavailable"
+        ]
+      }
+    },
+    {
+      "id": "D",
+      "desc": "失效合并后不发布快照",
+      "mutatedSha": "cdbcab583bfc",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "99": [
+          "not ok 31 - R2.1-A3 锁内合并失效记录后：snapshot 必须与 current 一起更新（不等下次事件）"
+        ]
+      }
+    },
+    {
+      "id": "E",
+      "desc": "verifyPending 把 full 当失效",
+      "mutatedSha": "56ba2092161f",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "96": [
+          "not ok 47 - P2-02-R1.2 恢复：63 条时两个并发恢复只有一个能发出请求",
+          "not ok 57 - P2-02-R2.1-A4 正常满仓前的最后一格：第 64 个位置允许一次真实 POST"
+        ]
+      }
+    },
+    {
+      "id": "F",
+      "desc": "verifyPending 恒真",
+      "mutatedSha": "2e33b211ec31",
+      "bitten": true,
+      "restored": true,
+      "failures": {
+        "96": [
+          "not ok 59 - P2-02-R2.1-A1 预留成功之后、发 POST 之前台账失效：零 POST，预留保守保留"
+        ]
+      }
+    }
+  ]
+}

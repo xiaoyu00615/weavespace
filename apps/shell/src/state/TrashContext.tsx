@@ -301,6 +301,14 @@ export function TrashProvider({ children }: { children: ReactNode }) {
           message: ledgerStore.blockMessage() ?? '本机的「待核对」台账当前不可用，已取消这次恢复。',
         };
       },
+      /**
+       * 发 POST 前的授权复核（R2.1-A1）。
+       *
+       * `reservePending` 与真正的 POST 之间隔着若干 await（锁、两层存储、身份闸），
+       * 本页可能已经因为外部删除 / 保护记录损坏而失效。这里读的是 store 的**当前**
+       * 状态，而不是预留时拿到的返回值——授权是会过期的。
+       */
+      verifyPending: (target) => ledgerStore.verifyPending(target),
       /** 只有明确零副作用（REJECTED）才走到这里；失败只降级提示，不回滚（结论仍然可靠）。 */
       releasePending: async (target) => {
         const outcome = await ledgerStore.release({

@@ -1,0 +1,1417 @@
+{
+  "run": "ux-02c-03-p2-03",
+  "baseline": "dfe5d8d09c70570c339332d793102a1478fbd387",
+  "at": "2026-11-26T16:45:05.859Z",
+  "environment": {
+    "chrome": "Headless Chrome 158.0.8127.38（CDP 9337，独立 Profile D:/tmp/p203-profile）",
+    "shell": "Vite 127.0.0.1:5288 → 代理 Host 127.0.0.1:5287",
+    "host": "真实 Host（node apps/server/src/main.ts --workspace-store weavespace-test/p203/store）",
+    "projects": "proj-a（项目A）、proj-b（项目B），均为真实目录 + 真实 rootToken",
+    "storage": "真实 localStorage + 真实 IndexedDB（weavespace-trash-guard-v1）+ 真实 navigator.locks",
+    "filesystem": "D:/Workspace/projects/weavespace-test/p203/{projA,projB}",
+    "network": "正常回收/恢复链路不拦截；POST 计数用 CDP Network.requestWillBeSent 观察"
+  },
+  "injected": [
+    {
+      "check": "B4 场景一",
+      "how": "CDP 在 Request 阶段 failRequest（请求未到达 Host）"
+    },
+    {
+      "check": "B4 场景二",
+      "how": "CDP 在 Response 阶段 failRequest（Host 已执行，回执丢失）"
+    },
+    {
+      "check": "B4 场景三",
+      "how": "CDP 把回执替换成 202 UNKNOWN（Host 未执行磁盘事务）"
+    },
+    {
+      "check": "B4 场景三",
+      "how": "CDP 让 GET /api/trash 返回 500（列表暂时无法刷新）"
+    },
+    {
+      "check": "B5-2",
+      "how": "A 在 Request 阶段 failRequest（请求未到达 Host，磁盘不变）"
+    },
+    {
+      "check": "B6-8",
+      "how": "CDP 在 Request 阶段 failRequest（请求未到达 Host）"
+    }
+  ],
+  "summary": {
+    "total": 184,
+    "passed": 184,
+    "failed": []
+  },
+  "parts": [
+    {
+      "name": "B2/B3 生命周期与安全保护",
+      "summary": {
+        "total": 114,
+        "passed": 114,
+        "failed": []
+      },
+      "checks": {
+        "B2-0 六个文件都在磁盘上且哈希已记录": true,
+        "B2-1 note.md 取消确认后对话框消失": true,
+        "B2-2 note.md 取消时磁盘零变化": true,
+        "B2-3 note.md 确认后被移入回收区": true,
+        "B2-4 note.md 原位置已消失": true,
+        "B2-5 note.md 文件树不再显示它": true,
+        "B2-6 note.md Host 记录为 stored": true,
+        "B2-7 note.md 回收区数量与列表同步": true,
+        "B2-8 note.md payload 与 manifest 都在磁盘上": true,
+        "B2-9 note.md payload 字节哈希与原始文件一致": true,
+        "B2-10 note.md 回收区显示「可恢复」": true,
+        "B2-11 note.md 恢复按钮可点击": true,
+        "B2-12 note.md 原位置重新出现": true,
+        "B2-13 note.md 恢复后内容哈希与原始一致": true,
+        "B2-14 note.md Host 记录为 restored": true,
+        "B2-15 note.md 回收区行变为「已恢复」且不再提供恢复": true,
+        "B2-16 note.md 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+        "B2-1 plain.txt 取消确认后对话框消失": true,
+        "B2-2 plain.txt 取消时磁盘零变化": true,
+        "B2-3 plain.txt 确认后被移入回收区": true,
+        "B2-4 plain.txt 原位置已消失": true,
+        "B2-5 plain.txt 文件树不再显示它": true,
+        "B2-6 plain.txt Host 记录为 stored": true,
+        "B2-7 plain.txt 回收区数量与列表同步": true,
+        "B2-8 plain.txt payload 与 manifest 都在磁盘上": true,
+        "B2-9 plain.txt payload 字节哈希与原始文件一致": true,
+        "B2-10 plain.txt 回收区显示「可恢复」": true,
+        "B2-11 plain.txt 恢复按钮可点击": true,
+        "B2-12 plain.txt 原位置重新出现": true,
+        "B2-13 plain.txt 恢复后内容哈希与原始一致": true,
+        "B2-14 plain.txt Host 记录为 restored": true,
+        "B2-15 plain.txt 回收区行变为「已恢复」且不再提供恢复": true,
+        "B2-16 plain.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+        "B2-1 blob.bin 取消确认后对话框消失": true,
+        "B2-2 blob.bin 取消时磁盘零变化": true,
+        "B2-3 blob.bin 确认后被移入回收区": true,
+        "B2-4 blob.bin 原位置已消失": true,
+        "B2-5 blob.bin 文件树不再显示它": true,
+        "B2-6 blob.bin Host 记录为 stored": true,
+        "B2-7 blob.bin 回收区数量与列表同步": true,
+        "B2-8 blob.bin payload 与 manifest 都在磁盘上": true,
+        "B2-9 blob.bin payload 字节哈希与原始文件一致": true,
+        "B2-10 blob.bin 回收区显示「可恢复」": true,
+        "B2-11 blob.bin 恢复按钮可点击": true,
+        "B2-12 blob.bin 原位置重新出现": true,
+        "B2-13 blob.bin 恢复后内容哈希与原始一致": true,
+        "B2-14 blob.bin Host 记录为 restored": true,
+        "B2-15 blob.bin 回收区行变为「已恢复」且不再提供恢复": true,
+        "B2-16 blob.bin 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+        "B2-1 中文名.txt 取消确认后对话框消失": true,
+        "B2-2 中文名.txt 取消时磁盘零变化": true,
+        "B2-3 中文名.txt 确认后被移入回收区": true,
+        "B2-4 中文名.txt 原位置已消失": true,
+        "B2-5 中文名.txt 文件树不再显示它": true,
+        "B2-6 中文名.txt Host 记录为 stored": true,
+        "B2-7 中文名.txt 回收区数量与列表同步": true,
+        "B2-8 中文名.txt payload 与 manifest 都在磁盘上": true,
+        "B2-9 中文名.txt payload 字节哈希与原始文件一致": true,
+        "B2-10 中文名.txt 回收区显示「可恢复」": true,
+        "B2-11 中文名.txt 恢复按钮可点击": true,
+        "B2-12 中文名.txt 原位置重新出现": true,
+        "B2-13 中文名.txt 恢复后内容哈希与原始一致": true,
+        "B2-14 中文名.txt Host 记录为 restored": true,
+        "B2-15 中文名.txt 回收区行变为「已恢复」且不再提供恢复": true,
+        "B2-16 中文名.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+        "B2-1 with space.txt 取消确认后对话框消失": true,
+        "B2-2 with space.txt 取消时磁盘零变化": true,
+        "B2-3 with space.txt 确认后被移入回收区": true,
+        "B2-4 with space.txt 原位置已消失": true,
+        "B2-5 with space.txt 文件树不再显示它": true,
+        "B2-6 with space.txt Host 记录为 stored": true,
+        "B2-7 with space.txt 回收区数量与列表同步": true,
+        "B2-8 with space.txt payload 与 manifest 都在磁盘上": true,
+        "B2-9 with space.txt payload 字节哈希与原始文件一致": true,
+        "B2-10 with space.txt 回收区显示「可恢复」": true,
+        "B2-11 with space.txt 恢复按钮可点击": true,
+        "B2-12 with space.txt 原位置重新出现": true,
+        "B2-13 with space.txt 恢复后内容哈希与原始一致": true,
+        "B2-14 with space.txt Host 记录为 restored": true,
+        "B2-15 with space.txt 回收区行变为「已恢复」且不再提供恢复": true,
+        "B2-16 with space.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+        "B2-1 deep.md 取消确认后对话框消失": true,
+        "B2-2 deep.md 取消时磁盘零变化": true,
+        "B2-3 deep.md 确认后被移入回收区": true,
+        "B2-4 deep.md 原位置已消失": true,
+        "B2-5 deep.md 文件树不再显示它": true,
+        "B2-6 deep.md Host 记录为 stored": true,
+        "B2-7 deep.md 回收区数量与列表同步": true,
+        "B2-8 deep.md payload 与 manifest 都在磁盘上": true,
+        "B2-9 deep.md payload 字节哈希与原始文件一致": true,
+        "B2-10 deep.md 回收区显示「可恢复」": true,
+        "B2-11 deep.md 恢复按钮可点击": true,
+        "B2-12 deep.md 原位置重新出现": true,
+        "B2-13 deep.md 恢复后内容哈希与原始一致": true,
+        "B2-14 deep.md Host 记录为 restored": true,
+        "B2-15 deep.md 回收区行变为「已恢复」且不再提供恢复": true,
+        "B2-16 deep.md 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+        "B3-1 原位置已有同名文件时恢复不覆盖它": true,
+        "B3-2 冲突时 Host 记录仍为 stored（不动盘）": true,
+        "B3-3 冲突时界面给出可读说明": true,
+        "B3-4 冲突解除后可以正常恢复（同一记录未被破坏）": true,
+        "B3-5 已有活动 View 时移入被阻止（对话框给出原因，不是静默失败）": true,
+        "B3-6 被阻止时文件仍在原位置": true,
+        "B3-7 目录不能通过普通文件接口移入": true,
+        "B3-8 保留内部路径不能移入": true,
+        "B3-9 越界路径（../）不能移入": true,
+        "B3-10 符号链接不能通过普通文件接口移入": true,
+        "B3-10b 链接目标本身未被移动": true,
+        "B3-11 项目 B 的回收区不含项目 A 的记录": true,
+        "B3-12 用 B 的项目 id 移入 A 的文件被拒绝（不是\"来源不被允许\"）": true,
+        "B3-13 A 的文件没有因此消失": true,
+        "B2-17 收尾时没有遗留 stored 记录（六个文件都已恢复）": true,
+        "B2-18 六个文件都在原位置且哈希未变": true,
+        "B2-19 回收区面板没有失效横幅": true
+      },
+      "detail": {
+        "B2-0 六个文件都在磁盘上且哈希已记录": {
+          "note.md": "a1e0014f8a7b",
+          "plain.txt": "ec493ddd0ec2",
+          "blob.bin": "785b0751fc2c",
+          "中文名.txt": "23170920d73a",
+          "with space.txt": "e24aae865100",
+          "notes/deep.md": "7049625d84fc"
+        },
+        "B2-1 note.md 取消确认后对话框消失": {
+          "stage": "cancelled",
+          "phase": "ready"
+        },
+        "B2-2 note.md 取消时磁盘零变化": {
+          "before": [
+            ".weavespace/.gitignore",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ],
+          "after": [
+            ".weavespace/.gitignore",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ]
+        },
+        "B2-3 note.md 确认后被移入回收区": {
+          "stage": "confirmed",
+          "text": "移入回收区「note.md」\n\n「note.md」已移入回收区，可在回收区恢复。\n\n好的"
+        },
+        "B2-4 note.md 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/note.md",
+        "B2-6 note.md Host 记录为 stored": {
+          "opId": "op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576",
+          "path": "note.md",
+          "entryKind": "file",
+          "size": 23,
+          "deletedAt": "2026-11-26T16:43:48.137Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B2-7 note.md 回收区数量与列表同步": {
+          "entries": 1,
+          "opDirs": 1
+        },
+        "B2-8 note.md payload 与 manifest 都在磁盘上": {
+          "payload": true,
+          "manifest": true,
+          "payloadHash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+          "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576"
+        },
+        "B2-9 note.md payload 字节哈希与原始文件一致": {
+          "original": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+          "payload": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+        },
+        "B2-10 note.md 回收区显示「可恢复」": [
+          {
+            "name": "note.md",
+            "badge": "可恢复",
+            "note": "文件在回收区里，可以恢复到原位置。",
+            "hasButton": true,
+            "buttonDisabled": false
+          }
+        ],
+        "B2-11 note.md 恢复按钮可点击": "clicked",
+        "B2-12 note.md 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/note.md",
+        "B2-13 note.md 恢复后内容哈希与原始一致": {
+          "original": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+          "restored": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+        },
+        "B2-15 note.md 回收区行变为「已恢复」且不再提供恢复": [
+          {
+            "name": "note.md",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-1 plain.txt 取消确认后对话框消失": {
+          "stage": "cancelled",
+          "phase": "ready"
+        },
+        "B2-2 plain.txt 取消时磁盘零变化": {
+          "before": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ],
+          "after": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ]
+        },
+        "B2-3 plain.txt 确认后被移入回收区": {
+          "stage": "confirmed",
+          "text": "移入回收区「plain.txt」\n\n「plain.txt」已移入回收区，可在回收区恢复。\n\n好的"
+        },
+        "B2-4 plain.txt 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/plain.txt",
+        "B2-6 plain.txt Host 记录为 stored": {
+          "opId": "op-c9e913b0-f1be-41db-9ad2-4e314a235cf3",
+          "path": "plain.txt",
+          "entryKind": "file",
+          "size": 28,
+          "deletedAt": "2026-11-26T16:43:56.955Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B2-7 plain.txt 回收区数量与列表同步": {
+          "entries": 2,
+          "opDirs": 2
+        },
+        "B2-8 plain.txt payload 与 manifest 都在磁盘上": {
+          "payload": true,
+          "manifest": true,
+          "payloadHash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+          "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3"
+        },
+        "B2-9 plain.txt payload 字节哈希与原始文件一致": {
+          "original": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+          "payload": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866"
+        },
+        "B2-10 plain.txt 回收区显示「可恢复」": [
+          {
+            "name": "plain.txt",
+            "badge": "可恢复",
+            "note": "文件在回收区里，可以恢复到原位置。",
+            "hasButton": true,
+            "buttonDisabled": false
+          },
+          {
+            "name": "note.md",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-11 plain.txt 恢复按钮可点击": "clicked",
+        "B2-12 plain.txt 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/plain.txt",
+        "B2-13 plain.txt 恢复后内容哈希与原始一致": {
+          "original": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+          "restored": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866"
+        },
+        "B2-15 plain.txt 回收区行变为「已恢复」且不再提供恢复": [
+          {
+            "name": "plain.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-1 blob.bin 取消确认后对话框消失": {
+          "stage": "cancelled",
+          "phase": "ready"
+        },
+        "B2-2 blob.bin 取消时磁盘零变化": {
+          "before": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            ".weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ],
+          "after": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            ".weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ]
+        },
+        "B2-3 blob.bin 确认后被移入回收区": {
+          "stage": "confirmed",
+          "text": "移入回收区「blob.bin」\n\n「blob.bin」已移入回收区，可在回收区恢复。\n\n好的"
+        },
+        "B2-4 blob.bin 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/blob.bin",
+        "B2-6 blob.bin Host 记录为 stored": {
+          "opId": "op-ad14c992-9c5f-4bdd-b814-7899b2ec9170",
+          "path": "blob.bin",
+          "entryKind": "file",
+          "size": 1024,
+          "deletedAt": "2026-11-26T16:44:05.627Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B2-7 blob.bin 回收区数量与列表同步": {
+          "entries": 3,
+          "opDirs": 3
+        },
+        "B2-8 blob.bin payload 与 manifest 都在磁盘上": {
+          "payload": true,
+          "manifest": true,
+          "payloadHash": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+          "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-ad14c992-9c5f-4bdd-b814-7899b2ec9170"
+        },
+        "B2-9 blob.bin payload 字节哈希与原始文件一致": {
+          "original": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+          "payload": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+        },
+        "B2-10 blob.bin 回收区显示「可恢复」": [
+          {
+            "name": "blob.bin",
+            "badge": "可恢复",
+            "note": "文件在回收区里，可以恢复到原位置。",
+            "hasButton": true,
+            "buttonDisabled": false
+          },
+          {
+            "name": "plain.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "note.md",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-11 blob.bin 恢复按钮可点击": "clicked",
+        "B2-12 blob.bin 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/blob.bin",
+        "B2-13 blob.bin 恢复后内容哈希与原始一致": {
+          "original": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+          "restored": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+        },
+        "B2-15 blob.bin 回收区行变为「已恢复」且不再提供恢复": [
+          {
+            "name": "blob.bin",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-1 中文名.txt 取消确认后对话框消失": {
+          "stage": "cancelled",
+          "phase": "ready"
+        },
+        "B2-2 中文名.txt 取消时磁盘零变化": {
+          "before": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            ".weavespace/trash/op-ad14c992-9c5f-4bdd-b814-7899b2ec9170/manifest.json",
+            ".weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ],
+          "after": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            ".weavespace/trash/op-ad14c992-9c5f-4bdd-b814-7899b2ec9170/manifest.json",
+            ".weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ]
+        },
+        "B2-3 中文名.txt 确认后被移入回收区": {
+          "stage": "confirmed",
+          "text": "移入回收区「中文名.txt」\n\n「中文名.txt」已移入回收区，可在回收区恢复。\n\n好的"
+        },
+        "B2-4 中文名.txt 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/中文名.txt",
+        "B2-6 中文名.txt Host 记录为 stored": {
+          "opId": "op-4e137cbe-dcf8-4e69-97a4-b0504c0ed8d6",
+          "path": "中文名.txt",
+          "entryKind": "file",
+          "size": 34,
+          "deletedAt": "2026-11-26T16:44:14.280Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B2-7 中文名.txt 回收区数量与列表同步": {
+          "entries": 4,
+          "opDirs": 4
+        },
+        "B2-8 中文名.txt payload 与 manifest 都在磁盘上": {
+          "payload": true,
+          "manifest": true,
+          "payloadHash": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+          "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-4e137cbe-dcf8-4e69-97a4-b0504c0ed8d6"
+        },
+        "B2-9 中文名.txt payload 字节哈希与原始文件一致": {
+          "original": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+          "payload": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20"
+        },
+        "B2-10 中文名.txt 回收区显示「可恢复」": [
+          {
+            "name": "中文名.txt",
+            "badge": "可恢复",
+            "note": "文件在回收区里，可以恢复到原位置。",
+            "hasButton": true,
+            "buttonDisabled": false
+          },
+          {
+            "name": "blob.bin",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "plain.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "note.md",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-11 中文名.txt 恢复按钮可点击": "clicked",
+        "B2-12 中文名.txt 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/中文名.txt",
+        "B2-13 中文名.txt 恢复后内容哈希与原始一致": {
+          "original": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+          "restored": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20"
+        },
+        "B2-15 中文名.txt 回收区行变为「已恢复」且不再提供恢复": [
+          {
+            "name": "中文名.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-1 with space.txt 取消确认后对话框消失": {
+          "stage": "cancelled",
+          "phase": "ready"
+        },
+        "B2-2 with space.txt 取消时磁盘零变化": {
+          "before": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-4e137cbe-dcf8-4e69-97a4-b0504c0ed8d6/manifest.json",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            ".weavespace/trash/op-ad14c992-9c5f-4bdd-b814-7899b2ec9170/manifest.json",
+            ".weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ],
+          "after": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-4e137cbe-dcf8-4e69-97a4-b0504c0ed8d6/manifest.json",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            ".weavespace/trash/op-ad14c992-9c5f-4bdd-b814-7899b2ec9170/manifest.json",
+            ".weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ]
+        },
+        "B2-3 with space.txt 确认后被移入回收区": {
+          "stage": "confirmed",
+          "text": "移入回收区「with space.txt」\n\n「with space.txt」已移入回收区，可在回收区恢复。\n\n好的"
+        },
+        "B2-4 with space.txt 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/with space.txt",
+        "B2-6 with space.txt Host 记录为 stored": {
+          "opId": "op-e47ef320-fdac-4004-9da4-b1c9479fc576",
+          "path": "with space.txt",
+          "entryKind": "file",
+          "size": 16,
+          "deletedAt": "2026-11-26T16:44:22.959Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B2-7 with space.txt 回收区数量与列表同步": {
+          "entries": 5,
+          "opDirs": 5
+        },
+        "B2-8 with space.txt payload 与 manifest 都在磁盘上": {
+          "payload": true,
+          "manifest": true,
+          "payloadHash": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+          "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-e47ef320-fdac-4004-9da4-b1c9479fc576"
+        },
+        "B2-9 with space.txt payload 字节哈希与原始文件一致": {
+          "original": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+          "payload": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b"
+        },
+        "B2-10 with space.txt 回收区显示「可恢复」": [
+          {
+            "name": "with space.txt",
+            "badge": "可恢复",
+            "note": "文件在回收区里，可以恢复到原位置。",
+            "hasButton": true,
+            "buttonDisabled": false
+          },
+          {
+            "name": "中文名.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "blob.bin",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "plain.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "note.md",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-11 with space.txt 恢复按钮可点击": "clicked",
+        "B2-12 with space.txt 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/with space.txt",
+        "B2-13 with space.txt 恢复后内容哈希与原始一致": {
+          "original": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+          "restored": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b"
+        },
+        "B2-15 with space.txt 回收区行变为「已恢复」且不再提供恢复": [
+          {
+            "name": "with space.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-1 deep.md 取消确认后对话框消失": {
+          "stage": "cancelled",
+          "phase": "ready"
+        },
+        "B2-2 deep.md 取消时磁盘零变化": {
+          "before": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-4e137cbe-dcf8-4e69-97a4-b0504c0ed8d6/manifest.json",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            ".weavespace/trash/op-ad14c992-9c5f-4bdd-b814-7899b2ec9170/manifest.json",
+            ".weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3/manifest.json",
+            ".weavespace/trash/op-e47ef320-fdac-4004-9da4-b1c9479fc576/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ],
+          "after": [
+            ".weavespace/.gitignore",
+            ".weavespace/.ws-internal",
+            ".weavespace/trash/op-4e137cbe-dcf8-4e69-97a4-b0504c0ed8d6/manifest.json",
+            ".weavespace/trash/op-a4d6a9be-01a4-4c31-a1a3-c04273a0a576/manifest.json",
+            ".weavespace/trash/op-ad14c992-9c5f-4bdd-b814-7899b2ec9170/manifest.json",
+            ".weavespace/trash/op-c9e913b0-f1be-41db-9ad2-4e314a235cf3/manifest.json",
+            ".weavespace/trash/op-e47ef320-fdac-4004-9da4-b1c9479fc576/manifest.json",
+            "blob.bin",
+            "note.md",
+            "notes/deep.md",
+            "plain.txt",
+            "with space.txt",
+            "中文名.txt"
+          ]
+        },
+        "B2-3 deep.md 确认后被移入回收区": {
+          "stage": "confirmed",
+          "text": "移入回收区「deep.md」\n\n「deep.md」已移入回收区，可在回收区恢复。\n\n好的"
+        },
+        "B2-4 deep.md 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/notes/deep.md",
+        "B2-6 deep.md Host 记录为 stored": {
+          "opId": "op-dbf27dc3-786b-4621-a4ce-afce4073c66f",
+          "path": "notes/deep.md",
+          "entryKind": "file",
+          "size": 24,
+          "deletedAt": "2026-11-26T16:44:31.636Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B2-7 deep.md 回收区数量与列表同步": {
+          "entries": 6,
+          "opDirs": 6
+        },
+        "B2-8 deep.md payload 与 manifest 都在磁盘上": {
+          "payload": true,
+          "manifest": true,
+          "payloadHash": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+          "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-dbf27dc3-786b-4621-a4ce-afce4073c66f"
+        },
+        "B2-9 deep.md payload 字节哈希与原始文件一致": {
+          "original": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+          "payload": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c"
+        },
+        "B2-10 deep.md 回收区显示「可恢复」": [
+          {
+            "name": "deep.md",
+            "badge": "可恢复",
+            "note": "文件在回收区里，可以恢复到原位置。",
+            "hasButton": true,
+            "buttonDisabled": false
+          },
+          {
+            "name": "with space.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "中文名.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "blob.bin",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "plain.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          },
+          {
+            "name": "note.md",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B2-11 deep.md 恢复按钮可点击": "clicked",
+        "B2-12 deep.md 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/notes/deep.md",
+        "B2-13 deep.md 恢复后内容哈希与原始一致": {
+          "original": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+          "restored": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c"
+        },
+        "B2-15 deep.md 回收区行变为「已恢复」且不再提供恢复": [
+          {
+            "name": "deep.md",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        ],
+        "B3-1 原位置已有同名文件时恢复不覆盖它": {
+          "before": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+          "conflict": "9e60a7abfd5806b97dbd683cba2c5233b53c90977351ca3c0629da1192181daa",
+          "after": "9e60a7abfd5806b97dbd683cba2c5233b53c90977351ca3c0629da1192181daa"
+        },
+        "B3-3 冲突时界面给出可读说明": {
+          "name": "plain.txt",
+          "badge": "可恢复",
+          "note": "文件在回收区里，可以恢复到原位置。",
+          "hasButton": true,
+          "buttonDisabled": false
+        },
+        "B3-4 冲突解除后可以正常恢复（同一记录未被破坏）": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+        "B3-5 已有活动 View 时移入被阻止（对话框给出原因，不是静默失败）": {
+          "opened": true,
+          "blocked": {
+            "stage": "blocked",
+            "text": "移入回收区「note.md」\n\n现在不能移入回收区：请先处理下列情况。\n\n无法操作「note.md」：仍在标签中打开。请先关闭相关标签并处理草稿（本次操作没有任何磁盘副作用）。\n\n为保护未保存的内容，这里不提供\"强制移除\"。处理好之后可以再次尝试。\n\n好的"
+          }
+        },
+        "B3-7 目录不能通过普通文件接口移入": {
+          "status": 400,
+          "code": "ERR_TRASH_KIND_UNSUPPORTED",
+          "message": "只有普通文件可以移入回收区（目录、链接与超大文件暂不支持）"
+        },
+        "B3-8 保留内部路径不能移入": {
+          "status": 403,
+          "code": "ERR_PATH_RESERVED",
+          "message": "该路径属于工作台内部目录，不参与回收"
+        },
+        "B3-9 越界路径（../）不能移入": {
+          "status": 400,
+          "code": "ERR_COMMAND_INVALID",
+          "message": "父目录含空段或相对段"
+        },
+        "B3-10 符号链接不能通过普通文件接口移入": {
+          "status": 400,
+          "code": "ERR_TRASH_KIND_UNSUPPORTED",
+          "message": "只有普通文件可以移入回收区（目录、链接与超大文件暂不支持）"
+        },
+        "B3-11 项目 B 的回收区不含项目 A 的记录": [],
+        "B3-12 用 B 的项目 id 移入 A 的文件被拒绝（不是\"来源不被允许\"）": {
+          "status": 404,
+          "code": "ERR_RESOURCE_NOT_FOUND",
+          "message": "资源不存在"
+        },
+        "B2-17 收尾时没有遗留 stored 记录（六个文件都已恢复）": [],
+        "B2-18 六个文件都在原位置且哈希未变": {
+          "note.md": true,
+          "plain.txt": true,
+          "blob.bin": true,
+          "中文名.txt": true,
+          "with space.txt": true,
+          "notes/deep.md": true
+        },
+        "B2-19 回收区面板没有失效横幅": null
+      }
+    },
+    {
+      "name": "B4 UNKNOWN 三场景",
+      "summary": {
+        "total": 27,
+        "passed": 27,
+        "failed": []
+      },
+      "checks": {
+        "B4-1 前提：文件已在回收区": true,
+        "B4-2 只尝试了一次恢复 POST": true,
+        "B4-3 磁盘没有变化：原位置仍为空": true,
+        "B4-4 磁盘没有变化：payload 仍在回收区": true,
+        "B4-5 界面进入「待核对」而不是「失败」": true,
+        "B4-6 「待核对」时恢复按钮关闭": true,
+        "B4-7 台账写入了一条待核对记录": true,
+        "B4-8 保护记录也写了同一笔（跨刷新可用）": true,
+        "B4-9 待核对期间强制点击不会重发副作用请求": true,
+        "B4-10 重载页面后仍显示「待核对」": true,
+        "B4-11 拿到终态结论（stored）后记录不收敛（它确实还没结论）": true,
+        "B4-12 前提：文件已在回收区": true,
+        "B4-13 原文件真的回到了原位置（磁盘事实）": true,
+        "B4-14 恢复后的内容哈希与原始一致": true,
+        "B4-15 Host 记录已是 restored（不是 stored）": true,
+        "B4-16 客户端经只读核对收敛为「已恢复」，没有误报失败": true,
+        "B4-17 终态结论成立后台账释放这条（不留假的待核对）": true,
+        "B4-18 仍然只发出一次 POST（响应丢失没有触发重发）": true,
+        "B4-19 一次成功列表读取后收敛为「已恢复」": true,
+        "B4-20 收敛后台账不再保留这条": true,
+        "B4-21 只发出一次 POST": true,
+        "B4-22 202 UNKNOWN 时磁盘未被改动": true,
+        "B4-23 界面保持「待核对」": true,
+        "B4-24 台账保留这条（待核对跨会话可用）": true,
+        "B4-25 列表读取失败不构成结论：台账记录不被清除": true,
+        "B4-26 列表恢复后仍是「待核对」（Host 从未执行）": true,
+        "B4-27 文件仍在回收区、未回到原位置": true
+      },
+      "detail": {
+        "B4-1 前提：文件已在回收区": {
+          "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+          "path": "note.md",
+          "entryKind": "file",
+          "size": 23,
+          "deletedAt": "2026-11-26T16:35:11.305Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B4-2 只尝试了一次恢复 POST": {
+          "posts": 3,
+          "bodies": [
+            "{\"projectId\":\"proj-a\",\"opId\":\"op-12d2b6a4-602e-4d69-9ef5-af22760e26cf\"}",
+            "{\"projectId\":\"proj-a\",\"opId\":\"op-d96360a7-9114-42f3-9a34-5dc067635484\"}",
+            "{\"projectId\":\"proj-a\",\"opId\":\"op-a3fd8ba9-afc4-4a17-bd59-841d2c0202b3\"}"
+          ]
+        },
+        "B4-5 界面进入「待核对」而不是「失败」": {
+          "name": "note.md",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "B4-6 「待核对」时恢复按钮关闭": {
+          "name": "note.md",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "B4-7 台账写入了一条待核对记录": [
+          {
+            "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+            "projectId": "proj-a",
+            "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+            "createdAt": "2026-11-26T16:35:13.176Z"
+          }
+        ],
+        "B4-8 保护记录也写了同一笔（跨刷新可用）": {
+          "version": 1,
+          "records": [
+            {
+              "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+              "projectId": "proj-a",
+              "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+              "createdAt": "2026-11-26T16:35:13.176Z"
+            }
+          ],
+          "invalidated": false
+        },
+        "B4-9 待核对期间强制点击不会重发副作用请求": {
+          "before": 1,
+          "after": 1
+        },
+        "B4-10 重载页面后仍显示「待核对」": {
+          "name": "note.md",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "B4-11 拿到终态结论（stored）后记录不收敛（它确实还没结论）": [
+          {
+            "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+            "projectId": "proj-a",
+            "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+            "createdAt": "2026-11-26T16:35:13.176Z"
+          }
+        ],
+        "场景一": {
+          "target": "note.md",
+          "hash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+          "posts": 1,
+          "ledger": [
+            {
+              "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+              "projectId": "proj-a",
+              "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+              "createdAt": "2026-11-26T16:35:13.176Z"
+            }
+          ]
+        },
+        "B4-12 前提：文件已在回收区": {
+          "opId": "op-d96360a7-9114-42f3-9a34-5dc067635484",
+          "path": "plain.txt",
+          "entryKind": "file",
+          "size": 28,
+          "deletedAt": "2026-11-26T16:35:27.113Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B4-13 原文件真的回到了原位置（磁盘事实）": "D:/Workspace/projects/weavespace-test/p203/projA/plain.txt",
+        "B4-14 恢复后的内容哈希与原始一致": {
+          "original": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+          "restored": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866"
+        },
+        "B4-15 Host 记录已是 restored（不是 stored）": "restored",
+        "B4-16 客户端经只读核对收敛为「已恢复」，没有误报失败": {
+          "name": "plain.txt",
+          "badge": "已恢复",
+          "note": "文件已恢复到原位置。",
+          "hasButton": false,
+          "buttonDisabled": null
+        },
+        "B4-17 终态结论成立后台账释放这条（不留假的待核对）": {
+          "records": [
+            {
+              "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+              "projectId": "proj-a",
+              "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+              "createdAt": "2026-11-26T16:35:13.176Z"
+            }
+          ],
+          "row": {
+            "name": "plain.txt",
+            "badge": "已恢复",
+            "note": "文件已恢复到原位置。",
+            "hasButton": false,
+            "buttonDisabled": null
+          }
+        },
+        "B4-18 仍然只发出一次 POST（响应丢失没有触发重发）": {
+          "posts": 2,
+          "bodies": [
+            "{\"projectId\":\"proj-a\",\"opId\":\"op-d96360a7-9114-42f3-9a34-5dc067635484\"}",
+            "{\"projectId\":\"proj-a\",\"opId\":\"op-a3fd8ba9-afc4-4a17-bd59-841d2c0202b3\"}"
+          ]
+        },
+        "B4-19 一次成功列表读取后收敛为「已恢复」": {
+          "name": "plain.txt",
+          "badge": "已恢复",
+          "note": "文件已恢复到原位置。",
+          "hasButton": false,
+          "buttonDisabled": null
+        },
+        "B4-20 收敛后台账不再保留这条": [
+          {
+            "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+            "projectId": "proj-a",
+            "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+            "createdAt": "2026-11-26T16:35:13.176Z"
+          }
+        ],
+        "场景二": {
+          "target": "plain.txt",
+          "original": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+          "posts": 1,
+          "hostState": "restored"
+        },
+        "B4-21 只发出一次 POST": {
+          "posts": 1,
+          "bodies": [
+            "{\"projectId\":\"proj-a\",\"opId\":\"op-a3fd8ba9-afc4-4a17-bd59-841d2c0202b3\"}"
+          ]
+        },
+        "B4-23 界面保持「待核对」": {
+          "name": "blob.bin",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "B4-24 台账保留这条（待核对跨会话可用）": [
+          {
+            "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+            "projectId": "proj-a",
+            "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+            "createdAt": "2026-11-26T16:35:13.176Z"
+          },
+          {
+            "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+            "projectId": "proj-a",
+            "opId": "op-a3fd8ba9-afc4-4a17-bd59-841d2c0202b3",
+            "createdAt": "2026-11-26T16:35:39.237Z"
+          }
+        ],
+        "B4-25 列表读取失败不构成结论：台账记录不被清除": [
+          {
+            "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+            "projectId": "proj-a",
+            "opId": "op-12d2b6a4-602e-4d69-9ef5-af22760e26cf",
+            "createdAt": "2026-11-26T16:35:13.176Z"
+          },
+          {
+            "workspaceKey": "ff5caa11433f8d8e9dc749c9e7b5375b2bbc7f03b93eee8f2d96328125c86a1d",
+            "projectId": "proj-a",
+            "opId": "op-a3fd8ba9-afc4-4a17-bd59-841d2c0202b3",
+            "createdAt": "2026-11-26T16:35:39.237Z"
+          }
+        ],
+        "B4-26 列表恢复后仍是「待核对」（Host 从未执行）": {
+          "name": "blob.bin",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "场景三": {
+          "target": "blob.bin",
+          "original": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+          "posts": 1
+        }
+      }
+    },
+    {
+      "name": "B5 真实跨标签页",
+      "summary": {
+        "total": 25,
+        "passed": 25,
+        "failed": []
+      },
+      "checks": {
+        "B5-1 前提：A 把文件移入回收区": true,
+        "B5-2 两个标签页都看到这条可恢复记录": true,
+        "B5-3 并发恢复合计只发出一个 POST": true,
+        "B5-4 文件真的回到了原位置": true,
+        "B5-5 内容哈希与原始一致": true,
+        "B5-6 两个页面的台账都不再保留这条（先查这条，再谈整本是否为空）": true,
+        "B5-7 另一页刷新后收敛为「已恢复」，不会退回可恢复": true,
+        "B5-8 收敛后另一页也没有留下待核对": true,
+        "B5-9 前提：plain.txt 已在回收区": true,
+        "B5-10 磁盘未变：原位置仍为空": true,
+        "B5-11 Host 记录仍为 stored": true,
+        "B5-12 A 的台账保留了这条待核对": true,
+        "B5-13 A 的保护记录也有同一笔（跨刷新可用）": true,
+        "B5-14 B 同步到「待核对」": true,
+        "B5-15 B 重载后仍显示「待核对」": true,
+        "B5-16 B 的保护记录没有丢": true,
+        "B5-17 B 的台账也没有丢": true,
+        "B5-18 已在回收区准备好 64 条真实记录": true,
+        "B5-19 台账与保护记录都写到 64 条": true,
+        "B5-20 满仓时明确提示\"已满\"": true,
+        "B5-21 满仓时每一行都不能恢复": true,
+        "B5-22 一条记录取得终态后台账减到 63": true,
+        "B5-23 满仓提示消失": true,
+        "B5-24 容量释放后恢复按钮重新可用": true,
+        "B5-25 释放容量后真的能再恢复一条（真实磁盘）": true
+      },
+      "detail": {
+        "B5-1 前提：A 把文件移入回收区": {
+          "opId": "op-bbb3bfc8-4bec-410d-8205-ee69bdc9a333",
+          "path": "note.md",
+          "entryKind": "file",
+          "size": 23,
+          "deletedAt": "2026-11-26T16:38:04.257Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B5-2 两个标签页都看到这条可恢复记录": {
+          "rowA": {
+            "name": "note.md",
+            "badge": "可恢复",
+            "note": "文件在回收区里，可以恢复到原位置。",
+            "hasButton": true,
+            "buttonDisabled": false
+          },
+          "rowB": {
+            "name": "note.md",
+            "badge": "可恢复",
+            "note": "文件在回收区里，可以恢复到原位置。",
+            "hasButton": true,
+            "buttonDisabled": false
+          }
+        },
+        "B5-3 并发恢复合计只发出一个 POST": {
+          "a": 1,
+          "b": 0,
+          "urls": [
+            "http://127.0.0.1:5288/api/trash/restore"
+          ]
+        },
+        "B5-5 内容哈希与原始一致": {
+          "original": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+          "restored": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+        },
+        "B5-6 两个页面的台账都不再保留这条（先查这条，再谈整本是否为空）": {
+          "a": [],
+          "b": []
+        },
+        "B5-7 另一页刷新后收敛为「已恢复」，不会退回可恢复": {
+          "name": "note.md",
+          "badge": "已恢复",
+          "note": "文件已恢复到原位置。",
+          "hasButton": false,
+          "buttonDisabled": null
+        },
+        "B5-8 收敛后另一页也没有留下待核对": [],
+        "B5-9 前提：plain.txt 已在回收区": {
+          "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+          "path": "plain.txt",
+          "entryKind": "file",
+          "size": 28,
+          "deletedAt": "2026-11-26T16:38:18.089Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B5-12 A 的台账保留了这条待核对": [
+          {
+            "workspaceKey": "61abb6577ff47e5e5f3caee65d8a8821f8adc838df4dbce1e45c4dd160a74e58",
+            "projectId": "proj-a",
+            "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+            "createdAt": "2026-11-26T16:38:19.963Z"
+          }
+        ],
+        "B5-13 A 的保护记录也有同一笔（跨刷新可用）": {
+          "version": 1,
+          "records": [
+            {
+              "workspaceKey": "61abb6577ff47e5e5f3caee65d8a8821f8adc838df4dbce1e45c4dd160a74e58",
+              "projectId": "proj-a",
+              "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+              "createdAt": "2026-11-26T16:38:19.963Z"
+            }
+          ],
+          "invalidated": false
+        },
+        "B5-14 B 同步到「待核对」": {
+          "name": "plain.txt",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "B5-15 B 重载后仍显示「待核对」": {
+          "name": "plain.txt",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "B5-16 B 的保护记录没有丢": {
+          "version": 1,
+          "records": [
+            {
+              "workspaceKey": "61abb6577ff47e5e5f3caee65d8a8821f8adc838df4dbce1e45c4dd160a74e58",
+              "projectId": "proj-a",
+              "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+              "createdAt": "2026-11-26T16:38:19.963Z"
+            }
+          ],
+          "invalidated": false
+        },
+        "B5-17 B 的台账也没有丢": [
+          {
+            "workspaceKey": "61abb6577ff47e5e5f3caee65d8a8821f8adc838df4dbce1e45c4dd160a74e58",
+            "projectId": "proj-a",
+            "opId": "op-385cf0fe-d9c9-4145-8258-6b67038777b3",
+            "createdAt": "2026-11-26T16:38:19.963Z"
+          }
+        ],
+        "B5-2": {
+          "original": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+          "entry": "op-385cf0fe-d9c9-4145-8258-6b67038777b3"
+        },
+        "B5-18 已在回收区准备好 64 条真实记录": {
+          "created": 64,
+          "stored": 64
+        },
+        "B5-19 台账与保护记录都写到 64 条": 64,
+        "B5-20 满仓时明确提示\"已满\"": "本机的「待核对」记录已满（64 条），为避免再产生无法追踪的恢复，恢复操作暂时关闭。请先刷新回收区核对已有记录，等它们有了结论再试。",
+        "B5-21 满仓时每一行都不能恢复": [
+          {
+            "name": "bulk-63.txt",
+            "badge": "待核对",
+            "note": "暂时不能恢复：请先看回收区顶部的说明。",
+            "hasButton": true,
+            "buttonDisabled": true
+          },
+          {
+            "name": "bulk-62.txt",
+            "badge": "待核对",
+            "note": "暂时不能恢复：请先看回收区顶部的说明。",
+            "hasButton": true,
+            "buttonDisabled": true
+          },
+          {
+            "name": "bulk-61.txt",
+            "badge": "待核对",
+            "note": "暂时不能恢复：请先看回收区顶部的说明。",
+            "hasButton": true,
+            "buttonDisabled": true
+          }
+        ],
+        "B5-22 一条记录取得终态后台账减到 63": 63,
+        "B5-23 满仓提示消失": null,
+        "B5-24 容量释放后恢复按钮重新可用": {
+          "name": "plain.txt",
+          "badge": "可恢复",
+          "note": "文件在回收区里，可以恢复到原位置。",
+          "hasButton": true,
+          "buttonDisabled": false
+        },
+        "B5-25 释放容量后真的能再恢复一条（真实磁盘）": {
+          "restoredCount": 3
+        }
+      }
+    },
+    {
+      "name": "B6 重启阶段 1",
+      "summary": {
+        "total": 2,
+        "passed": 2,
+        "failed": []
+      },
+      "checks": {
+        "B6-1 回收成功且 Host 记录为 stored": true,
+        "B6-2 原文件已不在原位": true
+      },
+      "detail": {
+        "B6-1 回收成功且 Host 记录为 stored": {
+          "opId": "op-8e163742-bcba-4aa1-9ccf-ba1b9dc44b6a",
+          "path": "note.md",
+          "entryKind": "file",
+          "size": 23,
+          "deletedAt": "2026-11-26T16:39:17.227Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "phase1": {
+          "opId": "op-8e163742-bcba-4aa1-9ccf-ba1b9dc44b6a",
+          "hash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+        }
+      }
+    },
+    {
+      "name": "B6 重启阶段 2",
+      "summary": {
+        "total": 9,
+        "passed": 9,
+        "failed": []
+      },
+      "checks": {
+        "B6-3 重启后回收区仍列出这条（状态来自磁盘）": true,
+        "B6-4 重启后 Host 记录仍为 stored": true,
+        "B6-5 重启后恢复成功（原位置出现）": true,
+        "B6-6 恢复后哈希与原始一致": true,
+        "B6-7 Host 记录转为 restored": true,
+        "B6-8 前提：plain.txt 已在回收区": true,
+        "B6-9 UNKNOWN 后界面为「待核对」": true,
+        "B6-10 台账留下这条待核对": true,
+        "B6-11 磁盘未变（文件仍在回收区）": true
+      },
+      "detail": {
+        "B6-3 重启后回收区仍列出这条（状态来自磁盘）": {
+          "name": "note.md",
+          "badge": "可恢复",
+          "note": "文件在回收区里，可以恢复到原位置。",
+          "hasButton": true,
+          "buttonDisabled": false
+        },
+        "B6-6 恢复后哈希与原始一致": {
+          "original": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+          "restored": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+        },
+        "B6-8 前提：plain.txt 已在回收区": {
+          "opId": "op-37ef5fd1-fbe0-47b5-aa2a-7e40ab9e3703",
+          "path": "plain.txt",
+          "entryKind": "file",
+          "size": 28,
+          "deletedAt": "2026-11-26T16:39:43.183Z",
+          "state": "stored",
+          "canRestore": true
+        },
+        "B6-9 UNKNOWN 后界面为「待核对」": {
+          "name": "plain.txt",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "B6-10 台账留下这条待核对": [
+          {
+            "workspaceKey": "1e875bbcaa7d24cb4f75f193a71a8728e7d47b9d59dde13ef80bf9db1489995b",
+            "projectId": "proj-a",
+            "opId": "op-37ef5fd1-fbe0-47b5-aa2a-7e40ab9e3703",
+            "createdAt": "2026-11-26T16:39:45.067Z"
+          }
+        ],
+        "phase2": {
+          "opId": "op-37ef5fd1-fbe0-47b5-aa2a-7e40ab9e3703",
+          "hash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+          "unknownOpId": "op-37ef5fd1-fbe0-47b5-aa2a-7e40ab9e3703"
+        }
+      }
+    },
+    {
+      "name": "B6 重启阶段 3",
+      "summary": {
+        "total": 7,
+        "passed": 7,
+        "failed": []
+      },
+      "checks": {
+        "B6-12 重启 + 重开页面后仍显示「待核对」": true,
+        "B6-13 重启后台账仍有这条": true,
+        "B6-14 重启后 Host 记录仍是 stored（磁盘从未被改）": true,
+        "B6-15 重启后强制点击仍然零 POST（exists 不是授权）": true,
+        "B6-16 已恢复的记录重启后仍是「已恢复」且不可再恢复": true,
+        "B6-17 已恢复文件仍在原位置且哈希未变": true,
+        "B6-18 面板没有新的失效横幅": true
+      },
+      "detail": {
+        "B6-12 重启 + 重开页面后仍显示「待核对」": {
+          "name": "plain.txt",
+          "badge": "待核对",
+          "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+          "hasButton": true,
+          "buttonDisabled": true
+        },
+        "B6-13 重启后台账仍有这条": [
+          {
+            "workspaceKey": "1e875bbcaa7d24cb4f75f193a71a8728e7d47b9d59dde13ef80bf9db1489995b",
+            "projectId": "proj-a",
+            "opId": "op-37ef5fd1-fbe0-47b5-aa2a-7e40ab9e3703",
+            "createdAt": "2026-11-26T16:39:45.067Z"
+          }
+        ],
+        "B6-15 重启后强制点击仍然零 POST（exists 不是授权）": {
+          "count": 0
+        },
+        "B6-16 已恢复的记录重启后仍是「已恢复」且不可再恢复": {
+          "name": "note.md",
+          "badge": "已恢复",
+          "note": "文件已恢复到原位置。",
+          "hasButton": false,
+          "buttonDisabled": null
+        },
+        "B6-18 面板没有新的失效横幅": null,
+        "phase3": {
+          "posts": 0,
+          "ledger": [
+            {
+              "workspaceKey": "1e875bbcaa7d24cb4f75f193a71a8728e7d47b9d59dde13ef80bf9db1489995b",
+              "projectId": "proj-a",
+              "opId": "op-37ef5fd1-fbe0-47b5-aa2a-7e40ab9e3703",
+              "createdAt": "2026-11-26T16:39:45.067Z"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

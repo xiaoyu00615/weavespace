@@ -34,6 +34,14 @@
  * - **镜像一致性**：store 是唯一真相，React 只是订阅者。每次异步操作结束（无论
  *   `reserved` / `exists` / `full` / `write-failed` / `changed` / `unchanged`）都要
  *   发布一次快照，否则"锁内重读拿到了别的页面的记录、界面却还显示可恢复"。
+ *
+ * R2.1 / P2-03 起再补三条**异步边界**（`await` 之间页面可能已经失效）：
+ * - 读回保护记录后、写盘后都要重新检查 `invalidated`：已经失效的操作不许继续写主台账、
+ *   更不许返回 `reserved`；已经落盘的保护记录保守保留，不因"取消授权"而被清掉。
+ * - 运行期读失败（不是首次初始化）必须落到 `unavailable` 并通知界面，否则按钮看起来还能点。
+ * - 失效合并会改 `current`，因此**合并完成后必须再 `publish()`**，否则界面少一条记录。
+ * - `verifyPending()` 是"发 POST 之前再问一次"的入口：判据不含 `full`（容量是"不能再新增"，
+ *   不是"已占的不算"）。
  */
 import type { TrashEntryDto } from '../client/client-api.ts';
 import type { TrashGuardRead, TrashGuardStorage } from './trash-ledger-guard.ts';
@@ -493,6 +501,16 @@ export interface TrashLedgerStoreOptions {
   readonly guard?: TrashGuardStorage;
 }
 
+/**
+ * "本次授权是否仍然成立"的结论（R2.1-A1）。
+ *
+ * 与 `TrashReserveOutcome` 分开：那是"能不能开始"，这是"还能不能继续"。
+ * 中间隔着一个 `await`（预留要拿锁、要写两层存储），页面完全可能已经失效。
+ */
+export type TrashPendingVerdict =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly message: string };
+
 export interface TrashLedgerStore {
   /** 等保护记录初始化完成（没传 guard 时立即完成）。 */
   ready(): Promise<void>;
@@ -520,6 +538,13 @@ export interface TrashLedgerStore {
    * 返回 `reserved` 才是授权；其余一律拒绝。
    */
   reserve(record: TrashPendingRecord): Promise<TrashReserveOutcome>;
+  /**
+   * 发副作用请求之前，确认这次预留的授权仍然成立（R2.1-A1）。
+   *
+   * 判据**不含 `full`**：这次预留已经把第 64 格占住了，"容量用尽"是"不能再新增"，
+   * 不能反过来否掉一个已经合法的授权。失效 / 损坏 / 读不到 / 初始化中一律拒绝。
+   */
+  verifyPending(target: { workspaceKey: string; projectId: string; opId: string }): TrashPendingVerdict;
   release(target: { workspaceKey: string; projectId: string; opIds: readonly string[] }): Promise<TrashMutationOutcome>;
   reconcile(input: {
     workspaceKey: string | null;
@@ -548,7 +573,9 @@ export interface TrashLedgerStore {
  *    进入 `invalidated`，保留记录、不写盘、不重建；
  * 4. 保护记录读不出来 → `unavailable`（fail-closed），绝不退回单层写法；
  * 5. 读失败（corrupt / unavailable）时永不写盘，但**保留**内存里已知的记录；
- * 6. 每次操作结束都 `publish()`：界面是订阅者，不是"成功分支的副产品"。
+ * 6. 每次操作结束都 `publish()`：界面是订阅者，不是"成功分支的副产品"；
+ * 7. 每个 `await` 之后都重新看一次 `invalidated`（读回来、写完盘都算）；
+ * 8. 失效写入在锁内**重读再合并**，读不到就一个字节都不写。
  */
 export function createTrashLedgerStore(
   storage: StorageLike | null,
@@ -668,18 +695,35 @@ export function createTrashLedgerStore(
       // 锁是不可重入的：这里在锁外，可以自己取锁
       await coordination.runExclusive(() => mergeInvalidationLocked());
     } catch {
-      // 忽略：同上
+      // 忽略：内存标记已经生效，下次操作会再试
+    } finally {
+      /*
+       * R2.1-A3：锁内合并会改 `current`（把另一页面刚预留的记录读进来）。
+       * 之前这里没有发布，于是 `records()` 已经是对的、`snapshot().records` 却还是旧的——
+       * 界面读的是快照，结果就是"Store 正确、界面少了记录"。订阅通知不能靠下一次事件补。
+       */
+      publish();
     }
   };
 
-  /** 两层都写：保护记录先，主台账后；任一失败都不算"已保护"。 */
-  const persist = async (next: readonly TrashPendingRecord[]): Promise<boolean> => {
+  /**
+   * 两层都写：保护记录先，主台账后。
+   *
+   * 返回**三态**而不是布尔（R2.1-A1）：写保护记录的那一段 await 里，页面可能收到
+   * 外部删除事件而失效。此时主台账**一个字节都不许写**——写了就是把删掉的台账
+   * 重建成"只剩这次新记录"的假账；而已经落盘的保护记录必须保守保留（不清除）。
+   */
+  const persist = async (
+    next: readonly TrashPendingRecord[],
+  ): Promise<'ok' | 'failed' | 'invalidated'> => {
     // 超过容量绝不写盘：写进去下次读会被判 corrupt，等于把所有人一起锁死
-    if (next.length > MAX_TRASH_PENDING) return false;
+    if (next.length > MAX_TRASH_PENDING) return 'failed';
     if (guard) {
-      if (!(await guard.write({ version: 1, records: next, invalidated }))) return false;
+      if (!(await guard.write({ version: 1, records: next, invalidated }))) return 'failed';
+      if (invalidated) return 'invalidated';
     }
-    return writeTrashLedger(storage, next);
+    if (invalidated) return 'invalidated';
+    return writeTrashLedger(storage, next) ? 'ok' : 'failed';
   };
 
   /**
@@ -756,7 +800,15 @@ export function createTrashLedgerStore(
     let guardRecords: readonly TrashPendingRecord[] | null = null;
     if (guard) {
       const state = await readGuard();
-      if (state.status === 'unavailable') return false;
+      if (state.status === 'unavailable') {
+        /*
+         * R2.1-A2：不能只是"这次操作失败"。初始化成功、运行期才坏掉时，
+         * 若状态仍显示 ok，界面就会继续给出可恢复的按钮——而每次点下去都失败。
+         * 落到 `unavailable` 后 `publish()` 会把快照与闸门一起更新。
+         */
+        readStatus = 'unavailable';
+        return false;
+      }
       if (state.status === 'corrupt') {
         // 读不懂就不写、不判"缺失"，整体 fail-closed（R2.1-03）
         readStatus = 'corrupt';
@@ -873,6 +925,39 @@ export function createTrashLedgerStore(
       return publish();
     },
 
+    /**
+     * R2.1-A1：预留与真正的 POST 之间还有若干个 await，这段时间里本页可能因为
+     * 外部删除而失效（`invalidated` 是同步翻的，事件处理不需要等锁）。
+     * 预留成功只说明"当时可以"，发请求前必须再问一次。
+     */
+    verifyPending(target) {
+      const state = status();
+      if (
+        state === 'invalidated' ||
+        state === 'corrupt' ||
+        state === 'unavailable' ||
+        state === 'initializing'
+      ) {
+        return {
+          ok: false as const,
+          message: blockMessageText() ?? '本机的「待核对」台账当前不可用，已取消这次恢复。',
+        };
+      }
+      const present = current.some(
+        (record) =>
+          record.workspaceKey === target.workspaceKey &&
+          record.projectId === target.projectId &&
+          record.opId === target.opId,
+      );
+      if (!present) {
+        return {
+          ok: false as const,
+          message: '这次恢复的「待核对」记录已经不在本机台账里，已取消（未发送请求）。',
+        };
+      }
+      return { ok: true as const };
+    },
+
     async reserve(record) {
       if (!coordination.supported) return { status: 'unavailable' };
       if (!parseTrashPendingRecord(record)) return { status: 'invalid' };
@@ -883,10 +968,24 @@ export function createTrashLedgerStore(
         outcome = await coordination.runExclusive(async (): Promise<TrashReserveOutcome> => {
           if (invalidated) return { status: 'unavailable' };
           if (!(await syncFromLayers())) return { status: 'unavailable' };
+          /*
+           * R2.1-A1：`syncFromLayers` 里读保护记录、读主台账都是 await。这段窗口里
+           * 页面可能收到外部删除事件——读回来的数据再"正常"，也不能据此授权。
+           */
+          if (invalidated) return { status: 'unavailable' };
           const result = reserveTrashPending(current, record);
           if (result.status === 'exists') return { status: 'exists' };
           if (result.status === 'full') return { status: 'full' };
-          if (!(await persist(result.records))) return { status: 'write-failed' };
+          const written = await persist(result.records);
+          if (written === 'failed') return { status: 'write-failed' };
+          if (written === 'invalidated') {
+            /*
+             * 保护记录已经落盘、主台账没写。这条记录保守留在内存与保护记录里
+             * （它可能对应一次没有发出的恢复：多拦一次无害，丢了才是事故）。
+             */
+            current = result.records;
+            return { status: 'unavailable' };
+          }
           current = result.records;
           return { status: 'reserved' };
         });
@@ -906,11 +1005,14 @@ export function createTrashLedgerStore(
         outcome = await coordination.runExclusive(async (): Promise<TrashMutationOutcome> => {
           if (invalidated) return { status: 'unavailable' };
           if (!(await syncFromLayers())) return { status: 'unavailable' };
+          if (invalidated) return { status: 'unavailable' };
           const next = removeTrashPending(current, target);
           if (next === current) return { status: 'unchanged' };
-          if (!(await persist(next))) return { status: 'write-failed' };
+          const written = await persist(next);
+          if (written === 'failed') return { status: 'write-failed' };
+          // 内存跟耐久真相：保护记录那边已经按 next 写过了
           current = next;
-          return { status: 'changed' };
+          return written === 'invalidated' ? { status: 'unavailable' } : { status: 'changed' };
         });
       } catch {
         outcome = { status: 'unavailable' };
@@ -928,11 +1030,13 @@ export function createTrashLedgerStore(
         outcome = await coordination.runExclusive(async (): Promise<TrashMutationOutcome> => {
           if (invalidated) return { status: 'unavailable' };
           if (!(await syncFromLayers())) return { status: 'unavailable' };
+          if (invalidated) return { status: 'unavailable' };
           const next = reconcileTrashPending(current, input);
           if (next === current) return { status: 'unchanged' };
-          if (!(await persist(next))) return { status: 'write-failed' };
+          const written = await persist(next);
+          if (written === 'failed') return { status: 'write-failed' };
           current = next;
-          return { status: 'changed' };
+          return written === 'invalidated' ? { status: 'unavailable' } : { status: 'changed' };
         });
       } catch {
         outcome = { status: 'unavailable' };

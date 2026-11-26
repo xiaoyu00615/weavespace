@@ -1,0 +1,25 @@
+=== typecheck ===
+
+> weavespace@0.0.0-p0 typecheck
+> tsc -p tsconfig.json
+
+=== typecheck:apps ===
+
+> weavespace-shell@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+
+> weavespace-server@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+=== build:shell ===
+✓ 94 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.44 kB │ gzip:   0.34 kB
+dist/assets/index-BZQ0k3_1.css   23.51 kB │ gzip:   4.91 kB
+dist/assets/index-CgKldV7A.js   453.65 kB │ gzip: 137.75 kB
+
+[32m✓ built in 1.25s[39m
+=== git diff --check ===
+diff-check-exit=0

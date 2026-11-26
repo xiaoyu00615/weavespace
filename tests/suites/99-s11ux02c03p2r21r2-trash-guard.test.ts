@@ -588,3 +588,222 @@ test('R2.1-03 保护记录读不出来：Store 状态与快照必须更新为 un
   assert.ok(store.snapshot().blockMessage);
   assert.equal((await store.reserve(record('op-unread-0001'))).status, 'unavailable');
 });
+
+/* ================================================================== */
+/* R2.1-A1 / A2 / A3：异步边界与状态同步（P2-03 阶段 A）                 */
+/* ================================================================== */
+
+/** 让出一轮宏任务：锁队列里没有真实 IO，微任务跑完即可断言。 */
+const flush = async (): Promise<void> => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+/**
+ * 可卡住的保护记录假件：用 deferred 精确控制"读还没回""写还没回"这两个窗口，
+ * 不依赖随机延时。
+ */
+function gatedGuard(initial: TrashGuardRecord | null = null) {
+  const box: GuardBox = { record: initial, failRead: false, failWrite: false, reads: 0, writes: [] };
+  let readGate: Promise<TrashGuardReadLike> | null = null;
+  let writeGate: Promise<boolean> | null = null;
+  let writeHook: ((next: TrashGuardRecord) => void) | null = null;
+
+  const guard: TrashGuardStorage = {
+    read: async () => {
+      box.reads += 1;
+      if (readGate) {
+        const gate = readGate;
+        readGate = null;
+        return await gate;
+      }
+      if (box.failRead) throw new Error('indexeddb unavailable');
+      return box.record ? { status: 'valid' as const, record: box.record } : { status: 'missing' as const };
+    },
+    write: async (next) => {
+      box.writes.push(next);
+      if (writeGate) {
+        const gate = writeGate;
+        writeGate = null;
+        if (!(await gate)) return false;
+      } else if (box.failWrite) {
+        return false;
+      }
+      box.record = next;
+      const hook = writeHook;
+      writeHook = null;
+      // 钩子在"数据已经写进去、调用方还没拿到返回值"之间执行：正是最难命中的那个窗口
+      hook?.(next);
+      return true;
+    },
+  };
+
+  return {
+    box,
+    guard,
+    /** 卡住下一次 `read`，直到显式放行。 */
+    gateNextRead() {
+      const gate = deferred<TrashGuardReadLike>();
+      readGate = gate.promise;
+      return { resolve: (value: TrashGuardReadLike) => gate.resolve(value) };
+    },
+    /** 卡住下一次 `write`，直到显式放行。 */
+    gateNextWrite() {
+      const gate = deferred<boolean>();
+      writeGate = gate.promise;
+      return { resolve: (ok: boolean) => gate.resolve(ok) };
+    },
+    /** 下一次 `write` 成功落盘后立刻执行（用于"已写保护记录、尚未写主台账"）。 */
+    onNextWrite(fn: (next: TrashGuardRecord) => void) {
+      writeHook = fn;
+    },
+  };
+}
+
+type TrashGuardReadLike = Awaited<ReturnType<TrashGuardStorage['read']>>;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+test('R2.1-A1 等 guard.read 期间收到外部删除：reserve 不得返回 reserved，也不得写主台账', async () => {
+  const storage = memoryStorage();
+  const gated = gatedGuard();
+  const store = newStore(storage, gated.guard);
+  await store.ready();
+  assert.equal(store.status(), 'ok');
+
+  const gate = gated.gateNextRead();
+  const pending = store.reserve(record('op-a1-read-01'));
+  await flush(); // reserve 现在已经挂在 guard.read 上
+
+  store.applyExternalEvent({ key: null, newValue: null });
+  assert.equal(store.status(), 'invalidated', '前提：读还在途时本页已经知道被删了');
+
+  gate.resolve({ status: 'missing' });
+  const outcome = await pending;
+
+  assert.equal(outcome.status, 'unavailable', '读返回后必须重新检查失效，不能继续授权');
+  assert.equal(trashReserveAuthorizes(outcome), false);
+  assert.deepEqual(storedIds(storage), [], '失效之后不得写主台账（更不能重建空台账）');
+  assert.equal(store.status(), 'invalidated');
+  assert.deepEqual(
+    store.records().map((item) => item.opId),
+    [],
+    '这条预留一个字节都没落盘：不许凭空造一条"待核对"，否则以后同 opId 永远被判 exists',
+  );
+});
+
+test('R2.1-A1 等 guard.write 期间收到外部删除：已落盘的保护记录保守保留，主台账不写', async () => {
+  const storage = memoryStorage();
+  const gated = gatedGuard();
+  const store = newStore(storage, gated.guard);
+  await store.ready();
+
+  const gate = gated.gateNextWrite();
+  const pending = store.reserve(record('op-a1-write-01'));
+  await flush(); // 已经走到 persist 的 guard.write
+
+  store.applyExternalEvent({ key: null, newValue: null });
+  gate.resolve(true);
+  const outcome = await pending;
+  await flush();
+
+  assert.equal(outcome.status, 'unavailable', '写返回后必须重新检查失效');
+  assert.equal(trashReserveAuthorizes(outcome), false);
+  assert.deepEqual(storedIds(storage), [], '主台账不得被这次预留重建');
+  assert.deepEqual(guardIds(gated.box), ['op-a1-write-01'], '已经落盘的保护记录必须保守保留（不清除）');
+  assert.equal(gated.box.record?.invalidated, true, '失效标记也要落盘');
+  assert.equal(store.status(), 'invalidated');
+});
+
+test('R2.1-A1 保护记录已写、主台账未写时失效：不写主台账、不授权、记录留着', async () => {
+  const storage = memoryStorage();
+  const gated = gatedGuard();
+  const store = newStore(storage, gated.guard);
+  await store.ready();
+
+  // 写入成功的那一刻翻失效：此时保护记录已经落盘，主台账还没写
+  gated.onNextWrite(() => {
+    store.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: null });
+  });
+
+  const outcome = await store.reserve(record('op-a1-mid-01'));
+  await flush();
+
+  assert.equal(outcome.status, 'unavailable');
+  assert.deepEqual(storedIds(storage), [], '失效之后一个字节都不许写主台账');
+  assert.deepEqual(guardIds(gated.box), ['op-a1-mid-01'], '保护记录保留');
+  assert.equal(store.status(), 'invalidated');
+});
+
+test('R2.1-A1 release 的异步读期间失效：不得把被删掉的台账重新写出来', async () => {
+  const storage = memoryStorage();
+  const gated = gatedGuard();
+  const store = newStore(storage, gated.guard);
+  await store.ready();
+  assert.equal((await store.reserve(record('op-a1-rel-01'))).status, 'reserved');
+
+  const gate = gated.gateNextRead();
+  const pending = store.release({ workspaceKey: WS, projectId: PROJ, opIds: ['op-a1-rel-01'] });
+  await flush();
+
+  storage.removeItem(TRASH_LEDGER_KEY);
+  store.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: null });
+  gate.resolve({ status: 'valid', record: { version: 1, records: [record('op-a1-rel-01')], invalidated: false } });
+  const outcome = await pending;
+  await flush();
+
+  assert.equal(outcome.status, 'unavailable', '失效之后不得继续写盘');
+  assert.equal(storage.data.has(TRASH_LEDGER_KEY), false, '不得重建主台账');
+});
+
+test('R2.1-A2 运行期读取失败（不是首次初始化）：状态与快照都要变成 unavailable', async () => {
+  const storage = memoryStorage();
+  const { box, guard } = memoryGuard();
+  const store = newStore(storage, guard);
+  await store.ready();
+  assert.equal(store.status(), 'ok', '前提：初始化是成功的');
+
+  // 初始化之后 IndexedDB 才坏掉
+  box.failRead = true;
+  const outcome = await store.reserve(record('op-a2-runtime1'));
+
+  assert.equal(outcome.status, 'unavailable');
+  assert.equal(store.status(), 'unavailable', '运行期读失败必须反映到状态，不能还显示 ok');
+  assert.ok(store.snapshot().blockMessage, '快照要带关闭原因（界面据此关闭恢复）');
+  assert.equal(store.snapshot().status, 'unavailable');
+  assert.deepEqual(storedIds(storage), [], '状态无法确认时不许写盘');
+});
+
+test('R2.1-A3 锁内合并失效记录后：snapshot 必须与 current 一起更新（不等下次事件）', async () => {
+  const storage = memoryStorage();
+  const { box, guard } = memoryGuard();
+  const coordination = inline();
+  const A = newStore(storage, guard, coordination);
+  const B = newStore(storage, guard, coordination);
+  await A.ready();
+  await B.ready();
+
+  await A.reserve(record('op-a3-x00001'));
+  await B.refresh();
+  assert.deepEqual(B.records().map((item) => item.opId), ['op-a3-x00001'], '前提：B 只知道 X');
+
+  // A 又写了一条 Y，B 的镜像还是旧的
+  await A.reserve(record('op-a3-y00002'));
+
+  storage.removeItem(TRASH_LEDGER_KEY);
+  B.applyExternalEvent({ key: TRASH_LEDGER_KEY, newValue: null });
+  await flush(); // 等锁内合并落盘
+
+  const ids = (list: readonly TrashPendingRecord[]) => list.map((item) => item.opId).sort();
+  assert.deepEqual(ids(B.records()), ['op-a3-x00001', 'op-a3-y00002'], '内存记录要包含合并结果');
+  assert.deepEqual(ids(B.snapshot().records), ['op-a3-x00001', 'op-a3-y00002'], '快照必须同步（界面读的是它）');
+  assert.deepEqual(guardIds(box), ['op-a3-x00001', 'op-a3-y00002'], '保护记录里两条都在');
+  assert.equal(box.record?.invalidated, true);
+  assert.equal(B.status(), 'invalidated');
+  assert.ok(B.snapshot().blockMessage, '恢复保持关闭');
+});

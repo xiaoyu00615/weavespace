@@ -497,6 +497,14 @@ export interface TrashHost {
    * 当成可以继续（R1.2.1-01）。
    */
   reservePending(target: TrashPendingTarget): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }>;
+  /**
+   * 发 POST 之前再确认一次"这次预留的授权仍然成立"（R2.1-A1）。
+   *
+   * `reservePending` 与 POST 之间隔着若干 await，这段时间里本页可能因为
+   * 外部删除台账而失效。授权是会过期的：预留成功只说明"当时可以"。
+   * 实现方**不得**把"容量恰好用尽"当成失效——那是"不能再新增"，不是"已占的不算"。
+   */
+  verifyPending(target: TrashPendingTarget): { readonly ok: true } | { readonly ok: false; readonly message: string };
   /** 明确零副作用（REJECTED）时释放预留；其余情况一律保留。 */
   releasePending(target: TrashPendingTarget): Promise<void>;
   /** Shell 侧本地阻断（活动标签 / 草稿 / 保存中 / 结果未知）。 */
@@ -883,6 +891,18 @@ export function createTrashController(host: TrashHost): TrashController {
         if (blockersAfterReserve.length > 0) {
           await host.releasePending(target);
           return { status: 'blocked', reasons: blockersAfterReserve };
+        }
+        /*
+         * R2.1-A1：最后一次确认授权还有效。
+         *
+         * 上面每一步都是 await（锁、两层存储、身份闸、本地阻断），期间本页可能已经
+         * 因为外部删除台账而失效。失效时不发请求，也**不强行清除**这条预留：
+         * 释放本身会被 store 拒绝，记录留着只会多拦一次；清掉才是真丢东西。
+         */
+        const verified = host.verifyPending(target);
+        if (!verified.ok) {
+          await host.releasePending(target);
+          return { status: 'rejected', message: verified.message };
         }
 
         host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: true, scope });
