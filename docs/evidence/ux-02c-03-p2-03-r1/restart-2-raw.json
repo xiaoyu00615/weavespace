@@ -1,0 +1,68 @@
+{
+  "run": "ux-02c-03-p2-03-restart-2",
+  "at": "2026-11-26T17:35:48.747Z",
+  "checks": {
+    "B6-3 重启后回收区仍列出这条（状态来自磁盘）": true,
+    "B6-4 重启后 Host 记录仍为 stored": true,
+    "B6-5 重启后恢复成功（原位置出现）": true,
+    "B6-6 恢复后哈希与原始一致": true,
+    "B6-7 Host 记录转为 restored": true,
+    "B6-8 前提：plain.txt 已在回收区": true,
+    "B6-9 UNKNOWN 后界面为「待核对」": true,
+    "B6-10 台账留下这条待核对": true,
+    "B6-11 磁盘未变（文件仍在回收区）": true
+  },
+  "detail": {
+    "B6-3 重启后回收区仍列出这条（状态来自磁盘）": {
+      "name": "note.md",
+      "badge": "可恢复",
+      "note": "文件在回收区里，可以恢复到原位置。",
+      "hasButton": true,
+      "buttonDisabled": false
+    },
+    "B6-6 恢复后哈希与原始一致": {
+      "original": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+      "restored": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+    },
+    "B6-8 前提：plain.txt 已在回收区": {
+      "opId": "op-1c9df617-ce22-4da4-a439-34e5f7d8856d",
+      "path": "plain.txt",
+      "entryKind": "file",
+      "size": 28,
+      "deletedAt": "2026-11-26T17:35:58.625Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B6-9 UNKNOWN 后界面为「待核对」": {
+      "name": "plain.txt",
+      "badge": "待核对",
+      "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+      "hasButton": true,
+      "buttonDisabled": true
+    },
+    "B6-10 台账留下这条待核对": [
+      {
+        "workspaceKey": "dedd8ebc19c948f6a738f5f823d3066e0e63ec5e81b70e7fb9d925e2164ae99a",
+        "projectId": "proj-a",
+        "opId": "op-1c9df617-ce22-4da4-a439-34e5f7d8856d",
+        "createdAt": "2026-11-26T17:36:00.647Z"
+      }
+    ],
+    "phase2": {
+      "opId": "op-1c9df617-ce22-4da4-a439-34e5f7d8856d",
+      "hash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "unknownOpId": "op-1c9df617-ce22-4da4-a439-34e5f7d8856d"
+    }
+  },
+  "injected": [
+    {
+      "check": "B6-8",
+      "how": "CDP 在 Request 阶段 failRequest（请求未到达 Host）"
+    }
+  ],
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": []
+  }
+}

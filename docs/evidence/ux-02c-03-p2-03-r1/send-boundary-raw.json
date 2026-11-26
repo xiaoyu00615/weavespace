@@ -1,0 +1,163 @@
+{
+  "run": "ux-02c-03-p2-03-r1-send-boundary",
+  "at": "2026-11-26T17:34:06.743Z",
+  "checks": {
+    "S1-1 前提：文件在磁盘上且哈希已记录": true,
+    "S1-2 前提：已移入回收区（Host 记录 stored）": true,
+    "S1-3 前提：界面上这一行可恢复": true,
+    "S1-4 令牌请求确实被按住（窗口已打开）": true,
+    "S1-5 窗口内点到「演示」并真的切过去了": true,
+    "S1-6 真实恢复 POST 数量为 0（不是\"按钮被禁用\"）": true,
+    "S1-7 磁盘未变：原位置仍为空": true,
+    "S1-8 磁盘未变：payload 仍在回收区": true,
+    "S1-9 Host 记录仍是 stored": true,
+    "S1-10a 已切回真实模式": true,
+    "S1-10 切回真实模式后这一行仍「可恢复」（这次恢复确实没发生）": true,
+    "S1-11 台账里没有留下这条（stale 是零副作用，预留已安全结算）": true,
+    "S2-1 前提：已移入回收区": true,
+    "S2-2 前提：界面上这一行可恢复": true,
+    "S2-3 令牌请求确实被按住（窗口已打开）": true,
+    "S2-4 前提：这次预留已经写进台账": true,
+    "S2-5 另一个标签页真的删掉了台账": true,
+    "S2-6 真实恢复 POST 数量为 0": true,
+    "S2-7 磁盘未变：原位置仍为空": true,
+    "S2-8 磁盘未变：payload 仍在回收区": true,
+    "S2-9 Host 记录仍是 stored（没有任何磁盘事务）": true,
+    "S2-10 恢复被整体关闭并给出可读原因": true,
+    "S2-11 这一行仍然关闭恢复（不得因为失效而放开）": true,
+    "S2-12 IndexedDB 保护记录仍保留这条": true,
+    "S2-13 持久层台账没有被重建（不得假装没事）": true,
+    "S2-14 失效之后强制点击也不会发请求": true
+  },
+  "detail": {
+    "S1-1 前提：文件在磁盘上且哈希已记录": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+    "S1-2 前提：已移入回收区（Host 记录 stored）": {
+      "opId": "op-7c23a72c-ce3b-4d6a-8f2e-f280bbebb06e",
+      "path": "note.md",
+      "entryKind": "file",
+      "size": 23,
+      "deletedAt": "2026-11-26T17:34:16.030Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "S1-3 前提：界面上这一行可恢复": {
+      "name": "note.md",
+      "badge": "可恢复",
+      "note": "文件在回收区里，可以恢复到原位置。",
+      "hasButton": true,
+      "buttonDisabled": false
+    },
+    "S1-4 令牌请求确实被按住（窗口已打开）": {
+      "seen": 1,
+      "released": 1
+    },
+    "S1-5 窗口内点到「演示」并真的切过去了": {
+      "switched": "clicked",
+      "pressed": "true"
+    },
+    "S1-6 真实恢复 POST 数量为 0（不是\"按钮被禁用\"）": {
+      "posts": 0,
+      "urls": []
+    },
+    "S1-8 磁盘未变：payload 仍在回收区": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-7c23a72c-ce3b-4d6a-8f2e-f280bbebb06e/payload",
+    "S1-9 Host 记录仍是 stored": "stored",
+    "S1-10a 已切回真实模式": "true",
+    "S1-10 切回真实模式后这一行仍「可恢复」（这次恢复确实没发生）": {
+      "name": "note.md",
+      "badge": "可恢复",
+      "note": "文件在回收区里，可以恢复到原位置。",
+      "hasButton": true,
+      "buttonDisabled": false
+    },
+    "S1-11 台账里没有留下这条（stale 是零副作用，预留已安全结算）": [],
+    "S1": {
+      "target": "note.md",
+      "opId": "op-7c23a72c-ce3b-4d6a-8f2e-f280bbebb06e",
+      "originalSha256": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+      "tokenSeen": 1,
+      "posts": 0,
+      "hostState": "stored",
+      "uiAfter": "可恢复",
+      "ledger": []
+    },
+    "S2-1 前提：已移入回收区": {
+      "opId": "op-75d7003c-f0a1-410e-9c1d-549dc5acabbf",
+      "path": "plain.txt",
+      "entryKind": "file",
+      "size": 28,
+      "deletedAt": "2026-11-26T17:34:36.620Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "S2-3 令牌请求确实被按住（窗口已打开）": {
+      "seen": 1,
+      "released": 1
+    },
+    "S2-4 前提：这次预留已经写进台账": [
+      {
+        "workspaceKey": "54e79aefe7ea3315840bf42297fd50a84b0d4bbffb089938db13d939436a6eb9",
+        "projectId": "proj-a",
+        "opId": "op-75d7003c-f0a1-410e-9c1d-549dc5acabbf",
+        "createdAt": "2026-11-26T17:34:40.630Z"
+      }
+    ],
+    "S2-5 另一个标签页真的删掉了台账": null,
+    "S2-6 真实恢复 POST 数量为 0": {
+      "posts": 0,
+      "urls": []
+    },
+    "S2-8 磁盘未变：payload 仍在回收区": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-75d7003c-f0a1-410e-9c1d-549dc5acabbf/payload",
+    "S2-9 Host 记录仍是 stored（没有任何磁盘事务）": "stored",
+    "S2-10 恢复被整体关闭并给出可读原因": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+    "S2-11 这一行仍然关闭恢复（不得因为失效而放开）": {
+      "name": "plain.txt",
+      "badge": "待核对",
+      "note": "暂时不能恢复：请先看回收区顶部的说明。",
+      "hasButton": true,
+      "buttonDisabled": true
+    },
+    "S2-12 IndexedDB 保护记录仍保留这条": {
+      "version": 1,
+      "records": [
+        {
+          "workspaceKey": "54e79aefe7ea3315840bf42297fd50a84b0d4bbffb089938db13d939436a6eb9",
+          "projectId": "proj-a",
+          "opId": "op-75d7003c-f0a1-410e-9c1d-549dc5acabbf",
+          "createdAt": "2026-11-26T17:34:40.630Z"
+        }
+      ],
+      "invalidated": true
+    },
+    "S2-13 持久层台账没有被重建（不得假装没事）": null,
+    "S2-14 失效之后强制点击也不会发请求": {
+      "before": 0,
+      "after": 0
+    },
+    "S2": {
+      "target": "plain.txt",
+      "opId": "op-75d7003c-f0a1-410e-9c1d-549dc5acabbf",
+      "originalSha256": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "tokenSeen": 1,
+      "posts": 0,
+      "hostState": "stored",
+      "banner": "本页打开期间，本机的「待核对」记录被其他页面删除或清空，已无法确认哪些恢复还没有结论；为避免重复恢复，本页的恢复操作保持关闭（本页不会自动重建台账）。请刷新页面重新核对。",
+      "guard": {
+        "invalidated": true,
+        "count": 1
+      },
+      "uiAfter": {
+        "name": "plain.txt",
+        "badge": "待核对",
+        "note": "暂时不能恢复：请先看回收区顶部的说明。",
+        "hasButton": true,
+        "buttonDisabled": true
+      }
+    }
+  },
+  "injected": [],
+  "summary": {
+    "total": 26,
+    "passed": 26,
+    "failed": []
+  }
+}

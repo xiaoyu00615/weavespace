@@ -232,7 +232,7 @@ export function TrashProvider({ children }: { children: ReactNode }) {
       port: {
         list: (projectId) => actions.listTrash(projectId),
         remove: (projectId, path, opId) => actions.trashEntry(projectId, path, opId),
-        restore: (projectId, opId) => actions.restoreTrash(projectId, opId),
+        restore: (projectId, opId, gate) => actions.restoreTrash(projectId, opId, gate),
         query: (projectId, opId) => actions.queryTrashOp(projectId, opId),
       },
       identity,

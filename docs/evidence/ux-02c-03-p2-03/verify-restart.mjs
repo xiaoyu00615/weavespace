@@ -84,7 +84,7 @@ if (PHASE === '1') {
   const entry2 = (body.entries ?? []).find((item) => item.path === 'plain.txt' && item.state === 'stored');
   check('B6-8 前提：plain.txt 已在回收区', !!entry2, entry2);
 
-  t.tab.on('Fetch.requestPaused', async (p) => {
+  const offFetch = t.tab.on('Fetch.requestPaused', async (p) => {
     try {
       if (/\/api\/trash\/restore/.test(p.request.url)) {
         await t.tab.send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'ConnectionFailed' });
@@ -99,6 +99,7 @@ if (PHASE === '1') {
   await openTrash(t);
   await restoreRow(t, 'plain.txt');
   await sleep(2500);
+  offFetch();
   await t.tab.send('Fetch.disable').catch(() => undefined);
 
   const row2 = (await trashRows(t)).find((item) => item.name === 'plain.txt');
@@ -129,7 +130,6 @@ if (PHASE === '1') {
   await restoreRow(t, 'plain.txt', { force: true });
   await sleep(1800);
   check('B6-15 重启后强制点击仍然零 POST（exists 不是授权）', posts.count === 0, posts);
-
   // 已恢复的记录重启后不再提供恢复
   const restoredRow = (await trashRows(t)).find((item) => item.name === 'note.md');
   check('B6-16 已恢复的记录重启后仍是「已恢复」且不可再恢复', restoredRow?.badge === '已恢复' && restoredRow?.hasButton === false, restoredRow);

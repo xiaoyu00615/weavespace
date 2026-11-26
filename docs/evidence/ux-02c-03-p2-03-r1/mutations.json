@@ -1,0 +1,89 @@
+{
+  "at": "2026-11-26T17:38:33.136Z",
+  "baseline": {
+    "D:/Workspace/projects/weavespace/apps/shell/src/client/client-api.ts": "fa5ce5a6a349b5aa531d39cd8a722bb550e40dfc5f5357c3999d651c70682b09",
+    "D:/Workspace/projects/weavespace/apps/shell/src/state/trash.ts": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae"
+  },
+  "results": [
+    {
+      "id": "A",
+      "what": "传输层不再执行发送前最终裁决（if (gate) → if (false && gate)）",
+      "file": "apps/shell/src/client/client-api.ts",
+      "shaBefore": "fa5ce5a6a349b5aa531d39cd8a722bb550e40dfc5f5357c3999d651c70682b09",
+      "shaMutated": "9d986f308c36e9d8afcbe52e42d11ae9c9cba12287ebad220bcd39e318dfae8f",
+      "shaAfterRestore": "fa5ce5a6a349b5aa531d39cd8a722bb550e40dfc5f5357c3999d651c70682b09",
+      "mutationChangedBytes": true,
+      "restoreExact": true,
+      "failedTests": [
+        "R1-02A 会话令牌在途时切换项目：零恢复 POST，静默返回 stale",
+        "R1-02A 会话令牌在途时换工作区（同项目 id、代次 +1）：零恢复 POST",
+        "R1-02B 会话令牌在途时台账被外部删除：零恢复 POST，待核对记录保留",
+        "R1-02C 调用顺序：令牌请求 → 最终裁决 → 真实 POST"
+      ],
+      "verdict": "BITTEN",
+      "cleanAfterRestore": true
+    },
+    {
+      "id": "B",
+      "what": "最终裁决不核对身份（去掉 owned 判定）",
+      "file": "apps/shell/src/state/trash.ts",
+      "shaBefore": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae",
+      "shaMutated": "82bc43b0e370423189561caaf5f8bb96b9241dc15a10e310adca13c19061f134",
+      "shaAfterRestore": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae",
+      "mutationChangedBytes": true,
+      "restoreExact": true,
+      "failedTests": [
+        "R1-02A 会话令牌在途时换工作区（同项目 id、代次 +1）：零恢复 POST"
+      ],
+      "verdict": "BITTEN",
+      "cleanAfterRestore": true
+    },
+    {
+      "id": "C",
+      "what": "最终裁决忽略台账裁决（verifyPending 恒真）",
+      "file": "apps/shell/src/state/trash.ts",
+      "shaBefore": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae",
+      "shaMutated": "a64dc449d23cc611e6763e572dbc6d3f28e9fa78ee3d972c4da0b0a5bcca030c",
+      "shaAfterRestore": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae",
+      "mutationChangedBytes": true,
+      "restoreExact": true,
+      "failedTests": [
+        "R1-02B 会话令牌在途时台账被外部删除：零恢复 POST，待核对记录保留"
+      ],
+      "verdict": "BITTEN",
+      "cleanAfterRestore": true
+    },
+    {
+      "id": "D",
+      "what": "最终裁决把\"容量已满\"当成失效（restoreGate 参与判定）",
+      "file": "apps/shell/src/state/trash.ts",
+      "shaBefore": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae",
+      "shaMutated": "742fd9d9cbda101cc85024b21ab1759d7a65d96e714641f99614531a9125ca10",
+      "shaAfterRestore": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae",
+      "mutationChangedBytes": true,
+      "restoreExact": true,
+      "failedTests": [
+        "R1-02D 预留恰好占满第 64 格：最终复核仍然放行，POST 恰好一次"
+      ],
+      "verdict": "BITTEN",
+      "cleanAfterRestore": true
+    },
+    {
+      "id": "E",
+      "what": "Controller 把 NOT_SENT 当成\"已经发出去\"（走进结算）",
+      "file": "apps/shell/src/state/trash.ts",
+      "shaBefore": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae",
+      "shaMutated": "317d83a1315871472dfb1b5e942d6f8103b5f1c107c17b7455786606334f220d",
+      "shaAfterRestore": "e28e48c137041d344eda0644be938b3d61ea4a58fd5d59d082d0bea939c0ecae",
+      "mutationChangedBytes": true,
+      "restoreExact": true,
+      "failedTests": [
+        "R1-02A 会话令牌在途时切换项目：零恢复 POST，静默返回 stale",
+        "R1-02A 会话令牌在途时换工作区（同项目 id、代次 +1）：零恢复 POST",
+        "R1-02B 会话令牌在途时台账被外部删除：零恢复 POST，待核对记录保留"
+      ],
+      "verdict": "BITTEN",
+      "cleanAfterRestore": true
+    }
+  ]
+}

@@ -1,0 +1,985 @@
+{
+  "run": "ux-02c-03-p2-03-lifecycle",
+  "at": "2026-11-26T17:25:27.797Z",
+  "checks": {
+    "B2-0 六个文件都在磁盘上且哈希已记录": true,
+    "B2-1 note.md 取消确认后对话框消失": true,
+    "B2-2 note.md 取消时磁盘零变化": true,
+    "B2-3 note.md 确认后被移入回收区": true,
+    "B2-4 note.md 原位置已消失": true,
+    "B2-5 note.md 文件树不再显示它": true,
+    "B2-6 note.md Host 记录为 stored": true,
+    "B2-7 note.md 回收区数量与列表同步": true,
+    "B2-8 note.md payload 与 manifest 都在磁盘上": true,
+    "B2-9 note.md payload 字节哈希与原始文件一致": true,
+    "B2-10 note.md 回收区显示「可恢复」": true,
+    "B2-11 note.md 恢复按钮可点击": true,
+    "B2-12 note.md 原位置重新出现": true,
+    "B2-13 note.md 恢复后内容哈希与原始一致": true,
+    "B2-14 note.md Host 记录为 restored": true,
+    "B2-15 note.md 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 note.md 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 plain.txt 取消确认后对话框消失": true,
+    "B2-2 plain.txt 取消时磁盘零变化": true,
+    "B2-3 plain.txt 确认后被移入回收区": true,
+    "B2-4 plain.txt 原位置已消失": true,
+    "B2-5 plain.txt 文件树不再显示它": true,
+    "B2-6 plain.txt Host 记录为 stored": true,
+    "B2-7 plain.txt 回收区数量与列表同步": true,
+    "B2-8 plain.txt payload 与 manifest 都在磁盘上": true,
+    "B2-9 plain.txt payload 字节哈希与原始文件一致": true,
+    "B2-10 plain.txt 回收区显示「可恢复」": true,
+    "B2-11 plain.txt 恢复按钮可点击": true,
+    "B2-12 plain.txt 原位置重新出现": true,
+    "B2-13 plain.txt 恢复后内容哈希与原始一致": true,
+    "B2-14 plain.txt Host 记录为 restored": true,
+    "B2-15 plain.txt 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 plain.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 blob.bin 取消确认后对话框消失": true,
+    "B2-2 blob.bin 取消时磁盘零变化": true,
+    "B2-3 blob.bin 确认后被移入回收区": true,
+    "B2-4 blob.bin 原位置已消失": true,
+    "B2-5 blob.bin 文件树不再显示它": true,
+    "B2-6 blob.bin Host 记录为 stored": true,
+    "B2-7 blob.bin 回收区数量与列表同步": true,
+    "B2-8 blob.bin payload 与 manifest 都在磁盘上": true,
+    "B2-9 blob.bin payload 字节哈希与原始文件一致": true,
+    "B2-10 blob.bin 回收区显示「可恢复」": true,
+    "B2-11 blob.bin 恢复按钮可点击": true,
+    "B2-12 blob.bin 原位置重新出现": true,
+    "B2-13 blob.bin 恢复后内容哈希与原始一致": true,
+    "B2-14 blob.bin Host 记录为 restored": true,
+    "B2-15 blob.bin 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 blob.bin 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 中文名.txt 取消确认后对话框消失": true,
+    "B2-2 中文名.txt 取消时磁盘零变化": true,
+    "B2-3 中文名.txt 确认后被移入回收区": true,
+    "B2-4 中文名.txt 原位置已消失": true,
+    "B2-5 中文名.txt 文件树不再显示它": true,
+    "B2-6 中文名.txt Host 记录为 stored": true,
+    "B2-7 中文名.txt 回收区数量与列表同步": true,
+    "B2-8 中文名.txt payload 与 manifest 都在磁盘上": true,
+    "B2-9 中文名.txt payload 字节哈希与原始文件一致": true,
+    "B2-10 中文名.txt 回收区显示「可恢复」": true,
+    "B2-11 中文名.txt 恢复按钮可点击": true,
+    "B2-12 中文名.txt 原位置重新出现": true,
+    "B2-13 中文名.txt 恢复后内容哈希与原始一致": true,
+    "B2-14 中文名.txt Host 记录为 restored": true,
+    "B2-15 中文名.txt 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 中文名.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 with space.txt 取消确认后对话框消失": true,
+    "B2-2 with space.txt 取消时磁盘零变化": true,
+    "B2-3 with space.txt 确认后被移入回收区": true,
+    "B2-4 with space.txt 原位置已消失": true,
+    "B2-5 with space.txt 文件树不再显示它": true,
+    "B2-6 with space.txt Host 记录为 stored": true,
+    "B2-7 with space.txt 回收区数量与列表同步": true,
+    "B2-8 with space.txt payload 与 manifest 都在磁盘上": true,
+    "B2-9 with space.txt payload 字节哈希与原始文件一致": true,
+    "B2-10 with space.txt 回收区显示「可恢复」": true,
+    "B2-11 with space.txt 恢复按钮可点击": true,
+    "B2-12 with space.txt 原位置重新出现": true,
+    "B2-13 with space.txt 恢复后内容哈希与原始一致": true,
+    "B2-14 with space.txt Host 记录为 restored": true,
+    "B2-15 with space.txt 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 with space.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 deep.md 取消确认后对话框消失": true,
+    "B2-2 deep.md 取消时磁盘零变化": true,
+    "B2-3 deep.md 确认后被移入回收区": true,
+    "B2-4 deep.md 原位置已消失": true,
+    "B2-5 deep.md 文件树不再显示它": true,
+    "B2-6 deep.md Host 记录为 stored": true,
+    "B2-7 deep.md 回收区数量与列表同步": true,
+    "B2-8 deep.md payload 与 manifest 都在磁盘上": true,
+    "B2-9 deep.md payload 字节哈希与原始文件一致": true,
+    "B2-10 deep.md 回收区显示「可恢复」": true,
+    "B2-11 deep.md 恢复按钮可点击": true,
+    "B2-12 deep.md 原位置重新出现": true,
+    "B2-13 deep.md 恢复后内容哈希与原始一致": true,
+    "B2-14 deep.md Host 记录为 restored": true,
+    "B2-15 deep.md 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 deep.md 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B3-1 原位置已有同名文件时恢复不覆盖它": true,
+    "B3-2 冲突时 Host 记录仍为 stored（不动盘）": true,
+    "B3-3 冲突时界面给出可读说明": true,
+    "B3-4 冲突解除后可以正常恢复（同一记录未被破坏）": true,
+    "B3-5 已有活动 View 时移入被阻止（对话框给出原因，不是静默失败）": true,
+    "B3-6 被阻止时文件仍在原位置": true,
+    "B3-7 目录不能通过普通文件接口移入：400 + ERR_TRASH_KIND_UNSUPPORTED": true,
+    "B3-7b 磁盘哨兵：目录里的文件没有被移动": true,
+    "B3-7c 没有因此多出回收目录": true,
+    "B3-8 保留内部路径不能移入：403 + ERR_PATH_RESERVED": true,
+    "B3-8b 磁盘哨兵：内部文件没有被移动": true,
+    "B3-8c 没有因此多出回收目录": true,
+    "B3-9 越界路径（../）不能移入：400 + ERR_COMMAND_INVALID": true,
+    "B3-9b 磁盘哨兵：项目 B 的文件没有被移动": true,
+    "B3-9c 没有因此多出回收目录": true,
+    "B3-10 符号链接不能通过普通文件接口移入：400 + ERR_TRASH_KIND_UNSUPPORTED": true,
+    "B3-10b 链接目标本身未被移动": true,
+    "B3-10c 磁盘上的链接仍在（没有被\"回收\"）": true,
+    "B3-11 项目 B 的回收区不含项目 A 的记录": true,
+    "B3-12 用 B 的项目 id 移入 A 的文件：404 + ERR_RESOURCE_NOT_FOUND": true,
+    "B3-13 A 的文件没有因此消失": true,
+    "B3-13b 两个项目都没有因此多出回收目录": true,
+    "B2-17 收尾时没有遗留 stored 记录（六个文件都已恢复）": true,
+    "B2-18 六个文件都在原位置且哈希未变": true,
+    "B2-19 回收区面板没有失效横幅": true
+  },
+  "detail": {
+    "B2-0 六个文件都在磁盘上且哈希已记录": {
+      "note.md": "a1e0014f8a7b",
+      "plain.txt": "ec493ddd0ec2",
+      "blob.bin": "785b0751fc2c",
+      "中文名.txt": "23170920d73a",
+      "with space.txt": "e24aae865100",
+      "notes/deep.md": "7049625d84fc"
+    },
+    "B2-1 note.md 取消确认后对话框消失": {
+      "stage": "cancelled",
+      "phase": "ready"
+    },
+    "B2-2 note.md 取消时磁盘零变化": {
+      "before": [
+        ".weavespace/.gitignore",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ],
+      "after": [
+        ".weavespace/.gitignore",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ]
+    },
+    "B2-3 note.md 确认后被移入回收区": {
+      "stage": "confirmed",
+      "text": "移入回收区「note.md」\n\n「note.md」已移入回收区，可在回收区恢复。\n\n好的"
+    },
+    "B2-4 note.md 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/note.md",
+    "B2-6 note.md Host 记录为 stored": {
+      "opId": "op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5",
+      "path": "note.md",
+      "entryKind": "file",
+      "size": 23,
+      "deletedAt": "2026-11-26T17:25:40.194Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B2-7 note.md 回收区数量与列表同步": {
+      "entries": 1,
+      "opDirs": 1
+    },
+    "B2-8 note.md payload 与 manifest 都在磁盘上": {
+      "payload": true,
+      "manifest": true,
+      "payloadHash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+      "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5"
+    },
+    "B2-9 note.md payload 字节哈希与原始文件一致": {
+      "original": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+      "payload": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+    },
+    "B2-10 note.md 回收区显示「可恢复」": [
+      {
+        "name": "note.md",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false
+      }
+    ],
+    "B2-11 note.md 恢复按钮可点击": "clicked",
+    "B2-12 note.md 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/note.md",
+    "B2-13 note.md 恢复后内容哈希与原始一致": {
+      "original": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+      "restored": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+    },
+    "B2-15 note.md 回收区行变为「已恢复」且不再提供恢复": [
+      {
+        "name": "note.md",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-1 plain.txt 取消确认后对话框消失": {
+      "stage": "cancelled",
+      "phase": "ready"
+    },
+    "B2-2 plain.txt 取消时磁盘零变化": {
+      "before": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ],
+      "after": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ]
+    },
+    "B2-3 plain.txt 确认后被移入回收区": {
+      "stage": "confirmed",
+      "text": "移入回收区「plain.txt」\n\n「plain.txt」已移入回收区，可在回收区恢复。\n\n好的"
+    },
+    "B2-4 plain.txt 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/plain.txt",
+    "B2-6 plain.txt Host 记录为 stored": {
+      "opId": "op-e99a4ae6-dcaa-4152-9592-84da841fdabb",
+      "path": "plain.txt",
+      "entryKind": "file",
+      "size": 28,
+      "deletedAt": "2026-11-26T17:25:50.448Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B2-7 plain.txt 回收区数量与列表同步": {
+      "entries": 2,
+      "opDirs": 2
+    },
+    "B2-8 plain.txt payload 与 manifest 都在磁盘上": {
+      "payload": true,
+      "manifest": true,
+      "payloadHash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb"
+    },
+    "B2-9 plain.txt payload 字节哈希与原始文件一致": {
+      "original": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "payload": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866"
+    },
+    "B2-10 plain.txt 回收区显示「可恢复」": [
+      {
+        "name": "plain.txt",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false
+      },
+      {
+        "name": "note.md",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-11 plain.txt 恢复按钮可点击": "clicked",
+    "B2-12 plain.txt 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/plain.txt",
+    "B2-13 plain.txt 恢复后内容哈希与原始一致": {
+      "original": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "restored": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866"
+    },
+    "B2-15 plain.txt 回收区行变为「已恢复」且不再提供恢复": [
+      {
+        "name": "plain.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-1 blob.bin 取消确认后对话框消失": {
+      "stage": "cancelled",
+      "phase": "ready"
+    },
+    "B2-2 blob.bin 取消时磁盘零变化": {
+      "before": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ],
+      "after": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ]
+    },
+    "B2-3 blob.bin 确认后被移入回收区": {
+      "stage": "confirmed",
+      "text": "移入回收区「blob.bin」\n\n「blob.bin」已移入回收区，可在回收区恢复。\n\n好的"
+    },
+    "B2-4 blob.bin 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/blob.bin",
+    "B2-6 blob.bin Host 记录为 stored": {
+      "opId": "op-22a0bad3-6219-4249-ab96-0cb3f9022641",
+      "path": "blob.bin",
+      "entryKind": "file",
+      "size": 1024,
+      "deletedAt": "2026-11-26T17:25:59.299Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B2-7 blob.bin 回收区数量与列表同步": {
+      "entries": 3,
+      "opDirs": 3
+    },
+    "B2-8 blob.bin payload 与 manifest 都在磁盘上": {
+      "payload": true,
+      "manifest": true,
+      "payloadHash": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+      "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641"
+    },
+    "B2-9 blob.bin payload 字节哈希与原始文件一致": {
+      "original": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+      "payload": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+    },
+    "B2-10 blob.bin 回收区显示「可恢复」": [
+      {
+        "name": "blob.bin",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false
+      },
+      {
+        "name": "plain.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "note.md",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-11 blob.bin 恢复按钮可点击": "clicked",
+    "B2-12 blob.bin 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/blob.bin",
+    "B2-13 blob.bin 恢复后内容哈希与原始一致": {
+      "original": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+      "restored": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+    },
+    "B2-15 blob.bin 回收区行变为「已恢复」且不再提供恢复": [
+      {
+        "name": "blob.bin",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-1 中文名.txt 取消确认后对话框消失": {
+      "stage": "cancelled",
+      "phase": "ready"
+    },
+    "B2-2 中文名.txt 取消时磁盘零变化": {
+      "before": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641/manifest.json",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ],
+      "after": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641/manifest.json",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ]
+    },
+    "B2-3 中文名.txt 确认后被移入回收区": {
+      "stage": "confirmed",
+      "text": "移入回收区「中文名.txt」\n\n「中文名.txt」已移入回收区，可在回收区恢复。\n\n好的"
+    },
+    "B2-4 中文名.txt 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/中文名.txt",
+    "B2-6 中文名.txt Host 记录为 stored": {
+      "opId": "op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e",
+      "path": "中文名.txt",
+      "entryKind": "file",
+      "size": 34,
+      "deletedAt": "2026-11-26T17:26:08.270Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B2-7 中文名.txt 回收区数量与列表同步": {
+      "entries": 4,
+      "opDirs": 4
+    },
+    "B2-8 中文名.txt payload 与 manifest 都在磁盘上": {
+      "payload": true,
+      "manifest": true,
+      "payloadHash": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+      "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e"
+    },
+    "B2-9 中文名.txt payload 字节哈希与原始文件一致": {
+      "original": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+      "payload": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20"
+    },
+    "B2-10 中文名.txt 回收区显示「可恢复」": [
+      {
+        "name": "中文名.txt",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false
+      },
+      {
+        "name": "blob.bin",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "plain.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "note.md",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-11 中文名.txt 恢复按钮可点击": "clicked",
+    "B2-12 中文名.txt 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/中文名.txt",
+    "B2-13 中文名.txt 恢复后内容哈希与原始一致": {
+      "original": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+      "restored": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20"
+    },
+    "B2-15 中文名.txt 回收区行变为「已恢复」且不再提供恢复": [
+      {
+        "name": "中文名.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-1 with space.txt 取消确认后对话框消失": {
+      "stage": "cancelled",
+      "phase": "ready"
+    },
+    "B2-2 with space.txt 取消时磁盘零变化": {
+      "before": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641/manifest.json",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        ".weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e/manifest.json",
+        ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ],
+      "after": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641/manifest.json",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        ".weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e/manifest.json",
+        ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ]
+    },
+    "B2-3 with space.txt 确认后被移入回收区": {
+      "stage": "confirmed",
+      "text": "移入回收区「with space.txt」\n\n「with space.txt」已移入回收区，可在回收区恢复。\n\n好的"
+    },
+    "B2-4 with space.txt 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/with space.txt",
+    "B2-6 with space.txt Host 记录为 stored": {
+      "opId": "op-00112de8-36ea-43ea-8113-29ba576e543a",
+      "path": "with space.txt",
+      "entryKind": "file",
+      "size": 16,
+      "deletedAt": "2026-11-26T17:26:17.176Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B2-7 with space.txt 回收区数量与列表同步": {
+      "entries": 5,
+      "opDirs": 5
+    },
+    "B2-8 with space.txt payload 与 manifest 都在磁盘上": {
+      "payload": true,
+      "manifest": true,
+      "payloadHash": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+      "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-00112de8-36ea-43ea-8113-29ba576e543a"
+    },
+    "B2-9 with space.txt payload 字节哈希与原始文件一致": {
+      "original": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+      "payload": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b"
+    },
+    "B2-10 with space.txt 回收区显示「可恢复」": [
+      {
+        "name": "with space.txt",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false
+      },
+      {
+        "name": "中文名.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "blob.bin",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "plain.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "note.md",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-11 with space.txt 恢复按钮可点击": "clicked",
+    "B2-12 with space.txt 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/with space.txt",
+    "B2-13 with space.txt 恢复后内容哈希与原始一致": {
+      "original": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+      "restored": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b"
+    },
+    "B2-15 with space.txt 回收区行变为「已恢复」且不再提供恢复": [
+      {
+        "name": "with space.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-1 deep.md 取消确认后对话框消失": {
+      "stage": "cancelled",
+      "phase": "ready"
+    },
+    "B2-2 deep.md 取消时磁盘零变化": {
+      "before": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-00112de8-36ea-43ea-8113-29ba576e543a/manifest.json",
+        ".weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641/manifest.json",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        ".weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e/manifest.json",
+        ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ],
+      "after": [
+        ".weavespace/.gitignore",
+        ".weavespace/.ws-internal",
+        ".weavespace/trash/op-00112de8-36ea-43ea-8113-29ba576e543a/manifest.json",
+        ".weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641/manifest.json",
+        ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+        ".weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e/manifest.json",
+        ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+        "blob.bin",
+        "note.md",
+        "notes/deep.md",
+        "plain.txt",
+        "with space.txt",
+        "中文名.txt"
+      ]
+    },
+    "B2-3 deep.md 确认后被移入回收区": {
+      "stage": "confirmed",
+      "text": "移入回收区「deep.md」\n\n「deep.md」已移入回收区，可在回收区恢复。\n\n好的"
+    },
+    "B2-4 deep.md 原位置已消失": "D:/Workspace/projects/weavespace-test/p203/projA/notes/deep.md",
+    "B2-6 deep.md Host 记录为 stored": {
+      "opId": "op-9f2aebc0-36af-4a63-a8ce-c4451c962706",
+      "path": "notes/deep.md",
+      "entryKind": "file",
+      "size": 24,
+      "deletedAt": "2026-11-26T17:26:25.949Z",
+      "state": "stored",
+      "canRestore": true
+    },
+    "B2-7 deep.md 回收区数量与列表同步": {
+      "entries": 6,
+      "opDirs": 6
+    },
+    "B2-8 deep.md payload 与 manifest 都在磁盘上": {
+      "payload": true,
+      "manifest": true,
+      "payloadHash": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+      "dir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-9f2aebc0-36af-4a63-a8ce-c4451c962706"
+    },
+    "B2-9 deep.md payload 字节哈希与原始文件一致": {
+      "original": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+      "payload": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c"
+    },
+    "B2-10 deep.md 回收区显示「可恢复」": [
+      {
+        "name": "deep.md",
+        "badge": "可恢复",
+        "note": "文件在回收区里，可以恢复到原位置。",
+        "hasButton": true,
+        "buttonDisabled": false
+      },
+      {
+        "name": "with space.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "中文名.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "blob.bin",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "plain.txt",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      },
+      {
+        "name": "note.md",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B2-11 deep.md 恢复按钮可点击": "clicked",
+    "B2-12 deep.md 原位置重新出现": "D:/Workspace/projects/weavespace-test/p203/projA/notes/deep.md",
+    "B2-13 deep.md 恢复后内容哈希与原始一致": {
+      "original": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+      "restored": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c"
+    },
+    "B2-15 deep.md 回收区行变为「已恢复」且不再提供恢复": [
+      {
+        "name": "deep.md",
+        "badge": "已恢复",
+        "note": "文件已恢复到原位置。",
+        "hasButton": false,
+        "buttonDisabled": null
+      }
+    ],
+    "B3-1 原位置已有同名文件时恢复不覆盖它": {
+      "before": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "conflict": "9e60a7abfd5806b97dbd683cba2c5233b53c90977351ca3c0629da1192181daa",
+      "after": "9e60a7abfd5806b97dbd683cba2c5233b53c90977351ca3c0629da1192181daa"
+    },
+    "B3-3 冲突时界面给出可读说明": {
+      "name": "plain.txt",
+      "badge": "可恢复",
+      "note": "文件在回收区里，可以恢复到原位置。",
+      "hasButton": true,
+      "buttonDisabled": false
+    },
+    "B3-4 冲突解除后可以正常恢复（同一记录未被破坏）": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+    "B3-5 已有活动 View 时移入被阻止（对话框给出原因，不是静默失败）": {
+      "opened": true,
+      "blocked": {
+        "stage": "blocked",
+        "text": "移入回收区「note.md」\n\n现在不能移入回收区：请先处理下列情况。\n\n无法操作「note.md」：仍在标签中打开。请先关闭相关标签并处理草稿（本次操作没有任何磁盘副作用）。\n\n为保护未保存的内容，这里不提供\"强制移除\"。处理好之后可以再次尝试。\n\n好的"
+      }
+    },
+    "B3-7 目录不能通过普通文件接口移入：400 + ERR_TRASH_KIND_UNSUPPORTED": {
+      "status": 400,
+      "code": "ERR_TRASH_KIND_UNSUPPORTED",
+      "message": "只有普通文件可以移入回收区（目录、链接与超大文件暂不支持）"
+    },
+    "B3-7c 没有因此多出回收目录": {
+      "before": 7,
+      "after": 7
+    },
+    "B3-8 保留内部路径不能移入：403 + ERR_PATH_RESERVED": {
+      "status": 403,
+      "code": "ERR_PATH_RESERVED",
+      "message": "该路径属于工作台内部目录，不参与回收"
+    },
+    "B3-8c 没有因此多出回收目录": {
+      "before": 7,
+      "after": 7
+    },
+    "B3-9 越界路径（../）不能移入：400 + ERR_COMMAND_INVALID": {
+      "status": 400,
+      "code": "ERR_COMMAND_INVALID",
+      "message": "父目录含空段或相对段"
+    },
+    "B3-9c 没有因此多出回收目录": {
+      "before": 7,
+      "after": 7
+    },
+    "B3-10 符号链接不能通过普通文件接口移入：400 + ERR_TRASH_KIND_UNSUPPORTED": {
+      "status": 400,
+      "code": "ERR_TRASH_KIND_UNSUPPORTED",
+      "message": "只有普通文件可以移入回收区（目录、链接与超大文件暂不支持）"
+    },
+    "B3-11 项目 B 的回收区不含项目 A 的记录": [],
+    "B3-12 用 B 的项目 id 移入 A 的文件：404 + ERR_RESOURCE_NOT_FOUND": {
+      "status": 404,
+      "code": "ERR_RESOURCE_NOT_FOUND",
+      "message": "资源不存在"
+    },
+    "B2-17 收尾时没有遗留 stored 记录（六个文件都已恢复）": [],
+    "B2-18 六个文件都在原位置且哈希未变": {
+      "note.md": true,
+      "plain.txt": true,
+      "blob.bin": true,
+      "中文名.txt": true,
+      "with space.txt": true,
+      "notes/deep.md": true
+    },
+    "B2-19 回收区面板没有失效横幅": null
+  },
+  "injected": [],
+  "summary": {
+    "total": 122,
+    "passed": 122,
+    "failed": []
+  },
+  "filesystem": [
+    {
+      "file": "note.md",
+      "kind": "markdown",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/note.md",
+      "originalHash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5",
+      "payload": {
+        "exists": true,
+        "hash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "plain.txt",
+      "kind": "text",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/plain.txt",
+      "originalHash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb",
+      "payload": {
+        "exists": true,
+        "hash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "blob.bin",
+      "kind": "binary",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/blob.bin",
+      "originalHash": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641",
+      "payload": {
+        "exists": true,
+        "hash": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "中文名.txt",
+      "kind": "cjk-name",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/中文名.txt",
+      "originalHash": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e",
+      "payload": {
+        "exists": true,
+        "hash": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "with space.txt",
+      "kind": "space-name",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/with space.txt",
+      "originalHash": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-00112de8-36ea-43ea-8113-29ba576e543a",
+      "payload": {
+        "exists": true,
+        "hash": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "notes/deep.md",
+      "kind": "subdir",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/notes/deep.md",
+      "originalHash": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-9f2aebc0-36af-4a63-a8ce-c4451c962706",
+      "payload": {
+        "exists": true,
+        "hash": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    }
+  ],
+  "tree": [
+    ".weavespace/.gitignore",
+    ".weavespace/.ws-internal",
+    ".weavespace/trash/op-00112de8-36ea-43ea-8113-29ba576e543a/manifest.json",
+    ".weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641/manifest.json",
+    ".weavespace/trash/op-68db4bf9-996c-41b5-94b9-5eaf4c2e3bdc/manifest.json",
+    ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+    ".weavespace/trash/op-9f2aebc0-36af-4a63-a8ce-c4451c962706/manifest.json",
+    ".weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e/manifest.json",
+    ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+    "blob.bin",
+    "note.md",
+    "notes/deep.md",
+    "plain.txt",
+    "with space.txt",
+    "中文名.txt"
+  ],
+  "trashDirs": [
+    "op-00112de8-36ea-43ea-8113-29ba576e543a",
+    "op-22a0bad3-6219-4249-ab96-0cb3f9022641",
+    "op-68db4bf9-996c-41b5-94b9-5eaf4c2e3bdc",
+    "op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5",
+    "op-9f2aebc0-36af-4a63-a8ce-c4451c962706",
+    "op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e",
+    "op-e99a4ae6-dcaa-4152-9592-84da841fdabb"
+  ]
+}

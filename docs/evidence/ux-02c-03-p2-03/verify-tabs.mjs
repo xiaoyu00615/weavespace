@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { ev, sleep } from './cdp.mjs';
 import {
   PROJECT_A,
+  PROJECT_B,
   ROOT_A,
   api,
   backToTree,
@@ -28,11 +29,17 @@ import {
 
 const { result, check, section, summarize } = createReport('ux-02c-03-p2-03-tabs');
 
-/** 观察某个页面发出的 restore POST 次数（只看，不拦截）。 */
+/** 观察某个页面发出的 restore POST 次数（只看，不拦截）。返回 `stop()` 注销监听器。 */
 async function watchRestorePosts(t) {
-  const state = { posts: 0, urls: [] };
+  const state = {
+    posts: 0,
+    urls: [],
+    stop() {
+      off();
+    },
+  };
   await t.tab.send('Network.enable');
-  t.tab.on('Network.requestWillBeSent', (event) => {
+  const off = t.tab.on('Network.requestWillBeSent', (event) => {
     if (event.request?.method === 'POST' && /\/api\/trash\/restore/.test(event.request.url)) {
       state.posts += 1;
       state.urls.push(event.request.url);
@@ -133,7 +140,7 @@ section('B5-2 · UNKNOWN（请求没到 Host）跨页面 / 跨刷新保持保护
   check('B5-9 前提：plain.txt 已在回收区', !!entry, entry);
 
   // 请求阶段直接掐掉：Host 一个字节都没动，客户端拿不到任何结论
-  A.tab.on('Fetch.requestPaused', async (p) => {
+  const offFetch = A.tab.on('Fetch.requestPaused', async (p) => {
     try {
       if (/\/api\/trash\/restore/.test(p.request.url)) {
         await A.tab.send('Fetch.failRequest', { requestId: p.requestId, errorReason: 'ConnectionFailed' });
@@ -148,6 +155,7 @@ section('B5-2 · UNKNOWN（请求没到 Host）跨页面 / 跨刷新保持保护
   await openTrash(A);
   await restoreRow(A, 'plain.txt');
   await sleep(2600);
+  offFetch();
   await A.tab.send('Fetch.disable').catch(() => undefined);
 
   check('B5-10 磁盘未变：原位置仍为空', !existsSync(`${ROOT_A}/plain.txt`));
@@ -209,20 +217,39 @@ section('B5-3 · 满仓后正常释放容量');
   const storedBulk = listed.filter((item) => item.state === 'stored' && item.path.startsWith('bulk/'));
   check('B5-18 已在回收区准备好 64 条真实记录', storedBulk.length === 64, { created, stored: storedBulk.length });
 
-  // 把台账填到 64（两条持久层都写，模拟"64 次恢复都没有结论"）
+  /*
+   * 把台账填到 64 —— 但**故意留一条不在台账里**（`reservedFree`）。
+   *
+   * 为什么：如果 64 条 bulk 记录全都在台账里，它们每一行按设计都是「待核对」，
+   * 释放出容量之后**没有任何一行真的能点**（`exists` 不是授权）。上一版把
+   * "restored 总数 >= 2"当成通过，其实是把下面那次**接口直接恢复**（opIds[0]）数进去了，
+   * 界面根本没成功过一条——正是 R1-04 要拆掉的假通过。
+   *
+   * 第 64 条用一个**属于另一个项目**的记录补位：它不会被 proj-a 的对账碰掉，
+   * 却能真实占用容量。这样"哪一行能恢复"就有唯一答案，可以精确断言。
+   */
   const workspaceKey = (await api('/api/health')).body.workspaceKey;
   const opIds = storedBulk.map((item) => item.opId);
+  const freeEntry = storedBulk[storedBulk.length - 1];
+  const ledgerOpIds = opIds.filter((opId) => opId !== freeEntry.opId);
+  const foreignRecord = {
+    workspaceKey,
+    projectId: PROJECT_B,
+    opId: 'op-foreign-b0001',
+    createdAt: '2026-11-27T00:00:00.000Z',
+  };
   const filled = await ev(
     A.tab,
     `(async () => {
       const WORKSPACE_KEY = ${JSON.stringify(workspaceKey)};
-      const OP_IDS = ${JSON.stringify(opIds)};
+      const OP_IDS = ${JSON.stringify(ledgerOpIds)};
+      const FOREIGN = ${JSON.stringify(foreignRecord)};
       const records = OP_IDS.map((opId) => ({
         workspaceKey: WORKSPACE_KEY,
         projectId: 'proj-a',
         opId,
         createdAt: '2026-11-27T00:00:00.000Z',
-      }));
+      })).concat([FOREIGN]);
       localStorage.setItem(${JSON.stringify(LEDGER_KEY)}, JSON.stringify({ version: 1, records }));
       await new Promise((resolve, reject) => {
         const req = indexedDB.open('weavespace-trash-guard-v1', 1);
@@ -240,6 +267,11 @@ section('B5-3 · 满仓后正常释放容量');
     })()`,
   );
   check('B5-19 台账与保护记录都写到 64 条', filled === 64, filled);
+  check(
+    'B5-19b 前提：恰好有一条 bulk 记录不在台账里（它才是唯一可点的那行）',
+    !(await ledger(A)).some((item) => item.opId === freeEntry.opId),
+    { freeOpId: freeEntry.opId, path: freeEntry.path },
+  );
 
   await A.tab.send('Page.reload');
   await sleep(4500);
@@ -265,14 +297,67 @@ section('B5-3 · 满仓后正常释放容量');
 
   const recovered = (await trashRows(A)).find((row) => row.badge === '可恢复');
   check('B5-24 容量释放后恢复按钮重新可用', !!recovered && recovered.hasButton === true && recovered.buttonDisabled === false, recovered);
-  if (recovered) {
-    await restoreRow(A, recovered.name);
-    await sleep(2500);
-    const { body: after } = await trashList(PROJECT_A);
-    const restoredCount = (after.entries ?? []).filter((item) => item.state === 'restored').length;
-    check('B5-25 释放容量后真的能再恢复一条（真实磁盘）', restoredCount >= 2, { restoredCount });
-  } else {
+
+  /*
+   * R1-04：不许再用「restored 总数 >= 2」这种宽松断言。
+   *
+   * 那时只要有**任何一条历史恢复**（包括上面由 Node 直接调接口做的 opIds[0]），
+   * 这条就会通过——即使界面上点的那次根本没成功。现在锁定具体对象：
+   * 记录 opId / 原始路径 / payload 的 SHA-256 → 点它 → 逐项核对回来的是**同一份字节**。
+   */
+  if (!recovered) {
     check('B5-25 释放容量后真的能再恢复一条（真实磁盘）', false, '没有可恢复行');
+  } else {
+    /*
+     * 唯一可点的那行必须是 `freeEntry`（唯一不在台账里的记录）。
+     * 如果它是别的行，说明"可恢复"的判定本身出了问题——那比恢复失败更严重。
+     */
+    const target = freeEntry;
+    const targetLeaf = target.path.split('/').pop();
+    const payloadBefore = sha256(`${ROOT_A}/.weavespace/trash/${target.opId}/payload`);
+    const pathBefore = existsSync(`${ROOT_A}/${target.path}`);
+
+    result.detail['B5-25'] = {
+      opId: target.opId,
+      originalPath: target.path,
+      payloadSha256: payloadBefore,
+      pathExistedBeforeRestore: pathBefore,
+      clickedName: recovered.name,
+      ledgerSizeBefore: (await ledger(A)).length,
+    };
+    check(
+      'B5-25a 唯一可点的那行就是"不在台账里"的那条记录',
+      recovered.name === targetLeaf,
+      { clicked: recovered.name, expected: targetLeaf, opId: target.opId },
+    );
+    check(
+      'B5-25a2 前提：目标记录仍在回收区、原位置为空、payload 哈希已记录',
+      !pathBefore && payloadBefore !== null,
+      { opId: target.opId, path: target.path, payloadBefore, pathBefore },
+    );
+
+    await restoreRow(A, targetLeaf);
+    await sleep(2600);
+
+    const hostRecord = (await trashList(PROJECT_A)).body.entries.find((item) => item.opId === target.opId);
+    check('B5-25b 这条 opId 的 Host 状态是 restored（不是别的记录）', hostRecord?.state === 'restored', hostRecord);
+    check('B5-25c 原始路径重新出现', existsSync(`${ROOT_A}/${target.path}`), target.path);
+    check(
+      'B5-25d 恢复后的 SHA-256 与恢复前 payload 逐字节一致',
+      sha256(`${ROOT_A}/${target.path}`) === payloadBefore,
+      { before: payloadBefore, after: sha256(`${ROOT_A}/${target.path}`) },
+    );
+    const ledgerAfter = await ledger(A);
+    check(
+      'B5-25e 待核对台账中不再存在这个 opId',
+      !ledgerAfter.some((item) => item.opId === target.opId),
+      { ledger: ledgerAfter.length, opId: target.opId },
+    );
+    result.detail['B5-25f'] = {
+      hostState: hostRecord?.state ?? null,
+      restoredSha256: sha256(`${ROOT_A}/${target.path}`),
+      ledgerSize: ledgerAfter.length,
+    };
   }
 }
 

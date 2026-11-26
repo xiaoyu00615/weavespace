@@ -1,0 +1,58 @@
+{
+  "run": "ux-02c-03-p2-03-restart-3",
+  "at": "2026-11-26T17:36:21.580Z",
+  "checks": {
+    "B6-12 重启 + 重开页面后仍显示「待核对」": true,
+    "B6-13 重启后台账仍有这条": true,
+    "B6-14 重启后 Host 记录仍是 stored（磁盘从未被改）": true,
+    "B6-15 重启后强制点击仍然零 POST（exists 不是授权）": true,
+    "B6-16 已恢复的记录重启后仍是「已恢复」且不可再恢复": true,
+    "B6-17 已恢复文件仍在原位置且哈希未变": true,
+    "B6-18 面板没有新的失效横幅": true
+  },
+  "detail": {
+    "B6-12 重启 + 重开页面后仍显示「待核对」": {
+      "name": "plain.txt",
+      "badge": "待核对",
+      "note": "上一次操作的结果还没确认，核对完成前不能再次恢复（不会自动重发）。",
+      "hasButton": true,
+      "buttonDisabled": true
+    },
+    "B6-13 重启后台账仍有这条": [
+      {
+        "workspaceKey": "dedd8ebc19c948f6a738f5f823d3066e0e63ec5e81b70e7fb9d925e2164ae99a",
+        "projectId": "proj-a",
+        "opId": "op-1c9df617-ce22-4da4-a439-34e5f7d8856d",
+        "createdAt": "2026-11-26T17:36:00.647Z"
+      }
+    ],
+    "B6-15 重启后强制点击仍然零 POST（exists 不是授权）": {
+      "count": 0
+    },
+    "B6-16 已恢复的记录重启后仍是「已恢复」且不可再恢复": {
+      "name": "note.md",
+      "badge": "已恢复",
+      "note": "文件已恢复到原位置。",
+      "hasButton": false,
+      "buttonDisabled": null
+    },
+    "B6-18 面板没有新的失效横幅": null,
+    "phase3": {
+      "posts": 0,
+      "ledger": [
+        {
+          "workspaceKey": "dedd8ebc19c948f6a738f5f823d3066e0e63ec5e81b70e7fb9d925e2164ae99a",
+          "projectId": "proj-a",
+          "opId": "op-1c9df617-ce22-4da4-a439-34e5f7d8856d",
+          "createdAt": "2026-11-26T17:36:00.647Z"
+        }
+      ]
+    }
+  },
+  "injected": [],
+  "summary": {
+    "total": 7,
+    "passed": 7,
+    "failed": []
+  }
+}

@@ -1,0 +1,53 @@
+=== npx tsc -p tsconfig.json (root typecheck) ===
+exit=0
+
+=== npm run typecheck:apps ===
+
+> weavespace@0.0.0-p0 typecheck:apps
+> npm --prefix apps/shell run typecheck && npm --prefix apps/server run typecheck
+
+
+> weavespace-shell@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+
+> weavespace-server@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+exit=0
+
+=== npm run build:shell ===
+
+> weavespace@0.0.0-p0 build:shell
+> npm --prefix apps/shell run build
+
+
+> weavespace-shell@0.0.0-s9b build
+> vite build
+
+[36mvite v8.3.8 [32mbuilding client environment for production...[36m[39m
+transforming...
+✓ 94 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.44 kB │ gzip:   0.33 kB
+dist/assets/index-BZQ0k3_1.css   23.51 kB │ gzip:   4.91 kB
+dist/assets/index-BCtgVDYf.js   454.60 kB │ gzip: 138.02 kB
+
+[32m✓ built in 3.22s[39m
+[33m[33m[PLUGIN_TIMINGS] [0mJavaScript callbacks ran for 2.6s of this 3.2s build (82%).
+The slowest callbacks, timed inside each callback (the wait before a callback starts is excluded, the time it awaits is included):
+  - plugin vite:prepare-out-dir renderStart (66%, 2.1s, 1 call)
+Additional callback time came from callbacks under 1s.
+See https://rolldown.rs/reference/InputOptions.checks#bundlertimings for more details.
+[39m
+exit=0
+
+=== git diff --check ===
+warning: in the working copy of 'apps/shell/src/client/client-api.ts', CRLF will be replaced by LF the next time Git touches it
+warning: in the working copy of 'docs/evidence/ux-02c-03-p2-03/cdp.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/ux-02c-03-p2-03/verify-lifecycle.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/ux-02c-03-p2-03/verify-restart.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/ux-02c-03-p2-03/verify-tabs.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/evidence/ux-02c-03-p2-03/verify-unknown.mjs', LF will be replaced by CRLF the next time Git touches it
+exit=0

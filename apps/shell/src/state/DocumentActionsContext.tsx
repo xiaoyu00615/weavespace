@@ -30,6 +30,7 @@ import {
   type TrashActionOutcome,
   type TrashListOutcome,
   type TrashOpQueryOutcome,
+  type TrashSendGate,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
 import { backupDraftBeforeReload } from '../client/draft-backup';
@@ -240,7 +241,11 @@ export interface DocumentActions {
   /** 移入回收区：只有 `opId` 由调用方持有，其余身份全部由 Host 判定。 */
   trashEntry(projectId: string, path: string, opId: string): Promise<TrashActionOutcome>;
   /** 恢复到原始路径：不提供目标参数（Host 记录即权威）。 */
-  restoreTrash(projectId: string, opId: string): Promise<TrashActionOutcome>;
+  /**
+   * `gate` 是发送前的最终裁决（R1-01）：由回收区编排层给出，在会话令牌到手、
+   * 请求发出之前同步执行一次；返回不允许时一个请求都不会发出去。
+   */
+  restoreTrash(projectId: string, opId: string, gate?: TrashSendGate): Promise<TrashActionOutcome>;
   /** 按 `opId` 做一次只读核对（UNKNOWN 后唯一允许的后续动作）。 */
   queryTrashOp(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
 }
@@ -1135,7 +1140,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         return liveClient.trashEntry(projectId, path, opId);
       },
 
-      async restoreTrash(projectId, opId) {
+      async restoreTrash(projectId, opId, gate) {
         if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
           return {
             status: 'REJECTED' as const,
@@ -1146,7 +1151,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
             httpStatus: 501,
           };
         }
-        return liveClient.restoreTrash(projectId, opId);
+        return liveClient.restoreTrash(projectId, opId, gate);
       },
 
       async queryTrashOp(projectId, opId) {

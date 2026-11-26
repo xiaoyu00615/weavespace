@@ -232,39 +232,62 @@ section('B3 · 恢复冲突与安全保护');
 }
 
 // 3) 目录 / 保留内部路径 / 符号链接：普通文件接口必须拒绝
+//
+// R1-05：断言必须锁定**具体状态码 + 具体错误码**。
+// 旧断言只要求"4xx 且不是 APPLIED"，于是"来源不被允许（403 ERR_PERMISSION_DENIED）"
+// 也能让这条通过——那是假通过。下面每条都写死了 Host 契约里的唯一答案。
 {
-  const dirTry = await api('/api/trash/entry', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectId: PROJECT_A, path: 'notes', opId: 'op-dir-00000001' }),
-  });
-  check(
-    'B3-7 目录不能通过普通文件接口移入',
-    dirTry.status >= 400 && dirTry.body?.status !== 'APPLIED' && dirTry.body?.errorCode !== 'ERR_PERMISSION_DENIED',
-    { status: dirTry.status, code: dirTry.body?.errorCode, message: dirTry.body?.message },
-  );
+  const cases = [
+    {
+      id: 'B3-7',
+      label: '目录不能通过普通文件接口移入',
+      path: 'notes',
+      opId: 'op-dir-00000001',
+      status: 400,
+      code: 'ERR_TRASH_KIND_UNSUPPORTED',
+      sentinel: () => existsSync(`${ROOT_A}/notes/deep.md`),
+      sentinelLabel: '目录里的文件没有被移动',
+    },
+    {
+      id: 'B3-8',
+      label: '保留内部路径不能移入',
+      path: '.weavespace/.gitignore',
+      opId: 'op-inner-00001',
+      status: 403,
+      code: 'ERR_PATH_RESERVED',
+      sentinel: () => existsSync(`${ROOT_A}/.weavespace/.gitignore`),
+      sentinelLabel: '内部文件没有被移动',
+    },
+    {
+      id: 'B3-9',
+      label: '越界路径（../）不能移入',
+      path: '../projB/b-only.md',
+      opId: 'op-escape-0001',
+      status: 400,
+      code: 'ERR_COMMAND_INVALID',
+      sentinel: () => existsSync(`${ROOT_B}/b-only.md`),
+      sentinelLabel: '项目 B 的文件没有被移动',
+    },
+  ];
 
-  const innerTry = await api('/api/trash/entry', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectId: PROJECT_A, path: '.weavespace/.gitignore', opId: 'op-inner-00001' }),
-  });
-  check(
-    'B3-8 保留内部路径不能移入',
-    innerTry.status >= 400 && innerTry.body?.status !== 'APPLIED' && innerTry.body?.errorCode !== 'ERR_PERMISSION_DENIED',
-    { status: innerTry.status, code: innerTry.body?.errorCode, message: innerTry.body?.message },
-  );
-
-  const traversal = await api('/api/trash/entry', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectId: PROJECT_A, path: '../projB/b-only.md', opId: 'op-escape-0001' }),
-  });
-  check(
-    'B3-9 越界路径（../）不能移入',
-    traversal.status >= 400 && traversal.body?.status !== 'APPLIED' && traversal.body?.errorCode !== 'ERR_PERMISSION_DENIED',
-    { status: traversal.status, code: traversal.body?.errorCode, message: traversal.body?.message },
-  );
+  for (const item of cases) {
+    const before = opDirs().length;
+    const response = await api('/api/trash/entry', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: PROJECT_A, path: item.path, opId: item.opId }),
+    });
+    check(
+      `${item.id} ${item.label}：${item.status} + ${item.code}`,
+      response.status === item.status && response.body?.errorCode === item.code,
+      { status: response.status, code: response.body?.errorCode, message: response.body?.message },
+    );
+    check(`${item.id}b 磁盘哨兵：${item.sentinelLabel}`, item.sentinel());
+    check(`${item.id}c 没有因此多出回收目录`, opDirs().length === before, {
+      before,
+      after: opDirs().length,
+    });
+  }
 
   // 符号链接：需要真实创建（Windows 上通常需要开发者模式/管理员）
   const { symlinkSync, rmSync } = await import('node:fs');
@@ -284,11 +307,12 @@ section('B3 · 恢复冲突与安全保护');
       body: JSON.stringify({ projectId: PROJECT_A, path: 'link-to-b.md', opId: 'op-link-0000001' }),
     });
     check(
-      'B3-10 符号链接不能通过普通文件接口移入',
-      linkTry.status >= 400 && linkTry.body?.status !== 'APPLIED' && linkTry.body?.errorCode !== 'ERR_PERMISSION_DENIED',
+      'B3-10 符号链接不能通过普通文件接口移入：400 + ERR_TRASH_KIND_UNSUPPORTED',
+      linkTry.status === 400 && linkTry.body?.errorCode === 'ERR_TRASH_KIND_UNSUPPORTED',
       { status: linkTry.status, code: linkTry.body?.errorCode, message: linkTry.body?.message },
     );
     check('B3-10b 链接目标本身未被移动', existsSync(`${ROOT_B}/b-only.md`));
+    check('B3-10c 磁盘上的链接仍在（没有被"回收"）', existsSync(link));
     rmSync(link, { force: true });
   } else {
     check('B3-10 符号链接不能通过普通文件接口移入（环境不支持建链接，跳过）', true, 'skipped');
@@ -300,19 +324,19 @@ section('B3 · 恢复冲突与安全保护');
   const { body: bList } = await trashList(PROJECT_B);
   check('B3-11 项目 B 的回收区不含项目 A 的记录', (bList.entries ?? []).length === 0, bList.entries);
 
+  const before = opDirs().length;
   const wrongProject = await api('/api/trash/entry', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ projectId: PROJECT_B, path: 'note.md', opId: 'op-cross-0000001' }),
   });
   check(
-    'B3-12 用 B 的项目 id 移入 A 的文件被拒绝（不是"来源不被允许"）',
-    wrongProject.status >= 400 &&
-      wrongProject.body?.status !== 'APPLIED' &&
-      wrongProject.body?.errorCode !== 'ERR_PERMISSION_DENIED',
+    'B3-12 用 B 的项目 id 移入 A 的文件：404 + ERR_RESOURCE_NOT_FOUND',
+    wrongProject.status === 404 && wrongProject.body?.errorCode === 'ERR_RESOURCE_NOT_FOUND',
     { status: wrongProject.status, code: wrongProject.body?.errorCode, message: wrongProject.body?.message },
   );
   check('B3-13 A 的文件没有因此消失', existsSync(`${ROOT_A}/note.md`));
+  check('B3-13b 两个项目都没有因此多出回收目录', opDirs().length === before);
 }
 
 /* ================================================================== */

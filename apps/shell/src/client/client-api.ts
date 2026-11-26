@@ -254,10 +254,45 @@ export type TrashListOutcome =
   | { status: 'REJECTED'; errorCode: string | null; message?: string; httpStatus?: number };
 
 /**
+ * 发送前的最终裁决（UX-02C-03-P2-03-R1-01）。
+ *
+ * 由**编排层**提供、由**传输层**在 `sessionToken()` 之后、`fetch()` 之前**同步**调用一次。
+ *
+ * 为什么必须放在这里：Controller 早先那次 `verifyPending()` 与真正的 POST 之间还隔着
+ * "取会话令牌"这个 await。用户完全可以在这段窗口里切项目 / 切模式，或者另一个标签页
+ * 把台账删掉——那时早先的检查已经通过了，POST 会照发。只有把最后一次判断压到
+ * fetch 的同一个同步片段里，才不存在可插入的窗口。
+ *
+ * 判据（顺序即优先级）：
+ * 1. 发起时的完整身份仍然有效（mode / workspaceMode / workspaceKey / epoch / activeProjectId）；
+ * 2. 项目仍然 READY；
+ * 3. 本地 blockers 仍为空；
+ * 4. 这次预留的待核对记录仍然在册，且台账不是 invalidated / corrupt / unavailable / initializing。
+ *
+ * `full` **不得**拒绝已经成功预留的第 64 条：容量是"不能再新增"，不是"已占的不算"。
+ */
+export type TrashSendDecision =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      /** `stale` 静默丢弃；`blocked` 给可读原因；`invalidated` 保守保留待核对记录。 */
+      readonly kind: 'stale' | 'blocked' | 'invalidated';
+      readonly message?: string;
+      /** `blocked` 时的原始阻断码（界面按同一套文案翻译）。 */
+      readonly reasons?: readonly string[];
+    };
+
+/** 无参、同步、不返回 Promise：**任何** `await` 都可能成为新的窗口。 */
+export type TrashSendGate = () => TrashSendDecision;
+
+/**
  * 回收 / 恢复的共同结论。
  *
  * `UNKNOWN` 是独立一种：磁盘可能已经变了，只允许按 `opId` 做**一次只读**核对，
  * 绝不自动重发（重发会真的再移动一次文件）。
+ *
+ * `NOT_SENT` 是 R1-01 新增的一种：请求**没有发出去**（被发送前的最终裁决拒绝）。
+ * 它既不是成功也不是失败，更不能当成 `UNKNOWN` 去核对——磁盘一个字节都没动。
  */
 export type TrashActionOutcome =
   | { status: 'APPLIED'; projectId: string; opId: string; entry: TrashEntryDto; replayed: boolean }
@@ -270,7 +305,18 @@ export type TrashActionOutcome =
       message: string;
       httpStatus: number;
       blockedBy?: string[];
+    }
+  | {
+      status: 'NOT_SENT';
+      projectId: string;
+      opId: string;
+      reason: 'stale' | 'blocked' | 'invalidated';
+      message: string | null;
+      reasons?: readonly string[];
     };
+
+/** 结算只接受"真的发出去过"的结论。 */
+export type TrashSentOutcome = Exclude<TrashActionOutcome, { status: 'NOT_SENT' }>;
 
 /** 按 `opId` 只读核对真实结果（不重发、不改任何东西）。 */
 export type TrashOpQueryOutcome =
@@ -743,8 +789,11 @@ export interface WeaveSpaceClient {
    *
    * 目标由 Host 记录决定，客户端不提供 `targetPath`；原位置已有同名对象时
    * Host 返回 409 `ERR_ENTRY_EXISTS`，绝不覆盖。
+   *
+   * `gate` 是发送前的最终裁决（R1-01）：它在会话令牌到手之后、`fetch()` 之前
+   * **同步**执行；返回不允许时一个字节都不会发出去（结果为 `NOT_SENT`）。
    */
-  restoreTrash(projectId: string, opId: string): Promise<TrashActionOutcome>;
+  restoreTrash(projectId: string, opId: string, gate?: TrashSendGate): Promise<TrashActionOutcome>;
   /** 只读核对某个 opId 的真实结果。 */
   queryTrashOp(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
 
@@ -1569,8 +1618,8 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       return postTrashAction('/api/trash/entry', { projectId, path, opId }, projectId, opId);
     },
 
-    async restoreTrash(projectId, opId) {
-      return postTrashAction('/api/trash/restore', { projectId, opId }, projectId, opId);
+    async restoreTrash(projectId, opId, gate) {
+      return postTrashAction('/api/trash/restore', { projectId, opId }, projectId, opId, gate);
     },
 
     async queryTrashOp(projectId, opId) {
@@ -1618,12 +1667,17 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
    *
    * 与结构变更同一纪律：**磁盘可能已经变了**的三种情况（网络异常、超时、202 UNKNOWN）
    * 一律返回 UNKNOWN 并保留 `opId`，由编排层做一次只读核对 + 人工确认提示。
+   *
+   * R1-01：可选的 `gate` 在**令牌到手之后、请求发出之前**同步执行一次。
+   * 从 `await sessionToken()` 结束到 `request(...)` 之间**不允许**再有任何 `await`——
+   * `request()` 的第一句就是 `fetch()`，因此这里的同步片段就是真正的 POST 边界。
    */
   async function postTrashAction(
     endpoint: string,
     requestBody: { projectId: string; path?: string; opId: string },
     projectId: string,
     opId: string,
+    gate?: TrashSendGate,
   ): Promise<TrashActionOutcome> {
     let token: string;
     try {
@@ -1637,6 +1691,23 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         message: '无法获取会话令牌',
         httpStatus: 403,
       };
+    }
+    /*
+     * 最终裁决（R1-01）。这一行到下面 `request(...)` 之间的代码**必须**保持同步：
+     * 一旦插入 `await`，就又出现"检查通过、请求未发"的窗口，等于什么都没修。
+     */
+    if (gate) {
+      const decision = gate();
+      if (!decision.ok) {
+        return {
+          status: 'NOT_SENT',
+          projectId,
+          opId,
+          reason: decision.kind,
+          message: decision.message ?? null,
+          ...(decision.reasons ? { reasons: decision.reasons } : {}),
+        };
+      }
     }
     let response: { httpStatus: number; body: ApiEnvelope };
     try {

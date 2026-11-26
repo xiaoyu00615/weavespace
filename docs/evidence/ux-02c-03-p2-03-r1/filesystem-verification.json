@@ -1,0 +1,310 @@
+{
+  "run": "ux-02c-03-p2-03-r1",
+  "at": "2026-11-26T17:41:47.709Z",
+  "root": "D:/Workspace/projects/weavespace-test/p203/projA",
+  "note": "每个文件都记录了：原路径与原始哈希 → 移入后原路径是否消失 / 回收区 payload 哈希 → 恢复后原路径哈希。payload 哈希与原始哈希必须逐字节相同（二进制文件含 0x00/0xFF）。R1 追加：满仓释放那一条记录（B5-25）记录了 opId、原路径、payload 哈希与恢复后哈希。",
+  "files": [
+    {
+      "file": "note.md",
+      "kind": "markdown",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/note.md",
+      "originalHash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5",
+      "payload": {
+        "exists": true,
+        "hash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "a1e0014f8a7b1bfc13bb6fc463ba7fc07dbbe1172edf007b929f17814d6465a8",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "plain.txt",
+      "kind": "text",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/plain.txt",
+      "originalHash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb",
+      "payload": {
+        "exists": true,
+        "hash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "ec493ddd0ec22b75074011d063da124392acc40743343d6ecd5feb179a4b6866",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "blob.bin",
+      "kind": "binary",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/blob.bin",
+      "originalHash": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641",
+      "payload": {
+        "exists": true,
+        "hash": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "中文名.txt",
+      "kind": "cjk-name",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/中文名.txt",
+      "originalHash": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e",
+      "payload": {
+        "exists": true,
+        "hash": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "23170920d73a9c275477150a3eb7f26fae71d649ef242c85d8ff100f50e14e20",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "with space.txt",
+      "kind": "space-name",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/with space.txt",
+      "originalHash": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-00112de8-36ea-43ea-8113-29ba576e543a",
+      "payload": {
+        "exists": true,
+        "hash": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "e24aae8651008743f074df2678a40debe8980e58c03d5aeab79b0baebbb9915b",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    },
+    {
+      "file": "notes/deep.md",
+      "kind": "subdir",
+      "originalPath": "D:/Workspace/projects/weavespace-test/p203/projA/notes/deep.md",
+      "originalHash": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+      "afterRemove": {
+        "pathExists": false
+      },
+      "trashDir": "D:/Workspace/projects/weavespace-test/p203/projA/.weavespace/trash/op-9f2aebc0-36af-4a63-a8ce-c4451c962706",
+      "payload": {
+        "exists": true,
+        "hash": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c"
+      },
+      "manifest": {
+        "exists": true
+      },
+      "hostStateAfterRemove": "stored",
+      "afterRestore": {
+        "pathExists": true,
+        "hash": "7049625d84fccd5c84dc05669d945709bfc406d3b3dea9988f2f512fa6f2cb0c",
+        "hashMatches": true
+      },
+      "hostStateAfterRestore": "restored"
+    }
+  ],
+  "finalTree": [
+    ".weavespace/.gitignore",
+    ".weavespace/.ws-internal",
+    ".weavespace/trash/op-00112de8-36ea-43ea-8113-29ba576e543a/manifest.json",
+    ".weavespace/trash/op-22a0bad3-6219-4249-ab96-0cb3f9022641/manifest.json",
+    ".weavespace/trash/op-68db4bf9-996c-41b5-94b9-5eaf4c2e3bdc/manifest.json",
+    ".weavespace/trash/op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5/manifest.json",
+    ".weavespace/trash/op-9f2aebc0-36af-4a63-a8ce-c4451c962706/manifest.json",
+    ".weavespace/trash/op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e/manifest.json",
+    ".weavespace/trash/op-e99a4ae6-dcaa-4152-9592-84da841fdabb/manifest.json",
+    "blob.bin",
+    "note.md",
+    "notes/deep.md",
+    "plain.txt",
+    "with space.txt",
+    "中文名.txt"
+  ],
+  "trashDirs": [
+    "op-00112de8-36ea-43ea-8113-29ba576e543a",
+    "op-22a0bad3-6219-4249-ab96-0cb3f9022641",
+    "op-68db4bf9-996c-41b5-94b9-5eaf4c2e3bdc",
+    "op-799700d2-bad7-4f1f-bf1e-b72bddf7c6a5",
+    "op-9f2aebc0-36af-4a63-a8ce-c4451c962706",
+    "op-b53d0ae6-a24f-4713-80c6-30a5b3801a8e",
+    "op-e99a4ae6-dcaa-4152-9592-84da841fdabb"
+  ],
+  "fullCapacityRelease": {
+    "opId": "op-bulk-00000000",
+    "originalPath": "bulk/bulk-00.txt",
+    "payloadSha256": "0e68640b51d00fb9ab2cc52fb1eb755437a84a1e44125601113c702ca81fce02",
+    "pathExistedBeforeRestore": false,
+    "clickedName": "bulk-00.txt",
+    "ledgerSizeBefore": 63
+  },
+  "checks": {
+    "B2-0 六个文件都在磁盘上且哈希已记录": true,
+    "B2-1 note.md 取消确认后对话框消失": true,
+    "B2-2 note.md 取消时磁盘零变化": true,
+    "B2-3 note.md 确认后被移入回收区": true,
+    "B2-4 note.md 原位置已消失": true,
+    "B2-5 note.md 文件树不再显示它": true,
+    "B2-6 note.md Host 记录为 stored": true,
+    "B2-7 note.md 回收区数量与列表同步": true,
+    "B2-8 note.md payload 与 manifest 都在磁盘上": true,
+    "B2-9 note.md payload 字节哈希与原始文件一致": true,
+    "B2-10 note.md 回收区显示「可恢复」": true,
+    "B2-11 note.md 恢复按钮可点击": true,
+    "B2-12 note.md 原位置重新出现": true,
+    "B2-13 note.md 恢复后内容哈希与原始一致": true,
+    "B2-14 note.md Host 记录为 restored": true,
+    "B2-15 note.md 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 note.md 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 plain.txt 取消确认后对话框消失": true,
+    "B2-2 plain.txt 取消时磁盘零变化": true,
+    "B2-3 plain.txt 确认后被移入回收区": true,
+    "B2-4 plain.txt 原位置已消失": true,
+    "B2-5 plain.txt 文件树不再显示它": true,
+    "B2-6 plain.txt Host 记录为 stored": true,
+    "B2-7 plain.txt 回收区数量与列表同步": true,
+    "B2-8 plain.txt payload 与 manifest 都在磁盘上": true,
+    "B2-9 plain.txt payload 字节哈希与原始文件一致": true,
+    "B2-10 plain.txt 回收区显示「可恢复」": true,
+    "B2-11 plain.txt 恢复按钮可点击": true,
+    "B2-12 plain.txt 原位置重新出现": true,
+    "B2-13 plain.txt 恢复后内容哈希与原始一致": true,
+    "B2-14 plain.txt Host 记录为 restored": true,
+    "B2-15 plain.txt 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 plain.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 blob.bin 取消确认后对话框消失": true,
+    "B2-2 blob.bin 取消时磁盘零变化": true,
+    "B2-3 blob.bin 确认后被移入回收区": true,
+    "B2-4 blob.bin 原位置已消失": true,
+    "B2-5 blob.bin 文件树不再显示它": true,
+    "B2-6 blob.bin Host 记录为 stored": true,
+    "B2-7 blob.bin 回收区数量与列表同步": true,
+    "B2-8 blob.bin payload 与 manifest 都在磁盘上": true,
+    "B2-9 blob.bin payload 字节哈希与原始文件一致": true,
+    "B2-10 blob.bin 回收区显示「可恢复」": true,
+    "B2-11 blob.bin 恢复按钮可点击": true,
+    "B2-12 blob.bin 原位置重新出现": true,
+    "B2-13 blob.bin 恢复后内容哈希与原始一致": true,
+    "B2-14 blob.bin Host 记录为 restored": true,
+    "B2-15 blob.bin 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 blob.bin 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 中文名.txt 取消确认后对话框消失": true,
+    "B2-2 中文名.txt 取消时磁盘零变化": true,
+    "B2-3 中文名.txt 确认后被移入回收区": true,
+    "B2-4 中文名.txt 原位置已消失": true,
+    "B2-5 中文名.txt 文件树不再显示它": true,
+    "B2-6 中文名.txt Host 记录为 stored": true,
+    "B2-7 中文名.txt 回收区数量与列表同步": true,
+    "B2-8 中文名.txt payload 与 manifest 都在磁盘上": true,
+    "B2-9 中文名.txt payload 字节哈希与原始文件一致": true,
+    "B2-10 中文名.txt 回收区显示「可恢复」": true,
+    "B2-11 中文名.txt 恢复按钮可点击": true,
+    "B2-12 中文名.txt 原位置重新出现": true,
+    "B2-13 中文名.txt 恢复后内容哈希与原始一致": true,
+    "B2-14 中文名.txt Host 记录为 restored": true,
+    "B2-15 中文名.txt 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 中文名.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 with space.txt 取消确认后对话框消失": true,
+    "B2-2 with space.txt 取消时磁盘零变化": true,
+    "B2-3 with space.txt 确认后被移入回收区": true,
+    "B2-4 with space.txt 原位置已消失": true,
+    "B2-5 with space.txt 文件树不再显示它": true,
+    "B2-6 with space.txt Host 记录为 stored": true,
+    "B2-7 with space.txt 回收区数量与列表同步": true,
+    "B2-8 with space.txt payload 与 manifest 都在磁盘上": true,
+    "B2-9 with space.txt payload 字节哈希与原始文件一致": true,
+    "B2-10 with space.txt 回收区显示「可恢复」": true,
+    "B2-11 with space.txt 恢复按钮可点击": true,
+    "B2-12 with space.txt 原位置重新出现": true,
+    "B2-13 with space.txt 恢复后内容哈希与原始一致": true,
+    "B2-14 with space.txt Host 记录为 restored": true,
+    "B2-15 with space.txt 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 with space.txt 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B2-1 deep.md 取消确认后对话框消失": true,
+    "B2-2 deep.md 取消时磁盘零变化": true,
+    "B2-3 deep.md 确认后被移入回收区": true,
+    "B2-4 deep.md 原位置已消失": true,
+    "B2-5 deep.md 文件树不再显示它": true,
+    "B2-6 deep.md Host 记录为 stored": true,
+    "B2-7 deep.md 回收区数量与列表同步": true,
+    "B2-8 deep.md payload 与 manifest 都在磁盘上": true,
+    "B2-9 deep.md payload 字节哈希与原始文件一致": true,
+    "B2-10 deep.md 回收区显示「可恢复」": true,
+    "B2-11 deep.md 恢复按钮可点击": true,
+    "B2-12 deep.md 原位置重新出现": true,
+    "B2-13 deep.md 恢复后内容哈希与原始一致": true,
+    "B2-14 deep.md Host 记录为 restored": true,
+    "B2-15 deep.md 回收区行变为「已恢复」且不再提供恢复": true,
+    "B2-16 deep.md 台账未留下待核对记录（真实成功路径不写 UNKNOWN）": true,
+    "B3-1 原位置已有同名文件时恢复不覆盖它": true,
+    "B3-2 冲突时 Host 记录仍为 stored（不动盘）": true,
+    "B3-3 冲突时界面给出可读说明": true,
+    "B3-4 冲突解除后可以正常恢复（同一记录未被破坏）": true,
+    "B3-5 已有活动 View 时移入被阻止（对话框给出原因，不是静默失败）": true,
+    "B3-6 被阻止时文件仍在原位置": true,
+    "B3-7 目录不能通过普通文件接口移入：400 + ERR_TRASH_KIND_UNSUPPORTED": true,
+    "B3-7b 磁盘哨兵：目录里的文件没有被移动": true,
+    "B3-7c 没有因此多出回收目录": true,
+    "B3-8 保留内部路径不能移入：403 + ERR_PATH_RESERVED": true,
+    "B3-8b 磁盘哨兵：内部文件没有被移动": true,
+    "B3-8c 没有因此多出回收目录": true,
+    "B3-9 越界路径（../）不能移入：400 + ERR_COMMAND_INVALID": true,
+    "B3-9b 磁盘哨兵：项目 B 的文件没有被移动": true,
+    "B3-9c 没有因此多出回收目录": true,
+    "B3-10 符号链接不能通过普通文件接口移入：400 + ERR_TRASH_KIND_UNSUPPORTED": true,
+    "B3-10b 链接目标本身未被移动": true,
+    "B3-10c 磁盘上的链接仍在（没有被\"回收\"）": true,
+    "B3-11 项目 B 的回收区不含项目 A 的记录": true,
+    "B3-12 用 B 的项目 id 移入 A 的文件：404 + ERR_RESOURCE_NOT_FOUND": true,
+    "B3-13 A 的文件没有因此消失": true,
+    "B3-13b 两个项目都没有因此多出回收目录": true,
+    "B2-17 收尾时没有遗留 stored 记录（六个文件都已恢复）": true,
+    "B2-18 六个文件都在原位置且哈希未变": true,
+    "B2-19 回收区面板没有失效横幅": true
+  }
+}

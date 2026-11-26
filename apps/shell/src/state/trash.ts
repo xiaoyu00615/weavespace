@@ -17,6 +17,9 @@ import type {
   TrashEntryState,
   TrashListOutcome,
   TrashOpQueryOutcome,
+  TrashSendDecision,
+  TrashSendGate,
+  TrashSentOutcome,
 } from '../client/client-api.ts';
 import { TRASH_TERMINAL_STATES } from './types.ts';
 import type { ClientMode, TrashProjectState, WorkspaceAction } from './types.ts';
@@ -427,7 +430,14 @@ export function trashBadgeCount(
 export interface TrashPort {
   list(projectId: string): Promise<TrashListOutcome>;
   remove(projectId: string, path: string, opId: string): Promise<TrashActionOutcome>;
-  restore(projectId: string, opId: string): Promise<TrashActionOutcome>;
+  /**
+   * 恢复一条记录。
+   *
+   * `gate` 由编排层给出，传输层在"会话令牌到手、请求发出之前"**同步**调用一次
+   * （R1-01）。它不是"又一个早先的检查"，而是**最后一个**：返回不允许时零请求，
+   * 结果为 `NOT_SENT`。
+   */
+  restore(projectId: string, opId: string, gate?: TrashSendGate): Promise<TrashActionOutcome>;
   query(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
 }
 
@@ -720,7 +730,7 @@ export function createTrashController(host: TrashHost): TrashController {
   const settle = async (
     projectId: string,
     opId: string,
-    outcome: TrashActionOutcome,
+    outcome: TrashSentOutcome,
     stillOwned: () => boolean,
     after: () => Promise<void>,
     notice: SettleNotice,
@@ -779,6 +789,43 @@ export function createTrashController(host: TrashHost): TrashController {
     return { status: 'rejected', message: gate.message };
   };
 
+  /**
+   * 发送前的**最终**裁决（R1-01）。
+   *
+   * 约束是硬的：这个函数必须**同步**、不许返回 Promise、不许在里面 `await`。
+   * 调用点是 `client-api` 里 `sessionToken()` 之后、`request()` 之前的那一小段，
+   * 一旦这里变成异步，"检查通过"与"真的发出去"之间就又有窗口了。
+   *
+   * 判据顺序（先便宜的、再贵一点的）：
+   * 1. 归属（mode / workspaceMode / workspaceKey / epoch / activeProjectId）——变了就是 `stale`，静默；
+   * 2. 项目 READY —— 不可用时给可读原因（`blocked`）；
+   * 3. 本地 blockers —— 恢复期间用户可能刚打开了这个文件，按 `blocked` 给出原始码；
+   * 4. 这次预留的待核对记录仍在册 + 台账没有失效/损坏/读不到/初始化中 —— `invalidated`。
+   *
+   * 注意第 4 条**只看记录在不在**，不看容量：第 64 格是合法授权，`full` 不是失效。
+   */
+  const finalSendDecision = (
+    projectId: string,
+    path: string,
+    snapshot: TrashIdentity,
+    target: TrashPendingTarget,
+  ): TrashSendDecision => {
+    if (!owned(projectId, snapshot)) return { ok: false, kind: 'stale' };
+    const gate = host.preflight(projectId);
+    if (!gate.ok) {
+      return gate.kind === 'stale'
+        ? { ok: false, kind: 'stale' }
+        : { ok: false, kind: 'blocked', message: gate.message };
+    }
+    const codes = host.blockers(projectId, path);
+    if (codes.length > 0) {
+      return { ok: false, kind: 'blocked', message: trashBlockerMessage(path, codes), reasons: codes };
+    }
+    const verified = host.verifyPending(target);
+    if (!verified.ok) return { ok: false, kind: 'invalidated', message: verified.message };
+    return { ok: true };
+  };
+
   const remove = async (projectId: string, path: string): Promise<TrashActionResult> => {
     const blockedByGate = preflightFailure(projectId);
     if (blockedByGate) return blockedByGate;
@@ -805,6 +852,13 @@ export function createTrashController(host: TrashHost): TrashController {
         };
       }
       const name = entryNameOf(path);
+      /*
+       * 回收没有 gate（本阶段只把恢复压到真正的 POST 边界上）。真收到 `NOT_SENT`
+       * 就按"没发出去"处理：不得当成 UNKNOWN 去核对，更不能当成成功。
+       */
+      if (outcome.status === 'NOT_SENT') {
+        return { status: 'rejected' as const, message: outcome.message ?? '回收请求未能发出，请重试。' };
+      }
       const settled = await settle(
         projectId,
         opId,
@@ -905,11 +959,24 @@ export function createTrashController(host: TrashHost): TrashController {
           return { status: 'rejected', message: verified.message };
         }
 
+        /*
+         * R1-01：真正的**最后一道门**不在这里，而是交给传输层。
+         *
+         * 上面每一次检查都可能被一个 `await` 隔开，而 `port.restore()` 内部还要
+         * "取会话令牌"。把判据做成一个同步闭包传下去，由传输层在令牌到手之后、
+         * `fetch()` 之前调用一次，才能覆盖住那个窗口。
+         *
+         * 这里仍然保留早先那次 `verifyPending()`：它是**快速失败**（连令牌都不去取），
+         * 与最终裁决是两道门，不是二选一。
+         */
+        const sendGate: TrashSendGate = () =>
+          finalSendDecision(projectId, entry.path, snapshot, target);
+
         host.dispatch({ type: 'TRASH_BUSY', projectId, opId: entry.opId, busy: true, scope });
         try {
           let outcome: TrashActionOutcome;
           try {
-            outcome = await host.port.restore(projectId, entry.opId);
+            outcome = await host.port.restore(projectId, entry.opId, sendGate);
           } catch {
             outcome = {
               status: 'UNKNOWN',
@@ -917,6 +984,26 @@ export function createTrashController(host: TrashHost): TrashController {
               opId: entry.opId,
               message: '网络中断或请求超时，结果未确认',
               httpStatus: 0,
+            };
+          }
+          if (outcome.status === 'NOT_SENT') {
+            /*
+             * 零请求：一切都发生在"授权之后、发出去之前"。
+             *
+             * 释放规则与其它分支同源——stale / blocked 一定是零副作用，可以安全结算；
+             * `invalidated` 则**不得强行清除**（那条记录背后可能有一次已经发出去的
+             * 恢复，本页只是失去了追踪能力，清掉才是真丢东西）。
+             */
+            if (outcome.reason !== 'invalidated') {
+              await host.releasePending(target);
+            }
+            if (outcome.reason === 'stale') return { status: 'stale' };
+            if (outcome.reason === 'blocked' && outcome.reasons && outcome.reasons.length > 0) {
+              return { status: 'blocked', reasons: outcome.reasons };
+            }
+            return {
+              status: 'rejected',
+              message: outcome.message ?? '这次恢复没有发出（发送前的授权已失效）。',
             };
           }
           const settled = await settle(
