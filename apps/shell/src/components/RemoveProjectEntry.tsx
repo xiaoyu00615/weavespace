@@ -42,6 +42,39 @@ function blockedText(blockedBy: readonly RemoveBlockerCode[], state: string): st
 }
 
 export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className="icon-button project__refresh project__remove"
+        title={`从工作台移除「${project.name}」（不会删除磁盘文件）`}
+        aria-label={`从工作台移除「${project.name}」`}
+        onClick={() => setOpen(true)}
+      >
+        🗑
+      </button>
+      <RemoveProjectDialog project={project} open={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+
+/**
+ * 移除项目确认框（UX-02C-05 起受控）。
+ *
+ * 拆成独立组件是为了让**右键菜单**也能打开同一个对话框：命令编排只持有
+ * `projectId`，检查、阻断文案与确认流程完全复用这里，不在菜单里重写一遍
+ * "能不能移除"的判断。行内 🗑 按钮就是 `open` 恒为 true 的一种用法。
+ */
+export function RemoveProjectDialog({
+  project,
+  open,
+  onClose,
+}: {
+  project: ProjectSummary;
+  open: boolean;
+  onClose(): void;
+}) {
   const actions = useDocumentActions();
   const [phase, setPhase] = useState<Phase>('closed');
   const [blocked, setBlocked] = useState<{ reasons: string[] } | null>(null);
@@ -53,7 +86,8 @@ export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
     setPhase('closed');
     setBlocked(null);
     setResult(null);
-  }, []);
+    onClose();
+  }, [onClose]);
 
   /**
    * 在途标记用 ref（而不是 `phase`）：`setPhase('removing')` 要等一次渲染才生效，
@@ -62,7 +96,7 @@ export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
    */
   const confirming = useRef(false);
 
-  const open = useCallback(async () => {
+  const startCheck = useCallback(async () => {
     setPhase('checking');
     setBlocked(null);
     setResult(null);
@@ -156,28 +190,33 @@ export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [phase, close]);
 
-  return (
-    <>
-      <button
-        type="button"
-        className="icon-button project__refresh project__remove"
-        title={`从工作台移除「${project.name}」（不会删除磁盘文件）`}
-        aria-label={`从工作台移除「${project.name}」`}
-        onClick={() => void open()}
-      >
-        🗑
-      </button>
+  /**
+   * 受控打开（UX-02C-05）：右键菜单与行内按钮都只是把 `open` 置 true。
+   * 关闭时把内部阶段收敛回 `closed`，避免下次打开直接落在上一次的阻断页。
+   */
+  useEffect(() => {
+    if (open) {
+      if (phase === 'closed') void startCheck();
+      return;
+    }
+    if (phase !== 'closed') {
+      setPhase('closed');
+      setBlocked(null);
+      setResult(null);
+    }
+  }, [open, phase, startCheck]);
 
-      {phase !== 'closed' &&
-        createPortal(
-          <div className="modal__backdrop" role="presentation">
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="remove-project-title"
-            data-remove-project={phase}
-          >
+  if (!open) return null;
+
+  return createPortal(
+    <div className="modal__backdrop" role="presentation">
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="remove-project-title"
+        data-remove-project={phase}
+      >
             <h2 className="modal__title" id="remove-project-title">
               移除项目「{project.name}」
             </h2>
@@ -260,11 +299,9 @@ export function RemoveProjectEntry({ project }: { project: ProjectSummary }) {
               </>
             )}
           </div>
-          </div>,
-          // 用 portal 挂到 body：项目行在树里（有 overflow/裁剪与堆叠上下文），
-          // 原地渲染会让 position:fixed 的模态被裁掉，用户看不到阻断/确认框。
-          document.body,
-        )}
-    </>
+      </div>,
+      // 用 portal 挂到 body：项目行在树里（有 overflow/裁剪与堆叠上下文），
+      // 原地渲染会让 position:fixed 的模态被裁掉，用户看不到阻断/确认框。
+      document.body,
   );
 }

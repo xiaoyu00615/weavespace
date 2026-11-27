@@ -1,0 +1,747 @@
+{
+  "run": "ux-02c-05-tree-interactions",
+  "at": "2026-11-27T06:34:58.975Z",
+  "checks": {
+    "E-00 fixture 就绪（v5 配置 / 零隐藏 / 零回收 / 零元数据）": true,
+    "A-01 文件菜单含 改名/移动/隐藏/回收/标注×3/创建×3/刷新": true,
+    "A-02 文件菜单不出现项目根专有命令": true,
+    "A-03 文件菜单里没有任何\"可见但禁用\"的项（真实项目、普通文件）": true,
+    "A-04 Escape 关闭文件菜单": true,
+    "A-05 文件夹菜单：改名/移动/标注/创建/刷新都在": true,
+    "A-06 文件夹菜单的「移入回收区」可见、禁用、并说明只支持普通文件": true,
+    "A-07 文件夹菜单没有伪造目录删除/项目根命令": true,
+    "A-08 项目根菜单：创建×3 / 显示名 / 标注×3 / 刷新 / 移除": true,
+    "A-09 项目根菜单不出现 改名/移动/回收/隐藏（根不是磁盘条目）": true,
+    "A-10 「修改项目显示名称」与「从工作台移除项目」文案互相独立（不是删除磁盘）": true,
+    "A-11 空白区菜单只有创建×3 与刷新": true,
+    "A-12 空白区（有活动项目）创建与刷新都可用": true,
+    "B-01 工具栏含 新建文件/新建文件夹/刷新/显示隐藏项 四个入口": true,
+    "B-02 每个按钮都有 aria-label 与 title（可访问名称 + 说明）": true,
+    "B-03 找到文件夹行 dir（准备把它设为当前目录）": true,
+    "B-04 空白区点「新建文件」": true,
+    "B-05 空白区创建发到 parentDir=dir（当前选中的目录）": true,
+    "B-06 磁盘上确实落在 dir/ 里": true,
+    "B-07 工具栏创建与空白区解析出同一个 parentDir（同一条 resolveCreateTarget）": true,
+    "B-08 磁盘上确实落在 dir/ 里（工具栏）": true,
+    "B-09 文件右键点「新建文件」": true,
+    "B-10 对文件右键创建 → 目标是它的父目录，不是文件路径": true,
+    "D-01 找到 note.md 的名称文字": true,
+    "D-02 双击后进入改名，且文件**没有**被打开（单击未提前触发）": true,
+    "D-03 Escape 取消改名：输入行关闭": true,
+    "D-04 Escape 零写入（没有发出任何 files/rename）": true,
+    "D-05 磁盘文件名未变": true,
+    "D-06 确认后只发一次 files/rename，且新名称正确": true,
+    "D-07 磁盘上真的改名了": true,
+    "D-08 找到 dir/inner.md 行": true,
+    "D-08b 焦点落在这一行（未打开文件）": true,
+    "D-09 F2 在当前焦点行上打开改名（键盘入口）": true,
+    "D-10 改名请求已被挂住（正处在\"提交中\"窗口）": true,
+    "D-11 提交中连按两次 Enter 不产生第二次请求（单飞）": true,
+    "D-12 放行后恰好一次 files/rename": true,
+    "D-13 磁盘上 inner.md 已改名为 inner-renamed.md": true,
+    "H-01 菜单带身份标记（模式/工作区/当前项目）": true,
+    "H-02 外部点击关闭菜单": true,
+    "H-03 靠近右下角时菜单仍完全在视口内": true,
+    "H-04 再次打开菜单": true,
+    "H-05 切换到演示模式后旧菜单立即失效（不向别的工作区发旧命令）": true,
+    "C-01 演示模式：命令入口保留（不是全部消失）": true,
+    "C-02 每个可见但禁用的命令都带原因（用户不用猜）": true,
+    "C-03 没有明确项目时创建给的是「先选中一个项目」，不是含糊的模式提示": true,
+    "C-04 F2 在禁用上下文里不执行改名（禁用项不因键盘被执行）": true,
+    "C-05 演示模式下工具栏按钮禁用并给出同一句原因": true,
+    "C-06 回到真实模式后目录内容与磁盘一致（改名/创建都已落地）": true,
+    "C-07 没有过期菜单残留": true
+  },
+  "detail": {
+    "E-00 fixture 就绪（v5 配置 / 零隐藏 / 零回收 / 零元数据）": {
+      "version": 5,
+      "commitSeq": 0,
+      "issuedIds": [
+        "proj-a"
+      ],
+      "revoked": [],
+      "projects": [
+        {
+          "projectId": "proj-a",
+          "name": "项目A",
+          "rootDir": "D:\\Workspace\\projects\\weavespace-test\\c05\\projA",
+          "canonicalRoot": "D:\\Workspace\\projects\\weavespace-test\\c05\\projA",
+          "rootToken": "1754858869:1688849861471173:1795761299273805400",
+          "grantedAt": "2026-11-27T00:00:00.000Z",
+          "grantSource": "os-dialog"
+        }
+      ],
+      "hidden": [],
+      "trash": [],
+      "metadata": []
+    },
+    "A-01 文件菜单含 改名/移动/隐藏/回收/标注×3/创建×3/刷新": [
+      "rename",
+      "move",
+      "hide",
+      "trash",
+      "meta-alias",
+      "meta-tags",
+      "meta-color",
+      "new-file",
+      "new-folder",
+      "new-supported",
+      "refresh"
+    ],
+    "A-02 文件菜单不出现项目根专有命令": [
+      "rename",
+      "move",
+      "hide",
+      "trash",
+      "meta-alias",
+      "meta-tags",
+      "meta-color",
+      "new-file",
+      "new-folder",
+      "new-supported",
+      "refresh"
+    ],
+    "A-03 文件菜单里没有任何\"可见但禁用\"的项（真实项目、普通文件）": [],
+    "A-05 文件夹菜单：改名/移动/标注/创建/刷新都在": [
+      "rename",
+      "move",
+      "hide",
+      "trash",
+      "meta-alias",
+      "meta-tags",
+      "meta-color",
+      "new-file",
+      "new-folder",
+      "new-supported",
+      "refresh"
+    ],
+    "A-06 文件夹菜单的「移入回收区」可见、禁用、并说明只支持普通文件": {
+      "id": "trash",
+      "label": "移入回收区",
+      "disabled": true,
+      "hint": "目录暂不支持（本阶段只处理普通文件）"
+    },
+    "A-07 文件夹菜单没有伪造目录删除/项目根命令": [
+      "rename",
+      "move",
+      "hide",
+      "trash",
+      "meta-alias",
+      "meta-tags",
+      "meta-color",
+      "new-file",
+      "new-folder",
+      "new-supported",
+      "refresh"
+    ],
+    "A-08 项目根菜单：创建×3 / 显示名 / 标注×3 / 刷新 / 移除": [
+      "new-file",
+      "new-folder",
+      "new-supported",
+      "rename-project",
+      "meta-alias",
+      "meta-tags",
+      "meta-color",
+      "refresh",
+      "remove-project"
+    ],
+    "A-09 项目根菜单不出现 改名/移动/回收/隐藏（根不是磁盘条目）": [
+      "new-file",
+      "new-folder",
+      "new-supported",
+      "rename-project",
+      "meta-alias",
+      "meta-tags",
+      "meta-color",
+      "refresh",
+      "remove-project"
+    ],
+    "A-10 「修改项目显示名称」与「从工作台移除项目」文案互相独立（不是删除磁盘）": {
+      "rootRename": {
+        "id": "rename-project",
+        "label": "修改项目显示名称…",
+        "disabled": false,
+        "hint": null
+      },
+      "rootRemove": {
+        "id": "remove-project",
+        "label": "从工作台移除项目…",
+        "disabled": false,
+        "hint": null
+      }
+    },
+    "A-11 空白区菜单只有创建×3 与刷新": [
+      "new-file",
+      "new-folder",
+      "new-supported",
+      "refresh"
+    ],
+    "A-12 空白区（有活动项目）创建与刷新都可用": [
+      {
+        "id": "new-file",
+        "label": "新建文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-folder",
+        "label": "新建文件夹",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-supported",
+        "label": "创建已支持的扩展文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "refresh",
+        "label": "刷新此目录",
+        "disabled": false,
+        "hint": null
+      }
+    ],
+    "B-01 工具栏含 新建文件/新建文件夹/刷新/显示隐藏项 四个入口": [
+      "new-file",
+      "new-folder",
+      "refresh",
+      "show-hidden"
+    ],
+    "B-02 每个按钮都有 aria-label 与 title（可访问名称 + 说明）": [
+      {
+        "id": "new-file",
+        "disabled": false,
+        "title": "在当前目录新建文件",
+        "aria": "新建文件"
+      },
+      {
+        "id": "new-folder",
+        "disabled": false,
+        "title": "在当前目录新建文件夹",
+        "aria": "新建文件夹"
+      },
+      {
+        "id": "refresh",
+        "disabled": false,
+        "title": "刷新当前目录",
+        "aria": "刷新当前目录"
+      },
+      {
+        "id": "show-hidden",
+        "disabled": false,
+        "title": "显示隐藏项（已加载层中没有隐藏项）",
+        "aria": "显示隐藏项"
+      }
+    ],
+    "B-03 找到文件夹行 dir（准备把它设为当前目录）": {
+      "dirRect": {
+        "x": 184,
+        "y": 69
+      },
+      "folderRow": {
+        "x": 182,
+        "y": 97.25
+      }
+    },
+    "B-05 空白区创建发到 parentDir=dir（当前选中的目录）": {
+      "projectId": "proj-a",
+      "parentDir": "dir",
+      "name": "from-blank-menu.md"
+    },
+    "B-06 磁盘上确实落在 dir/ 里": null,
+    "B-07 工具栏创建与空白区解析出同一个 parentDir（同一条 resolveCreateTarget）": {
+      "blank": "dir",
+      "toolbar": "dir"
+    },
+    "B-08 磁盘上确实落在 dir/ 里（工具栏）": null,
+    "B-10 对文件右键创建 → 目标是它的父目录，不是文件路径": {
+      "projectId": "proj-a",
+      "parentDir": "",
+      "name": "from-file-menu.md"
+    },
+    "D-01 找到 note.md 的名称文字": {
+      "x": 262,
+      "y": 275.75
+    },
+    "D-02 双击后进入改名，且文件**没有**被打开（单击未提前触发）": {
+      "opened": false,
+      "classes": "tree__row tree__row--file"
+    },
+    "D-04 Escape 零写入（没有发出任何 files/rename）": 0,
+    "D-05 磁盘文件名未变": null,
+    "D-06 确认后只发一次 files/rename，且新名称正确": [
+      {
+        "projectId": "proj-a",
+        "sourcePath": "note.md",
+        "name": "note-renamed.md"
+      }
+    ],
+    "D-07 磁盘上真的改名了": null,
+    "D-08 找到 dir/inner.md 行": {
+      "x": 182,
+      "y": 199.25
+    },
+    "D-08b 焦点落在这一行（未打开文件）": true,
+    "D-10 改名请求已被挂住（正处在\"提交中\"窗口）": 1,
+    "D-11 提交中连按两次 Enter 不产生第二次请求（单飞）": 1,
+    "D-12 放行后恰好一次 files/rename": 1,
+    "D-13 磁盘上 inner.md 已改名为 inner-renamed.md": null,
+    "H-01 菜单带身份标记（模式/工作区/当前项目）": "live\u0000multi\u00001979fa2690ed48ab5be13d7ac66442da54d0275c480f285c891df075774b1a43\u0000proj-a",
+    "H-03 靠近右下角时菜单仍完全在视口内": {
+      "menuRect": {
+        "left": 1088,
+        "top": 720,
+        "right": 1312,
+        "bottom": 852
+      },
+      "vp": {
+        "w": 1320,
+        "h": 860
+      }
+    },
+    "H-05 切换到演示模式后旧菜单立即失效（不向别的工作区发旧命令）": {
+      "menu": false,
+      "identity": null
+    },
+    "C-01 演示模式：命令入口保留（不是全部消失）": [
+      "rename",
+      "move",
+      "trash",
+      "meta-alias",
+      "meta-tags",
+      "meta-color",
+      "new-file",
+      "new-folder",
+      "new-supported",
+      "refresh"
+    ],
+    "C-02 每个可见但禁用的命令都带原因（用户不用猜）": [
+      {
+        "id": "rename",
+        "label": "重命名",
+        "disabled": true,
+        "hint": "当前模式或项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "move",
+        "label": "移动到…",
+        "disabled": true,
+        "hint": "当前模式或项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "trash",
+        "label": "移入回收区",
+        "disabled": true,
+        "hint": "当前模式/项目不支持真实回收"
+      },
+      {
+        "id": "meta-alias",
+        "label": "设置标注名…",
+        "disabled": true,
+        "hint": "当前模式/项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "meta-tags",
+        "label": "编辑标签…",
+        "disabled": true,
+        "hint": "当前模式/项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "meta-color",
+        "label": "设置颜色…",
+        "disabled": true,
+        "hint": "当前模式/项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "new-file",
+        "label": "新建文件",
+        "disabled": true,
+        "hint": "没有明确的项目：请先选中一个项目"
+      },
+      {
+        "id": "new-folder",
+        "label": "新建文件夹",
+        "disabled": true,
+        "hint": "没有明确的项目：请先选中一个项目"
+      },
+      {
+        "id": "new-supported",
+        "label": "创建已支持的扩展文件",
+        "disabled": true,
+        "hint": "没有明确的项目：请先选中一个项目"
+      },
+      {
+        "id": "refresh",
+        "label": "刷新此目录",
+        "disabled": true,
+        "hint": "没有明确的项目：请先选中一个项目"
+      }
+    ],
+    "C-03 没有明确项目时创建给的是「先选中一个项目」，不是含糊的模式提示": {
+      "id": "new-file",
+      "label": "新建文件",
+      "disabled": true,
+      "hint": "没有明确的项目：请先选中一个项目"
+    },
+    "C-04 F2 在禁用上下文里不执行改名（禁用项不因键盘被执行）": null,
+    "C-05 演示模式下工具栏按钮禁用并给出同一句原因": {
+      "disabled": true,
+      "title": "没有明确的项目：请先选中一个项目"
+    },
+    "C-06 回到真实模式后目录内容与磁盘一致（改名/创建都已落地）": [
+      "项目A",
+      "dir",
+      "deep",
+      "from-blank-menu.md",
+      "from-toolbar.md",
+      "inner-renamed.md",
+      ".gitignore",
+      "from-file-menu.md",
+      "note-renamed.md"
+    ]
+  },
+  "facts": {
+    "menuFile": [
+      {
+        "id": "rename",
+        "label": "重命名",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "move",
+        "label": "移动到…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "hide",
+        "label": "从文件树隐藏",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "trash",
+        "label": "移入回收区",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "meta-alias",
+        "label": "设置标注名…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "meta-tags",
+        "label": "编辑标签…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "meta-color",
+        "label": "设置颜色…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-file",
+        "label": "新建文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-folder",
+        "label": "新建文件夹",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-supported",
+        "label": "创建已支持的扩展文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "refresh",
+        "label": "刷新此目录",
+        "disabled": false,
+        "hint": null
+      }
+    ],
+    "menuFolder": [
+      {
+        "id": "rename",
+        "label": "重命名",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "move",
+        "label": "移动到…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "hide",
+        "label": "从文件树隐藏",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "trash",
+        "label": "移入回收区",
+        "disabled": true,
+        "hint": "目录暂不支持（本阶段只处理普通文件）"
+      },
+      {
+        "id": "meta-alias",
+        "label": "设置标注名…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "meta-tags",
+        "label": "编辑标签…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "meta-color",
+        "label": "设置颜色…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-file",
+        "label": "新建文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-folder",
+        "label": "新建文件夹",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-supported",
+        "label": "创建已支持的扩展文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "refresh",
+        "label": "刷新此目录",
+        "disabled": false,
+        "hint": null
+      }
+    ],
+    "menuRoot": [
+      {
+        "id": "new-file",
+        "label": "新建文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-folder",
+        "label": "新建文件夹",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-supported",
+        "label": "创建已支持的扩展文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "rename-project",
+        "label": "修改项目显示名称…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "meta-alias",
+        "label": "设置标注名…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "meta-tags",
+        "label": "编辑标签…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "meta-color",
+        "label": "设置颜色…",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "refresh",
+        "label": "刷新项目根",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "remove-project",
+        "label": "从工作台移除项目…",
+        "disabled": false,
+        "hint": null
+      }
+    ],
+    "menuBlank": [
+      {
+        "id": "new-file",
+        "label": "新建文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-folder",
+        "label": "新建文件夹",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "new-supported",
+        "label": "创建已支持的扩展文件",
+        "disabled": false,
+        "hint": null
+      },
+      {
+        "id": "refresh",
+        "label": "刷新此目录",
+        "disabled": false,
+        "hint": null
+      }
+    ],
+    "toolbar": [
+      {
+        "id": "new-file",
+        "disabled": false,
+        "title": "在当前目录新建文件",
+        "aria": "新建文件"
+      },
+      {
+        "id": "new-folder",
+        "disabled": false,
+        "title": "在当前目录新建文件夹",
+        "aria": "新建文件夹"
+      },
+      {
+        "id": "refresh",
+        "disabled": false,
+        "title": "刷新当前目录",
+        "aria": "刷新当前目录"
+      },
+      {
+        "id": "show-hidden",
+        "disabled": false,
+        "title": "显示隐藏项（已加载层中没有隐藏项）",
+        "aria": "显示隐藏项"
+      }
+    ],
+    "createTargets": {
+      "blank": {
+        "projectId": "proj-a",
+        "parentDir": "dir",
+        "name": "from-blank-menu.md"
+      },
+      "toolbar": {
+        "projectId": "proj-a",
+        "parentDir": "dir",
+        "name": "from-toolbar.md"
+      }
+    },
+    "renameBodies": [
+      {
+        "projectId": "proj-a",
+        "sourcePath": "note.md",
+        "name": "note-renamed.md"
+      }
+    ],
+    "menuDemo": [
+      {
+        "id": "rename",
+        "label": "重命名",
+        "disabled": true,
+        "hint": "当前模式或项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "move",
+        "label": "移动到…",
+        "disabled": true,
+        "hint": "当前模式或项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "trash",
+        "label": "移入回收区",
+        "disabled": true,
+        "hint": "当前模式/项目不支持真实回收"
+      },
+      {
+        "id": "meta-alias",
+        "label": "设置标注名…",
+        "disabled": true,
+        "hint": "当前模式/项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "meta-tags",
+        "label": "编辑标签…",
+        "disabled": true,
+        "hint": "当前模式/项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "meta-color",
+        "label": "设置颜色…",
+        "disabled": true,
+        "hint": "当前模式/项目不支持（需要已授权的真实项目）"
+      },
+      {
+        "id": "new-file",
+        "label": "新建文件",
+        "disabled": true,
+        "hint": "没有明确的项目：请先选中一个项目"
+      },
+      {
+        "id": "new-folder",
+        "label": "新建文件夹",
+        "disabled": true,
+        "hint": "没有明确的项目：请先选中一个项目"
+      },
+      {
+        "id": "new-supported",
+        "label": "创建已支持的扩展文件",
+        "disabled": true,
+        "hint": "没有明确的项目：请先选中一个项目"
+      },
+      {
+        "id": "refresh",
+        "label": "刷新此目录",
+        "disabled": true,
+        "hint": "没有明确的项目：请先选中一个项目"
+      }
+    ],
+    "finalNames": [
+      "项目A",
+      "dir",
+      "deep",
+      "from-blank-menu.md",
+      "from-toolbar.md",
+      "inner-renamed.md",
+      ".gitignore",
+      "from-file-menu.md",
+      "note-renamed.md"
+    ]
+  },
+  "summary": {
+    "total": 49,
+    "passed": 49,
+    "failed": []
+  }
+}

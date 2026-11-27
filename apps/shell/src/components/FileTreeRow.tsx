@@ -12,9 +12,11 @@
  * - 祖先是本层末项时，它的后代不再画这条竖线（见 `tree-trails.ts`）；
  * - 叶子行没有箭头，但保留同宽占位，保证文件名起点一致。
  */
-import type { MouseEvent, ReactNode } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import type { FocusEvent, MouseEvent, ReactNode } from 'react';
 import type { ResourceNodeState } from '../state/types';
 import { colorRowClassOf, tagBadges } from '../state/resource-metadata';
+import { createActivationArbiter, NAME_DOUBLE_CLICK_WINDOW } from '../state/tree-commands';
 import { ancestorGuides, type TreeTrails } from './tree-trails';
 
 /** 每一级的缩进步长（px）。行内计算与 CSS 都必须用这个值。 */
@@ -172,6 +174,17 @@ export interface TreeRowProps {
   onActivate(): void;
   /** 右键菜单（UX-02C-01）：由调用方按上下文决定命令；本组件不含任何命令逻辑。 */
   onContextMenu?(event: MouseEvent<HTMLButtonElement>): void;
+  /**
+   * 双击**名称文字**进入改名（UX-02C-05）。不传表示这一行不提供双击改名，
+   * 单击立即激活（Demo / Legacy / 链接节点就是这种情形）。
+   *
+   * 为什么需要它：文件的单击会立刻打开活动 View，而改名保护要求"没有打开的标签"。
+   * 因此名称上的单击要延后一个短窗口再激活，窗口内的第二次点击改为改名，
+   * 详见 `tree-commands.ts::createActivationArbiter`。
+   */
+  onRenameRequest?(): void;
+  /** 焦点进入本行：F2 / Shift+F10 以"当前焦点行"为操作对象。 */
+  onFocus?(event: FocusEvent<HTMLButtonElement>): void;
   /** 展开后的子层（渲染在同一个 `<li>` 内，保证语义与缩进引导线连续）。 */
   children?: ReactNode;
 }
@@ -195,10 +208,41 @@ export function TreeRow({
   rowClassName,
   onActivate,
   onContextMenu,
+  onRenameRequest,
+  onFocus,
   children,
 }: TreeRowProps) {
   const isFolder = node.kind === 'folder';
   const isLink = node.kind === 'link';
+
+  /**
+   * 单击 / 双击仲裁（UX-02C-05）。
+   *
+   * 回调放进 ref：仲裁器只在"是否提供双击改名"变化时重建，永远调用最新一次渲染
+   * 的 `onActivate` / `onRenameRequest`，不会拿着上一次的 projectId 去操作。
+   */
+  const latest = useRef({ onActivate, onRenameRequest });
+  latest.current = { onActivate, onRenameRequest };
+  const renameable = typeof onRenameRequest === 'function';
+  const arbiter = useMemo(
+    () =>
+      renameable
+        ? createActivationArbiter({
+            delay: NAME_DOUBLE_CLICK_WINDOW,
+            setTimer: (fn, delay) => window.setTimeout(fn, delay),
+            clearTimer: (handle) => window.clearTimeout(handle as number),
+            onSingle: () => latest.current.onActivate(),
+            onDouble: () => latest.current.onRenameRequest?.(),
+          })
+        : null,
+    [renameable],
+  );
+  // 卸载时撤掉在途的单击：组件已经不在，绝不能再触发一次"打开"
+  useEffect(() => () => arbiter?.cancel(), [arbiter]);
+
+  /** 只有名称（含标注名）区域参与双击改名；图标与行内空白保持"点了就动"。 */
+  const onNameArea = (target: EventTarget | null): boolean =>
+    target instanceof HTMLElement && Boolean(target.closest('.tree__name, .tree__alias'));
   /**
    * 隐藏标记（UX-02C-03-P1）。
    *
@@ -255,7 +299,18 @@ export function TreeRow({
             .join(' ')}
           aria-expanded={isFolder ? expanded : undefined}
           title={rowTitle}
-          onClick={onActivate}
+          onClick={(event) => {
+            if (!arbiter || !onNameArea(event.target)) {
+              onActivate();
+              return;
+            }
+            arbiter.click(event.detail);
+          }}
+          onDoubleClick={(event) => {
+            if (!arbiter || !onNameArea(event.target)) return;
+            arbiter.doubleClick();
+          }}
+          onFocus={onFocus}
           onContextMenu={onContextMenu}
         >
           <TreeIndent depth={depth} last={last} trails={trails} />

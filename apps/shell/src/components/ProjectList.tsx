@@ -12,12 +12,11 @@
  * 数据来自 `treeByProject[projectId]` 的层表：根层在连接/刷新时加载，
  * 子层只在用户展开时加载；刷新只作废这一个项目（T-16）。
  */
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { ProjectSummary } from '../client/client-api.ts';
 import type { ResourceNodeState } from '../state/types.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
-import { validateProjectName } from '../state/add-project.ts';
 import { AddProjectEntry } from './AddProjectEntry.tsx';
 import { InlineCreateSlot } from './InlineCreateRow.tsx';
 import { RemoveProjectEntry } from './RemoveProjectEntry.tsx';
@@ -48,45 +47,14 @@ function ProjectRoot({
   const loading = state.loadingByProject[projectId] ?? false;
 
   /**
-   * 行内重命名（UX-02B-04A）。
+   * 行内显示名编辑（UX-02B-04A → UX-02C-05 上提）。
    *
-   * 编辑器渲染在项目根行**下方**、缩进对齐名称列，而不是塞进标题按钮里：
-   * `<button>` 内嵌 `<input>` 是无效 HTML，点击/聚焦行为在各浏览器上都会走形。
+   * 状态现在由命令编排持有，因此**右键菜单、铅笔按钮、双击项目根名称**三个入口
+   * 打开的是同一份编辑会话、同一条 `renameProject` 业务链路。
+   * 编辑器渲染在项目根行下方、缩进对齐名称列，而不是塞进标题按钮里：
+   * `<button>` 内嵌 `<input>` 是无效 HTML。
    */
-  const [renaming, setRenaming] = useState(false);
-  const [draft, setDraft] = useState(project.name);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const startRename = (): void => {
-    setDraft(project.name);
-    setError(null);
-    setRenaming(true);
-  };
-  const cancelRename = (): void => {
-    setRenaming(false);
-    setError(null);
-    setDraft(project.name);
-  };
-  const submit = async (): Promise<void> => {
-    if (saving) return;
-    const checked = validateProjectName(draft);
-    // 本地预检只挡"注定失败"的请求；权威判断仍在 Host
-    if (!checked.ok) {
-      setError(checked.message);
-      return;
-    }
-    setSaving(true);
-    const outcome = await actions.renameProject(projectId, checked.name);
-    setSaving(false);
-    if (outcome.status === 'APPLIED') {
-      setRenaming(false);
-      setError(null);
-      return;
-    }
-    // 失败：界面保持原名（未派发任何改名），把输入框留在原处让用户修正
-    setError(outcome.message);
-  };
+  const renaming = commands.projectRename?.projectId === projectId ? commands.projectRename : null;
 
   const levels = state.treeByProject[projectId] ?? emptyLevels();
   const nodes = useMemo(() => materializeTree(levels), [levels]);
@@ -102,6 +70,13 @@ function ProjectRoot({
     kind: 'folder',
     ...(rootMeta ? { meta: rootMeta } : {}),
   };
+  /** 根的右键 / 焦点 / 双击共用同一个目标（UX-02C-05）。 */
+  const rootTarget = {
+    origin: 'project-root' as const,
+    projectId,
+    ...(rootMeta ? { nodeMeta: rootMeta } : {}),
+    ...(rootLevel?.projectAnchor ? { nodeAnchor: rootLevel.projectAnchor } : {}),
+  };
 
   return (
     <TreeRow
@@ -112,13 +87,10 @@ function ProjectRoot({
       expanded={open}
       selected={active}
       rowClassName="tree__row--with-rename"
-      onContextMenu={(event) =>
-        commands.openContextMenu(event, {
-          origin: 'project-root',
-          projectId,
-          ...(rootMeta ? { nodeMeta: rootMeta } : {}),
-        })
-      }
+      onContextMenu={(event) => commands.openContextMenu(event, rootTarget)}
+      onFocus={(event) => commands.noteFocus(rootTarget, event.currentTarget)}
+      // 双击项目根名称：只改**显示名称**，不改磁盘目录名，也不改标注名
+      onRenameRequest={() => commands.beginProjectRename(projectId)}
       onActivate={() => {
         // 切换当前项目只改焦点：不清标签、不动草稿、不影响其它项目（G2-05/G2-07）
         if (!active) void actions.switchProject(projectId);
@@ -148,7 +120,7 @@ function ProjectRoot({
             className="icon-button project__refresh project__rename"
             title={`修改「${project.name}」的显示名称`}
             aria-label={`修改「${project.name}」的显示名称`}
-            onClick={renaming ? cancelRename : startRename}
+            onClick={renaming ? commands.cancelProjectRename : () => commands.beginProjectRename(projectId)}
           >
             {renaming ? '×' : '✎'}
           </button>
@@ -159,25 +131,22 @@ function ProjectRoot({
       {renaming && (
         <div className="tree__rename">
           <input
-            className={error ? 'tree__rename-input tree__rename-input--invalid' : 'tree__rename-input'}
-            value={draft}
+            className={renaming.error ? 'tree__rename-input tree__rename-input--invalid' : 'tree__rename-input'}
+            value={renaming.draft}
             // 打开即聚焦：重命名是"点一下就开始打字"的动作
             autoFocus
-            disabled={saving}
+            disabled={renaming.saving}
             aria-label="项目显示名称"
-            aria-invalid={error !== null}
+            aria-invalid={renaming.error !== null}
             maxLength={80}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              if (error) setError(null);
-            }}
+            onChange={(event) => commands.setProjectRenameDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();
-                void submit();
+                void commands.submitProjectRename();
               } else if (event.key === 'Escape') {
                 event.preventDefault();
-                cancelRename();
+                commands.cancelProjectRename();
               }
             }}
           />
@@ -186,8 +155,8 @@ function ProjectRoot({
             className="icon-button project__refresh"
             title="保存名称（Enter）"
             aria-label="保存名称"
-            disabled={saving}
-            onClick={() => void submit()}
+            disabled={renaming.saving}
+            onClick={() => void commands.submitProjectRename()}
           >
             ✓
           </button>
@@ -196,13 +165,13 @@ function ProjectRoot({
             className="icon-button project__refresh"
             title="放弃修改（Esc）"
             aria-label="放弃修改"
-            disabled={saving}
-            onClick={cancelRename}
+            disabled={renaming.saving}
+            onClick={commands.cancelProjectRename}
           >
             ×
           </button>
           <p className="tree__rename-hint">
-            {error ?? (saving ? '正在保存…' : '只改显示名称：磁盘目录名、文件树与草稿都不变')}
+            {renaming.error ?? (renaming.saving ? '正在保存…' : '只改显示名称：磁盘目录名、文件树与草稿都不变')}
           </p>
         </div>
       )}
@@ -297,6 +266,8 @@ export function ProjectList() {
         onContextMenu={(event) =>
           commands.openContextMenu(event, { origin: 'blank', projectId: state.activeProjectId })
         }
+        // 键盘只在树范围内生效：焦点在编辑器/输入框时事件根本不会到这里
+        onKeyDown={commands.onTreeKeyDown}
       >
         {state.projects.map((project, index) => (
           <ProjectRoot

@@ -1,19 +1,23 @@
 /**
- * 文件树命令编排（UX-02C-01 创建 / UX-02C-02 改名与移动 / UX-02C-03-P1 隐藏）：
- * **菜单、顶部工具栏、行内输入框、移动对话框的唯一入口**。
+ * 文件树命令编排（UX-02C-01 创建 / UX-02C-02 改名与移动 / UX-02C-03-P1 隐藏 /
+ * UX-02C-03-P2-02 回收 / UX-02C-04 标注 / UX-02C-05 交互统一）：
+ * **右键菜单、顶部工具栏、行内输入框、移动对话框、双击改名、F2 / Shift+F10 的唯一入口**。
  *
- * 职责：把"右键了什么 / 工具栏在哪"折算成显式 `(projectId, 相对路径)`，
- * 管住行内命名与单飞提交，然后把结果交给 `DocumentActions` 去刷新层表。
- * 不 fetch、不碰磁盘、不复制任何授权判定；同名/路径/会话的权威判定在 Host。
+ * 职责：把"右键了什么 / 工具栏在哪 / 焦点停在哪一行"折算成显式
+ * `(projectId, 相对路径)`，管住行内命名与单飞提交，然后把结果交给
+ * `DocumentActions` 去刷新层表。不 fetch、不碰磁盘、不复制任何授权判定；
+ * 同名/路径/会话的权威判定在 Host。
  *
- * 未来命令（`delete-local / …`）只在 `ContextMenu.tsx` 的
- * `RESERVED_TREE_COMMANDS` 里占位，本轮**不渲染**成点了没反应的假菜单。
+ * UX-02C-05 起，**可用性与禁用原因不再写在这份 JSX 里**：
+ * `state/tree-commands.ts` 的 `treeCommandMatrix()` 是菜单、工具栏与键盘共用的唯一来源，
+ * 这里只负责"命令 id → 执行函数"的映射，以及执行前的失效检测与菜单生命周期。
  */
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
-import type { MouseEvent, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type {
   CreateEntryKindDto,
   CreateEntryOutcome,
+  ProjectSummary,
   ResourceMetadataDto,
   StructureChangeOutcome,
 } from '../client/client-api.ts';
@@ -42,21 +46,32 @@ import {
 } from '../state/structure-change.ts';
 import { entryNameOf } from '../../../../packages/storage/entry-name.ts';
 import {
-  visibilityCommandState,
   visibilityNoopNotice,
   visibilityNotice,
   visibilityUnknownNotice,
 } from '../state/visibility.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useResourceMetadata } from '../state/MetadataContext.tsx';
-import { metadataCommandState } from '../state/resource-metadata.ts';
 import { useTrash } from '../state/TrashContext.tsx';
-import { trashDeleteCommandState } from '../state/trash.ts';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
+import { validateProjectName } from '../state/add-project.ts';
+import {
+  menuIdentityOf,
+  toolbarTargetOf,
+  treeCommandMatrix,
+  treeKeyIntentOf,
+  treeTargetProblemOf,
+  menuOrderOf,
+  type TreeCommandId,
+  type TreeCommandMatrix,
+  type TreeCommandTarget,
+} from '../state/tree-commands.ts';
 import { ContextMenu, type MenuItem } from './ContextMenu.tsx';
 import { MoveEntryDialog } from './MoveEntryDialog.tsx';
+import { RemoveProjectDialog } from './RemoveProjectEntry.tsx';
+import { findEntryByPath } from './tree-model.ts';
 
-export interface TreeTarget {
+export interface TreeTarget extends TreeCommandTarget {
   readonly origin: CreateOrigin;
   /** 上下文所属项目；Demo / Legacy 传 null。 */
   readonly projectId: string | null;
@@ -79,6 +94,8 @@ export interface TreeTarget {
    * 从而只提交差异，不覆盖别人刚改的其它字段。
    */
   readonly nodeMeta?: ResourceMetadataDto;
+  /** 打开菜单那一刻该行的资源锚（UX-02C-04-R1）：执行前用来判断"还是不是那一行"。 */
+  readonly nodeAnchor?: string | null;
 }
 
 export interface NamingState {
@@ -109,12 +126,38 @@ export interface MoveDialogState {
   readonly submitting: boolean;
 }
 
+/**
+ * 项目**显示名称**的行内编辑（UX-02C-05 上提）。
+ *
+ * 与资源标注名、磁盘目录名是三件事：
+ * - 显示名称属于项目注册信息（`renameProject`），改它不动路径、不动 `workspaceKey`；
+ * - 标注名是资源元数据（UX-02C-04），只影响展示；
+ * - 磁盘目录名只有用户自己在资源管理器里改，工作台不会去改它。
+ */
+export interface ProjectRenameState {
+  readonly projectId: string;
+  readonly draft: string;
+  readonly error: string | null;
+  readonly saving: boolean;
+}
+
 interface MenuState {
   readonly x: number;
   readonly y: number;
   /** 每次打开都换一个实例：键盘高亮/子菜单状态不从上一次右键带过来。 */
   readonly nonce: number;
   readonly target: TreeTarget;
+  /** 打开时所属的"世界"；与当前世界不一致时菜单必须关闭（UX-02C-05）。 */
+  readonly identity: string;
+}
+
+/** 树内焦点位置：F2 / Shift+F10 的"当前有效资源"。 */
+interface FocusedRow {
+  readonly target: TreeTarget;
+  readonly element: HTMLElement | null;
+  readonly left: number;
+  readonly top: number;
+  readonly height: number;
 }
 
 interface TreeCommandsValue {
@@ -122,7 +165,7 @@ interface TreeCommandsValue {
   closeContextMenu(): void;
   /** 右键菜单与工具栏都走这里；`presetExtension` 只影响行内输入的初值与选区。 */
   beginCreate(kind: CreateEntryKindDto, target: TreeTarget, presetExtension?: string): void;
-  /** 右键文件/文件夹 → 行内改名（预填原名，选主文件名）。 */
+  /** 右键文件/文件夹 / F2 / 双击名称 → 行内改名（预填原名，选主文件名）。 */
   beginRename(target: TreeTarget): void;
   /** 右键文件/文件夹 → 打开"移动到…"选择器。 */
   openMove(target: TreeTarget): void;
@@ -140,9 +183,21 @@ interface TreeCommandsValue {
   toolbarCreate(kind: CreateEntryKindDto): void;
   toolbarRefresh(): void;
   noteSelection(projectId: string, kind: 'folder' | 'file', path: string): void;
+  /** 记录树内焦点行：F2 / Shift+F10 / 双击改名都以此为准。 */
+  noteFocus(target: TreeTarget, element: HTMLElement | null): void;
+  /** 树范围内的键盘处理（F2 / Shift+F10 / 菜单键 / Escape）。 */
+  onTreeKeyDown(event: ReactKeyboardEvent<HTMLElement>): void;
   /** 项目根容器的展开态（R1-01）：与创建编排放在同一处，保证开始创建时一定可见。 */
   isRootOpen(projectId: string): boolean;
   toggleRoot(projectId: string): void;
+  /** 项目显示名称的行内编辑（菜单、铅笔按钮、双击项目根名称共用）。 */
+  readonly projectRename: ProjectRenameState | null;
+  beginProjectRename(projectId: string): void;
+  setProjectRenameDraft(value: string): void;
+  submitProjectRename(): Promise<void>;
+  cancelProjectRename(): void;
+  /** 由右键菜单打开的项目移除确认框（与行内 🗑 按钮同一套检查与文案）。 */
+  requestRemoveProject(projectId: string): void;
   readonly naming: NamingState | null;
   setDraft(value: string): void;
   submitNaming(): Promise<void>;
@@ -162,8 +217,16 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
   const menuSeq = useRef(0);
   const [naming, setNaming] = useState<NamingState | null>(null);
   const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null);
+  const [projectRename, setProjectRename] = useState<ProjectRenameState | null>(null);
+  /** 菜单触发的移除：存项目快照而不是 id —— 移除成功后项目会从列表消失，
+   * 但对话框还要把"已移除"的结果说完。 */
+  const [removeTarget, setRemoveTarget] = useState<ProjectSummary | null>(null);
   /** "当前明确选中的目录"按项目记录：空白区 / 工具栏据此决定创建位置。 */
   const [selectedDirByProject, setSelectedDirByProject] = useState<Record<string, string>>({});
+  /** 树内焦点行（F2 / Shift+F10 的"当前有效资源"）。 */
+  const focusRef = useRef<FocusedRow | null>(null);
+  /** 项目改名在途标记：同一 tick 连按两次 Enter 也只会发一次请求。 */
+  const projectRenameBusy = useRef(false);
   /**
    * 项目根容器展开态（UX-02C-01-R1）。从 `ProjectList` 上提，使"打开根"与
    * "挂上输入行"在同一次渲染里完成。缺席即默认展开。
@@ -192,6 +255,17 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     },
     [state.mode, state.workspaceMode, state.projects],
   );
+
+  /**
+   * 菜单所属的"世界"。切换模式 / 工作区 / 当前项目都会让它变化，
+   * 变化的瞬间旧菜单必须关闭——它的命令已经不属于当前界面。
+   */
+  const identity = menuIdentityOf({
+    mode: state.mode,
+    workspaceMode: state.workspaceMode,
+    workspaceKey: state.workspaceKey,
+    activeProjectId: state.activeProjectId,
+  });
 
   /** 两个编排器共用的提示落地：状态栏 + 当前输入行/对话框的行内错误。 */
   const onNotice = useCallback(
@@ -255,9 +329,62 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     [selectedDirByProject, state.activeProjectId, isSupported],
   );
 
+  /**
+   * 执行前的失效检测（UX-02C-05）。
+   *
+   * 菜单是 portal，打开之后树可能已经刷新、项目可能已经不可用、文件可能已经被
+   * 同名新对象替换。这里只用**界面已知**的信息判断；权威仍是 Host。
+   */
+  const targetProblem = useCallback(
+    (target: TreeTarget): string | null => {
+      if (target.projectId === null) {
+        return treeTargetProblemOf({
+          target,
+          projectExists: false,
+          projectReady: false,
+          entryPresent: true,
+          currentAnchor: null,
+        });
+      }
+      const project = state.projects.find((item) => item.projectId === target.projectId);
+      const levels = state.treeByProject[target.projectId] ?? {};
+      const path = normalizeDir(target.nodePath ?? '');
+      const root = target.origin === 'project-root';
+      const entry = root || path === '' ? undefined : findEntryByPath(levels, path);
+      const anchor = root
+        ? (levels['']?.projectAnchor ?? null)
+        : entry
+          ? (levels[parentDirOf(path)]?.anchors?.[path] ?? null)
+          : null;
+      return treeTargetProblemOf({
+        target,
+        projectExists: Boolean(project),
+        projectReady: project?.status === 'READY',
+        entryPresent: root ? true : Boolean(entry),
+        currentAnchor: anchor,
+      });
+    },
+    [state.projects, state.treeByProject],
+  );
+
+  /** 菜单矩阵：菜单、工具栏、键盘共用同一份（UX-02C-05 阶段 B）。 */
+  const matrixOf = useCallback(
+    (target: TreeTarget): TreeCommandMatrix =>
+      treeCommandMatrix(target, {
+        supported: isSupported(target.projectId ?? state.activeProjectId),
+        supportedExtensionCount: supportedExtensions.length,
+      }),
+    [isSupported, state.activeProjectId, supportedExtensions],
+  );
+
   const beginCreate = useCallback(
     (kind: CreateEntryKindDto, target: TreeTarget, presetExtension?: string) => {
       setMenu(null);
+      const problem = targetProblem(target);
+      if (problem) {
+        dispatch({ type: 'NOTICE', message: problem });
+        return;
+      }
       const resolved = resolve(target);
       if (!resolved.ok) {
         dispatch({ type: 'NOTICE', message: resolved.reason });
@@ -291,7 +418,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         submitting: false,
       });
     },
-    [dispatch, resolve, ensureRootOpen, state.treeByProject],
+    [dispatch, resolve, ensureRootOpen, state.treeByProject, targetProblem],
   );
 
   /** 能被改名/移动的上下文：必须是真实 Multi 项目里的普通文件或文件夹。 */
@@ -328,6 +455,11 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
   const beginRename = useCallback(
     (target: TreeTarget) => {
       setMenu(null);
+      const problem = targetProblem(target);
+      if (problem) {
+        dispatch({ type: 'NOTICE', message: problem });
+        return;
+      }
       const source = structureSource(target);
       if (!source) {
         dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以改名' });
@@ -348,12 +480,17 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         entryKind: source.entryKind,
       });
     },
-    [dispatch, ensureRootOpen, structureSource],
+    [dispatch, ensureRootOpen, structureSource, targetProblem],
   );
 
   const openMove = useCallback(
     (target: TreeTarget) => {
       setMenu(null);
+      const problem = targetProblem(target);
+      if (problem) {
+        dispatch({ type: 'NOTICE', message: problem });
+        return;
+      }
       const source = structureSource(target);
       if (!source) {
         dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以移动' });
@@ -374,7 +511,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         submitting: false,
       });
     },
-    [dispatch, state.treeByProject, structureSource],
+    [dispatch, state.treeByProject, structureSource, targetProblem],
   );
 
   const setMoveTarget = useCallback((dir: string) => {
@@ -400,6 +537,11 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       const path = normalizeDir(target.nodePath ?? '');
       if (!projectId || path === '') {
         dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以从文件树隐藏' });
+        return;
+      }
+      const problem = targetProblem(target);
+      if (problem) {
+        dispatch({ type: 'NOTICE', message: problem });
         return;
       }
       if (visibilityBusy.current) return;
@@ -433,7 +575,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         visibilityBusy.current = false;
       }
     },
-    [actions, dispatch],
+    [actions, dispatch, targetProblem],
   );
 
   const confirmMove = useCallback(async (): Promise<void> => {
@@ -512,8 +654,19 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     setSelectedDirByProject((current) => (current[projectId] === dir ? current : { ...current, [projectId]: dir }));
   }, []);
 
+  const noteFocus = useCallback((target: TreeTarget, element: HTMLElement | null) => {
+    const rect = element?.getBoundingClientRect();
+    focusRef.current = {
+      target,
+      element,
+      left: rect?.left ?? 0,
+      top: rect?.top ?? 0,
+      height: rect?.height ?? 0,
+    };
+  }, []);
+
   const activeTarget = useCallback(
-    (): TreeTarget => ({ origin: 'toolbar', projectId: state.activeProjectId }),
+    (): TreeTarget => toolbarTargetOf(state.activeProjectId),
     [state.activeProjectId],
   );
   const toolbarCreate = useCallback(
@@ -521,13 +674,19 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     [activeTarget, beginCreate],
   );
   const toolbarRefresh = useCallback(() => {
-    const resolved = resolve(activeTarget());
+    const target = activeTarget();
+    const problem = targetProblem(target);
+    if (problem) {
+      dispatch({ type: 'NOTICE', message: problem });
+      return;
+    }
+    const resolved = resolve(target);
     if (!resolved.ok) {
       dispatch({ type: 'NOTICE', message: resolved.reason });
       return;
     }
     void actions.refreshTreeLevel(resolved.projectId, resolved.parentDir);
-  }, [activeTarget, dispatch, resolve, actions]);
+  }, [activeTarget, dispatch, resolve, actions, targetProblem]);
 
   const openContextMenu = useCallback((event: MouseEvent, target: TreeTarget) => {
     // 输入框里的原生文本右键（剪切/复制/粘贴）不能抢
@@ -535,31 +694,176 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     event.preventDefault();
     event.stopPropagation();
     menuSeq.current += 1;
-    setMenu({ x: event.clientX, y: event.clientY, nonce: menuSeq.current, target });
+    setMenu({ x: event.clientX, y: event.clientY, nonce: menuSeq.current, target, identity });
+  }, [identity]);
+
+  /**
+   * 菜单关闭（UX-02C-05 阶段 F）：
+   * - 命令执行时先关闭再执行（`ContextMenu` 已经这么做），这里只兜住 Escape；
+   * - Escape 关闭后把焦点还给触发它的那一行——键盘用户不该被扔回页面顶部。
+   */
+  const closeContextMenu = useCallback((reason?: 'escape' | 'other') => {
+    setMenu(null);
+    if (reason === 'escape') {
+      const element = focusRef.current?.element;
+      if (element && element.isConnected) element.focus();
+    }
   }, []);
 
-  const menuItems = useMemo<readonly MenuItem[]>(() => {
-    if (!menu) return [];
-    const target = menu.target;
-    const usable = isSupported(target.projectId ?? state.activeProjectId);
-    const isLink = target.origin === 'link';
-    const whyNot = isLink ? '链接节点不允许创建' : usable ? undefined : '当前模式/项目不支持';
-    const create = (kind: CreateEntryKindDto, preset?: string) => () => beginCreate(kind, target, preset);
-    const refresh = (): void => {
-      const resolved = resolve(target);
-      if (resolved.ok) void actions.refreshTreeLevel(resolved.projectId, resolved.parentDir);
+  /** 世界变了 → 旧菜单立刻失效（不向其他工作区发送旧操作）。 */
+  useEffect(() => {
+    setMenu((current) => (current && current.identity !== identity ? null : current));
+  }, [identity]);
+
+  /** 项目被移除 / 改名失败后不该继续挂着一个指向它的编辑器。 */
+  useEffect(() => {
+    if (!projectRename) return;
+    if (!state.projects.some((project) => project.projectId === projectRename.projectId)) {
+      setProjectRename(null);
+    }
+  }, [state.projects, projectRename]);
+
+  const beginProjectRename = useCallback(
+    (projectId: string) => {
       setMenu(null);
-    };
-    const structural = structureSource(target) !== null;
-    const visibility = visibilityCommandState({ target, supported: usable });
-    const metadataCommand = metadataCommandState({
-      origin: target.origin,
-      entryKind: target.entryKind === 'link' ? 'link' : target.entryKind,
-      supported: usable,
-    });
-    /** 三个入口打开的是同一个对话框，只是把焦点放在对应分区。 */
-    const openMetadata = (focus: 'alias' | 'tags' | 'color') => () => {
+      const project = state.projects.find((item) => item.projectId === projectId);
+      if (!project) {
+        dispatch({ type: 'NOTICE', message: '该项目已不在工作区里' });
+        return;
+      }
+      if (!isSupported(projectId)) {
+        dispatch({ type: 'NOTICE', message: '只有已授权的真实项目可以修改显示名称' });
+        return;
+      }
+      setProjectRename({ projectId, draft: project.name, error: null, saving: false });
+    },
+    [dispatch, isSupported, state.projects],
+  );
+
+  const setProjectRenameDraft = useCallback((value: string) => {
+    setProjectRename((current) => (current ? { ...current, draft: value, error: null } : current));
+  }, []);
+
+  const cancelProjectRename = useCallback(() => setProjectRename(null), []);
+
+  const submitProjectRename = useCallback(async (): Promise<void> => {
+    if (!projectRename || projectRename.saving || projectRenameBusy.current) return;
+    const checked = validateProjectName(projectRename.draft);
+    // 本地预检只挡"注定失败"的请求；权威判断仍在 Host
+    if (!checked.ok) {
+      setProjectRename((current) => (current ? { ...current, error: checked.message } : current));
+      return;
+    }
+    const project = state.projects.find((item) => item.projectId === projectRename.projectId);
+    if (!project) {
+      setProjectRename(null);
+      dispatch({ type: 'NOTICE', message: '该项目已不在工作区里' });
+      return;
+    }
+    // 名称没变：不发请求、不制造"已保存"的假象
+    if (project.name === checked.name) {
+      setProjectRename(null);
+      return;
+    }
+    projectRenameBusy.current = true;
+    setProjectRename((current) => (current ? { ...current, saving: true, error: null } : current));
+    try {
+      const outcome = await actions.renameProject(projectRename.projectId, checked.name);
+      if (outcome.status === 'APPLIED') {
+        setProjectRename(null);
+        return;
+      }
+      // 失败：界面保持原名（未派发任何改名），输入保留供修正
+      setProjectRename((current) => (current ? { ...current, saving: false, error: outcome.message } : current));
+    } catch {
+      setProjectRename((current) =>
+        current ? { ...current, saving: false, error: '重命名失败：网络或本地服务不可用' } : current,
+      );
+    } finally {
+      projectRenameBusy.current = false;
+    }
+  }, [actions, dispatch, projectRename, state.projects]);
+
+  const requestRemoveProject = useCallback(
+    (projectId: string) => {
       setMenu(null);
+      const project = state.projects.find((item) => item.projectId === projectId);
+      if (!project) {
+        dispatch({ type: 'NOTICE', message: '该项目已不在工作区里' });
+        return;
+      }
+      setRemoveTarget(project);
+    },
+    [dispatch, state.projects],
+  );
+
+  /**
+   * 树范围内的键盘（阶段 E2）。
+   *
+   * 事件只绑在文件树的根 `<ul>` 上：焦点在正文编辑器 / 输入框 / 其它模块时
+   * 根本不会冒泡到这里，因此不存在"劫持别人的快捷键"。
+   */
+  const onTreeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>) => {
+      const element = event.target as HTMLElement | null;
+      const inEditable = Boolean(
+        element?.closest('input, textarea, select, [contenteditable="true"]'),
+      );
+      const focused = focusRef.current;
+      const intent = treeKeyIntentOf({
+        key: event.key,
+        shiftKey: event.shiftKey,
+        inEditable,
+        hasTarget: focused !== null,
+      });
+      if (!intent) return;
+      if (intent === 'escape') {
+        // 输入行自己有 Escape（取消改名/创建）；这里只负责菜单
+        if (menu) {
+          event.preventDefault();
+          closeContextMenu('escape');
+        }
+        return;
+      }
+      const target = focused?.target;
+      if (!target) return;
+      if (intent === 'rename') {
+        event.preventDefault();
+        // 已经有输入行/改名会话时不叠加：不把用户正在打的字换掉
+        if (naming || projectRename) return;
+        const matrix = matrixOf(target);
+        if (!matrix.rename.visible) return;
+        if (matrix.rename.disabled) {
+          dispatch({ type: 'NOTICE', message: matrix.rename.hint ?? '当前不能改名' });
+          return;
+        }
+        beginRename(target);
+        return;
+      }
+      // context-menu：没有鼠标坐标，就落在焦点行的左下方
+      event.preventDefault();
+      menuSeq.current += 1;
+      setMenu({
+        x: (focused?.left ?? 0) + 12,
+        y: (focused?.top ?? 0) + (focused?.height ?? 0),
+        nonce: menuSeq.current,
+        target,
+        identity,
+      });
+    },
+    [beginRename, closeContextMenu, dispatch, identity, matrixOf, menu, naming, projectRename],
+  );
+
+  /* ---------------- 菜单项：矩阵 → 具体命令 ---------------- */
+
+  const openMetadata = useCallback(
+    (target: TreeTarget, focus: 'alias' | 'tags' | 'color') => {
+      setMenu(null);
+      const problem = targetProblem(target);
+      if (problem) {
+        dispatch({ type: 'NOTICE', message: problem });
+        return;
+      }
       const projectId = target.projectId;
       const path = target.nodePath == null ? '' : normalizeDir(target.nodePath);
       if (!projectId || (path === '' && target.origin !== 'project-root')) {
@@ -575,57 +879,54 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         },
         focus,
       );
+    },
+    [dispatch, metadata, targetProblem],
+  );
+
+  const menuItems = useMemo<readonly MenuItem[]>(() => {
+    if (!menu) return [];
+    const target = menu.target;
+    const matrix = matrixOf(target);
+    /** 计时的"刷新"：目标目录由与创建相同的解析规则给出，链接/无项目时不发请求。 */
+    const refresh = (): void => {
+      setMenu(null);
+      const problem = targetProblem(target);
+      if (problem) {
+        dispatch({ type: 'NOTICE', message: problem });
+        return;
+      }
+      const resolved = resolve(target);
+      if (!resolved.ok) {
+        dispatch({ type: 'NOTICE', message: resolved.reason });
+        return;
+      }
+      void actions.refreshTreeLevel(resolved.projectId, resolved.parentDir);
     };
-    // 只有"普通文件 + 已授权项目"可回收；目录/链接/项目根显示为禁用并说明原因
-    const trashCommand = trashDeleteCommandState({
-      origin: target.origin,
-      entryKind: target.entryKind === 'link' ? 'link' : target.entryKind,
-      supported: usable,
-    });
-    return [
-      {
-        id: 'rename',
-        label: '重命名',
-        hidden: !structural,
-        disabled: !usable || isLink,
-        command: () => beginRename(target),
-      },
-      {
-        id: 'move',
-        label: '移动到…',
-        hidden: !structural,
-        disabled: !usable || isLink,
-        command: () => openMove(target),
-      },
-      /*
-       * 从文件树隐藏 / 取消隐藏（UX-02C-03-P1）。
-       *
-       * 单独一条、紧跟在改名/移动之后：它同样是"对这一个节点动手"，但**不碰磁盘**。
-       * 链接节点不提供（Host 侧与"路径经过重解析点"同一条边界，必然 403）。
-       */
-      {
-        id: visibility.action === 'unhide' ? 'unhide' : 'hide',
-        label: visibility.action === 'unhide' ? '取消隐藏' : '从文件树隐藏',
-        hidden: !visibility.visible,
-        ...(visibility.hint ? { hint: visibility.hint } : {}),
-        disabled: visibility.disabled,
+    const create = (kind: CreateEntryKindDto, preset?: string) => () => beginCreate(kind, target, preset);
+    const items: Record<TreeCommandId, MenuItem> = {
+      rename: { id: 'rename', label: '重命名', command: () => beginRename(target) },
+      move: { id: 'move', label: '移动到…', command: () => openMove(target) },
+      // 隐藏与取消隐藏共用一条"对这一个节点动手但不碰磁盘"的语义，矩阵保证只出现一条
+      hide: {
+        id: 'hide',
+        label: '从文件树隐藏',
         command: () => void toggleVisibility(target, target.nodeHidden === true),
       },
-      /*
-       * 移入回收区（UX-02C-03-P2-02）。
-       *
-       * 与"从文件树隐藏"是两件不同的事：隐藏只改可见性、不碰磁盘；
-       * 回收会**移动文件**，因此只在普通文件上给入口，并且要经过二段确认。
-       * `delete-local` 那个占位是"永久删除"，与本项无关，仍然不渲染。
-       */
-      {
+      unhide: {
+        id: 'unhide',
+        label: '取消隐藏',
+        command: () => void toggleVisibility(target, true),
+      },
+      trash: {
         id: 'trash',
         label: '移入回收区',
-        hidden: !trashCommand.visible,
-        ...(trashCommand.hint ? { hint: trashCommand.hint } : {}),
-        disabled: trashCommand.disabled,
         command: () => {
           setMenu(null);
+          const problem = targetProblem(target);
+          if (problem) {
+            dispatch({ type: 'NOTICE', message: problem });
+            return;
+          }
           const projectId = target.projectId;
           const path = normalizeDir(target.nodePath ?? '');
           if (!projectId || path === '') {
@@ -635,89 +936,73 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
           trash.openDelete(projectId, path);
         },
       },
-      /**
-       * 资源标注（UX-02C-04）：标注名 / 标签 / 行颜色。
-       *
-       * 三条入口打开同一个对话框，分别把焦点放在对应分区——用户点哪一项，
-       * 光标就在哪一项，不需要在三个区块之间自己找。
-       * 只改工作台展示，不动真实文件名、不碰文件内容。
-       */
-      {
-        id: 'meta-alias',
-        label: '设置标注名…',
-        hidden: !metadataCommand.visible,
-        ...(metadataCommand.hint ? { hint: metadataCommand.hint } : {}),
-        disabled: metadataCommand.disabled,
-        command: openMetadata('alias'),
-      },
-      {
-        id: 'meta-tags',
-        label: '编辑标签…',
-        hidden: !metadataCommand.visible,
-        ...(metadataCommand.hint ? { hint: metadataCommand.hint } : {}),
-        disabled: metadataCommand.disabled,
-        command: openMetadata('tags'),
-      },
-      {
-        id: 'meta-color',
-        label: '设置颜色…',
-        hidden: !metadataCommand.visible,
-        ...(metadataCommand.hint ? { hint: metadataCommand.hint } : {}),
-        disabled: metadataCommand.disabled,
-        command: openMetadata('color'),
-      },
-      {
-        id: 'new-file',
-        label: '新建文件',
-        hint: whyNot,
-        disabled: !usable || isLink,
-        command: create('file'),
-      },
-      {
-        id: 'new-folder',
-        label: '新建文件夹',
-        hint: whyNot,
-        disabled: !usable || isLink,
-        command: create('directory'),
-      },
-      {
+      'meta-alias': { id: 'meta-alias', label: '设置标注名…', command: () => openMetadata(target, 'alias') },
+      'meta-tags': { id: 'meta-tags', label: '编辑标签…', command: () => openMetadata(target, 'tags') },
+      'meta-color': { id: 'meta-color', label: '设置颜色…', command: () => openMetadata(target, 'color') },
+      'new-file': { id: 'new-file', label: '新建文件', command: create('file') },
+      'new-folder': { id: 'new-folder', label: '新建文件夹', command: create('directory') },
+      'new-supported': {
         id: 'new-supported',
         label: '创建已支持的扩展文件',
-        hint: supportedExtensions.length === 0 ? '暂无可用查看能力' : undefined,
-        disabled: !usable || isLink || supportedExtensions.length === 0,
         children: supportedExtensions.map((item) => ({
           id: `new-supported:${item.extension}`,
           label: item.label,
           command: create('file', item.extension),
         })),
       },
-      {
+      refresh: {
         id: 'refresh',
         label: target.origin === 'project-root' ? '刷新项目根' : '刷新此目录',
-        hidden: isLink || !usable,
         command: refresh,
       },
-    ];
+      'rename-project': {
+        id: 'rename-project',
+        label: '修改项目显示名称…',
+        command: () => target.projectId && beginProjectRename(target.projectId),
+      },
+      'remove-project': {
+        id: 'remove-project',
+        label: '从工作台移除项目…',
+        command: () => target.projectId && requestRemoveProject(target.projectId),
+      },
+    };
+    const order = menuOrderOf(target.origin);
+    return order.map((id) => {
+      const base = items[id];
+      const cell = matrix[id];
+      const children = base.children?.filter((child) => !child.hidden);
+      return {
+        ...base,
+        ...(children ? { children } : {}),
+        hidden: !cell.visible || base.hidden === true,
+        ...(cell.hint ? { hint: cell.hint } : {}),
+        disabled: cell.disabled,
+      };
+    });
   }, [
     menu,
+    matrixOf,
     isSupported,
     state.activeProjectId,
+    dispatch,
+    targetProblem,
+    resolve,
+    actions,
     beginCreate,
     beginRename,
     openMove,
-    structureSource,
+    openMetadata,
     supportedExtensions,
-    resolve,
-    actions,
     toggleVisibility,
     trash,
-    metadata,
+    beginProjectRename,
+    requestRemoveProject,
   ]);
 
   const value = useMemo<TreeCommandsValue>(
     () => ({
       openContextMenu,
-      closeContextMenu: () => setMenu(null),
+      closeContextMenu: () => closeContextMenu('other'),
       beginCreate,
       beginRename,
       openMove,
@@ -729,8 +1014,16 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       toolbarCreate,
       toolbarRefresh,
       noteSelection,
+      noteFocus,
+      onTreeKeyDown,
       isRootOpen,
       toggleRoot,
+      projectRename,
+      beginProjectRename,
+      setProjectRenameDraft,
+      submitProjectRename,
+      cancelProjectRename,
+      requestRemoveProject,
       naming,
       setDraft: (draft) =>
         setNaming((current) => (current ? { ...current, draft, error: null } : current)),
@@ -740,6 +1033,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     }),
     [
       openContextMenu,
+      closeContextMenu,
       beginCreate,
       beginRename,
       openMove,
@@ -751,8 +1045,16 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       toolbarCreate,
       toolbarRefresh,
       noteSelection,
+      noteFocus,
+      onTreeKeyDown,
       isRootOpen,
       toggleRoot,
+      projectRename,
+      beginProjectRename,
+      setProjectRenameDraft,
+      submitProjectRename,
+      cancelProjectRename,
+      requestRemoveProject,
       naming,
       submitNaming,
       cancelNaming,
@@ -769,10 +1071,18 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
           x={menu.x}
           y={menu.y}
           items={menuItems}
-          onClose={() => setMenu(null)}
+          identity={menu.identity}
+          onClose={(reason) => closeContextMenu(reason === 'escape' ? 'escape' : 'other')}
         />
       )}
       <MoveEntryDialog />
+      {removeTarget && (
+        <RemoveProjectDialog
+          project={removeTarget}
+          open
+          onClose={() => setRemoveTarget(null)}
+        />
+      )}
     </TreeCommandsContext.Provider>
   );
 }

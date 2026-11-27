@@ -1,0 +1,91 @@
+{
+  "at": "2026-11-27T06:34:46.948Z",
+  "suite": "tests/suites/106-s11ux02c05-tree-interactions.test.ts",
+  "results": [
+    {
+      "id": "C05-M1",
+      "desc": "项目根菜单混入「移入回收区」（根的移除是 remove-project，不是扔回收区）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "mutatedSha256": "ff231bdd4d50b777c924cba33260de8832d1926f834b1bec11d5d96021fc776f",
+      "restoredSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "A03 项目根：创建 / 显示名 / 标注 / 刷新 / 移除；不出现改名·移动·回收·隐藏"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05-M2",
+      "desc": "可点的命令也带禁用原因（菜单上出现\"能点却写着不支持\"的自相矛盾）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "mutatedSha256": "f1aefca0f189e14036642b97ccfb9e847960809a15bb23170b1d0110a2b424f3",
+      "restoredSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "A01 普通文件：改名/移动/隐藏/回收/标注/创建/刷新都在，根专有命令不在"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05-M3",
+      "desc": "名称单击不再延后（双击的第一下就把文件打开，改名随即被自己的会话保护挡住）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "mutatedSha256": "76b6bd304dcfcfd17a7de33bcc0764b9a2e3ae852b48a54cc3ed1ce4979f751f",
+      "restoredSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "D01 名称上单击一次：延迟窗口结束后恰好激活一次",
+        "D02 双击：零激活 + 一次改名（文件不会被\"先打开\"而把自己挡住）",
+        "D04 一次双击之后仲裁器仍可正常使用（不残留状态）",
+        "D05 取消（关闭菜单 / 卸载）后不再有延迟激活"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05-M4",
+      "desc": "执行前不比对资源锚（同名新对象替换后仍执行旧命令）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "mutatedSha256": "8678eedd52deb0a8d2af2acb99cd81a9236fc17a4ba186f11e01a4d95cfb99ed",
+      "restoredSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "G04 同一路径换了对象（锚不同）：命令不执行"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05-M5",
+      "desc": "菜单身份不含当前项目（切了项目，旧菜单里的命令还能执行到新项目上）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "mutatedSha256": "3c4788c78fe0d035e4cefd6785e2691f9eb4a2b8c7671104652fb95e52ccec49",
+      "restoredSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "H03 模式 / 工作区 / 当前项目变化都会换一个\"世界\"，菜单必须失效"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05-M6",
+      "desc": "（纵深防御）去掉\"连击第二下不排定时器\"这条冗余守卫",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "mutatedSha256": "b6613688e777af6715b80c6a186cee890d5f7539ef2e5baecf36a21ff6f3d113",
+      "restoredSha256": "5f92b3c78e9d104fbaaa5769ee7235957e8c77c1b1191a1e9727602439260683",
+      "restoreExact": true,
+      "suiteExitCode": 0,
+      "failedTests": [],
+      "verdict": "NOT_BITTEN"
+    }
+  ]
+}

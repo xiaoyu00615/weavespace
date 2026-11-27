@@ -1,0 +1,40 @@
+### npm run typecheck
+
+> weavespace@0.0.0-p0 typecheck
+> tsc -p tsconfig.json
+
+### npm run typecheck:apps
+
+> weavespace@0.0.0-p0 typecheck:apps
+> npm --prefix apps/shell run typecheck && npm --prefix apps/server run typecheck
+
+
+> weavespace-shell@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+
+> weavespace-server@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+### npm run build:shell
+
+> weavespace@0.0.0-p0 build:shell
+> npm --prefix apps/shell run build
+
+
+> weavespace-shell@0.0.0-s9b build
+> vite build
+
+[36mvite v8.3.8 [32mbuilding client environment for production...[36m[39m
+transforming...
+✓ 100 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.44 kB │ gzip:   0.33 kB
+dist/assets/index-CCEtL9eu.css   26.50 kB │ gzip:   5.42 kB
+dist/assets/index-A7PXXGzX.js   484.73 kB │ gzip: 146.33 kB
+
+[32m✓ built in 973ms[39m
+### git diff --check
+warning: in the working copy of 'apps/shell/src/components/TreeCommandsContext.tsx', CRLF will be replaced by LF the next time Git touches it
+GIT_DIFF_CHECK_EXIT=0

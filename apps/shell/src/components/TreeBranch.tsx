@@ -153,6 +153,24 @@ function TreeItem({
   if (node.kind === 'folder') {
     const dir = normalizeDir(node.path ?? node.name);
     const level = levels[dir];
+    /**
+     * 命令上下文只构造一次：右键、双击改名、键盘焦点都必须指向**同一个**目标，
+     * 否则会出现"右键的是 docs、F2 改的是 docs2"这类错位（UX-02C-05）。
+     */
+    const target = {
+      origin: 'folder' as const,
+      projectId,
+      nodePath: dir,
+      // R1-01：折叠目录中创建时按这一行的真实节点 id 幂等展开
+      nodeId: node.id,
+      entryKind: 'directory' as const,
+      // UX-02C-03-P1：这一行自身是否已隐藏（决定菜单给"隐藏"还是"取消隐藏"）
+      nodeHidden: node.hidden === true,
+      // UX-02C-04：当前展示元数据，对话框据此只提交差异
+      ...(node.meta ? { nodeMeta: node.meta } : {}),
+      // UX-02C-04-R1：打开菜单那一刻的身份预期，执行前用来判断"还是不是这一行"
+      ...(node.anchor ? { nodeAnchor: node.anchor } : {}),
+    };
     return (
       <TreeRow
         node={node}
@@ -160,20 +178,10 @@ function TreeItem({
         last={last}
         trails={trails}
         expanded={expanded}
-        onContextMenu={(event) =>
-          commands.openContextMenu(event, {
-            origin: 'folder',
-            projectId,
-            nodePath: dir,
-            // R1-01：折叠目录中创建时按这一行的真实节点 id 幂等展开
-            nodeId: node.id,
-            entryKind: 'directory',
-            // UX-02C-03-P1：这一行自身是否已隐藏（决定菜单给"隐藏"还是"取消隐藏"）
-            nodeHidden: node.hidden === true,
-            // UX-02C-04：当前展示元数据，对话框据此只提交差异
-            ...(node.meta ? { nodeMeta: node.meta } : {}),
-          })
-        }
+        onContextMenu={(event) => commands.openContextMenu(event, target)}
+        onFocus={(event) => commands.noteFocus(target, event.currentTarget)}
+        // 双击名称改名只在有真实项目身份时提供（Demo / Legacy 没有可写的项目配置）
+        {...(projectId ? { onRenameRequest: () => commands.beginRename(target) } : {})}
         onActivate={() => {
           const willExpand = !expanded;
           toggle();
@@ -213,20 +221,20 @@ function TreeItem({
 
   if (node.kind === 'link') {
     const linkPath = node.path ?? node.name;
+    const target = {
+      origin: 'link' as const,
+      projectId,
+      nodePath: linkPath,
+      entryKind: 'link' as const,
+    };
     return (
       <TreeRow
         node={node}
         depth={depth}
         last={last}
         trails={trails}
-        onContextMenu={(event) =>
-          commands.openContextMenu(event, {
-            origin: 'link',
-            projectId,
-            nodePath: linkPath,
-            entryKind: 'link',
-          })
-        }
+        onContextMenu={(event) => commands.openContextMenu(event, target)}
+        onFocus={(event) => commands.noteFocus(target, event.currentTarget)}
         onActivate={() =>
           dispatch({ type: 'NOTICE', message: `「${node.name}」是链接，不展开也不打开（避免越过项目根）` })
         }
@@ -240,6 +248,15 @@ function TreeItem({
   const selected =
     projectKey === '' ? state.selectedPath === docId : state.selectedByProject[projectKey] === docId;
   const tab = state.tabs.find((item) => item.docId === docId);
+  const fileTarget = {
+    origin: 'file' as const,
+    projectId,
+    nodePath: node.path ?? node.name,
+    entryKind: 'file' as const,
+    nodeHidden: node.hidden === true,
+    ...(node.meta ? { nodeMeta: node.meta } : {}),
+    ...(node.anchor ? { nodeAnchor: node.anchor } : {}),
+  };
 
   return (
     <TreeRow
@@ -250,16 +267,9 @@ function TreeItem({
       selected={selected}
       opened={Boolean(tab)}
       dirty={tab?.dirty ?? false}
-      onContextMenu={(event) =>
-        commands.openContextMenu(event, {
-          origin: 'file',
-          projectId,
-          nodePath: node.path ?? node.name,
-          entryKind: 'file',
-          nodeHidden: node.hidden === true,
-          ...(node.meta ? { nodeMeta: node.meta } : {}),
-        })
-      }
+      onContextMenu={(event) => commands.openContextMenu(event, fileTarget)}
+      onFocus={(event) => commands.noteFocus(fileTarget, event.currentTarget)}
+      {...(projectId ? { onRenameRequest: () => commands.beginRename(fileTarget) } : {})}
       onActivate={() => {
         // 契约 B.1：不支持预览的文件仍是普通文件节点，但点击**不得**进入文本编辑器。
         // 能力注册表就绪时先问一次；未就绪时沿用既有打开链路，避免启动瞬间全部被挡。

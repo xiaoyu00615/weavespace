@@ -14,6 +14,7 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { menuPositionOf } from '../state/tree-commands.ts';
 
 /** 本轮实现的命令（UX-02C-03-P1 起 `hide` / `unhide` 落地）。 */
 export type ActiveTreeCommand =
@@ -59,13 +60,19 @@ export interface ContextMenuProps {
   readonly x: number;
   readonly y: number;
   readonly items: readonly MenuItem[];
-  onClose(): void;
+  /** 菜单所属的"世界"（模式/工作区/当前项目），只用于呈现与取证（`data-menu-identity`）。 */
+  readonly identity?: string;
+  /**
+   * `reason` 让调用方区分"用户按了 Escape"与"点到外面/窗口失焦"：
+   * 前者要把焦点还给触发菜单的那一行，后者不该抢焦点（UX-02C-05）。
+   */
+  onClose(reason?: 'escape' | 'other'): void;
 }
 
 const MENU_WIDTH = 224;
 const EDGE = 8;
 
-export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
+export function ContextMenu({ x, y, items, identity, onClose }: ContextMenuProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState({ left: x, top: y });
   const [active, setActive] = useState(0);
@@ -82,16 +89,25 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     const node = rootRef.current;
     if (!node) return;
     const rect = node.getBoundingClientRect();
-    const left = Math.max(EDGE, Math.min(x, window.innerWidth - rect.width - EDGE));
-    const top = Math.max(EDGE, Math.min(y, window.innerHeight - rect.height - EDGE));
-    setPosition({ left, top });
+    // 夹取规则在纯模块里（`menuPositionOf`），组件只把测量值交给它
+    setPosition(
+      menuPositionOf({
+        x,
+        y,
+        width: rect.width,
+        height: rect.height,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        edge: EDGE,
+      }),
+    );
   }, [x, y]);
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) onClose();
+      if (!rootRef.current?.contains(event.target as Node)) onClose('other');
     };
-    const onBlur = (): void => onClose();
+    const onBlur = (): void => onClose('other');
     window.addEventListener('pointerdown', onPointerDown, true);
     window.addEventListener('blur', onBlur);
     window.addEventListener('resize', onBlur);
@@ -125,7 +141,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const runSub = (index: number): void => {
     const child = submenuItems[index];
     if (!child || child.disabled) return;
-    onClose();
+    onClose('other');
     child.command?.();
   };
   const activate = (index: number): void => {
@@ -136,23 +152,24 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       setSubIndex(0);
       return;
     }
-    onClose();
+    onClose('other');
     item.command?.();
   };
 
   return createPortal(
-    <div
-      ref={rootRef}
-      className="ctx-menu"
-      role="menu"
-      aria-label="文件树命令"
-      style={{ left: position.left, top: position.top, minWidth: MENU_WIDTH }}
-      onContextMenu={(event) => event.preventDefault()}
+      <div
+        ref={rootRef}
+        className="ctx-menu"
+        role="menu"
+        aria-label="文件树命令"
+        data-menu-identity={identity ?? ''}
+        style={{ left: position.left, top: position.top, minWidth: MENU_WIDTH }}
+        onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
         const inSub = submenu !== null && submenuItems.length > 0;
         if (event.key === 'Escape') {
           event.preventDefault();
-          onClose();
+          onClose('escape');
         } else if (event.key === 'ArrowDown') {
           event.preventDefault();
           if (inSub) moveSub(1);
@@ -193,6 +210,8 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           <button
             type="button"
             role="menuitem"
+            data-command={item.id}
+            data-disabled={item.disabled ? 'true' : 'false'}
             className={[
               'ctx-menu__item',
               active === index ? 'ctx-menu__item--active' : '',

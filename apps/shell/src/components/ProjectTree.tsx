@@ -97,6 +97,8 @@ export function ProjectTree() {
       <ul
         className="tree__root"
         onContextMenu={(event) => commands.openContextMenu(event, { origin: 'blank', projectId: null })}
+        // 键盘只在树范围内生效：Demo / Legacy 下改名会被矩阵明确禁用并说明原因
+        onKeyDown={commands.onTreeKeyDown}
       >
         <TreeRow
           node={rootNode}
@@ -106,6 +108,9 @@ export function ProjectTree() {
           expanded={rootOpen}
           onContextMenu={(event) =>
             commands.openContextMenu(event, { origin: 'project-root', projectId: null })
+          }
+          onFocus={(event) =>
+            commands.noteFocus({ origin: 'project-root', projectId: null }, event.currentTarget)
           }
           onActivate={() => setRootOpen((value) => !value)}
         >

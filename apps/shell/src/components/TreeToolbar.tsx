@@ -1,14 +1,20 @@
 /**
- * 文件树顶部高频操作（UX-02C-01 创建 / UX-02C-03-P1 显示隐藏项）。
+ * 文件树顶部高频操作（UX-02C-01 创建 / UX-02C-03-P1 显示隐藏项 / UX-02C-05 统一）。
  *
- * 与右键菜单**共用** `TreeCommandsContext` 的同一条命令编排，不实现第二套创建逻辑。
+ * 与右键菜单**共用**同一条命令编排与**同一份可用性矩阵**（`state/tree-commands.ts`）：
+ * 这里不判断"能不能新建"，只把矩阵给出的 `disabled` 与 `hint` 画出来。
+ * 目标目录仍在 `create-entry.ts::resolveCreateTarget` 解析（`origin: 'toolbar'`），
+ * 因此"当前选中一个文件"不会把文件路径当成创建目录——那条规则只有一份。
+ *
  * 第一版保持 Obsidian 式简洁：几个小图标按钮 + 一个"隐藏项"开关，不做整页视觉重构。
  * Demo / Legacy / 静态 Multi 下按钮明确禁用并给出原因，不制造"点了会假成功"的入口。
  */
+import { useMemo } from 'react';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { countHiddenInLoadedLevels } from './tree-model.ts';
 import { useTreeCommands } from './TreeCommandsContext.tsx';
+import { toolbarTargetOf, treeCommandMatrix } from '../state/tree-commands.ts';
 
 export function TreeToolbar() {
   const { state } = useWorkspace();
@@ -20,7 +26,21 @@ export function TreeToolbar() {
     state.workspaceMode === 'multi' &&
     Boolean(projectId) &&
     state.projects.some((project) => project.projectId === projectId && project.status === 'READY');
-  const whyNot = usable ? undefined : '当前模式或项目不支持真实创建';
+
+  /**
+   * 工具栏的三个创建/刷新命令直接取菜单同一份矩阵：目标 = "当前活动项目"，
+   * 没有任何"从选中行推断目录"的私有逻辑。
+   */
+  const matrix = useMemo(
+    () =>
+      treeCommandMatrix(toolbarTargetOf(projectId), {
+        supported: usable,
+        supportedExtensionCount: commands.supportedExtensions.length,
+      }),
+    [projectId, usable, commands.supportedExtensions.length],
+  );
+  const whyNot = (id: 'new-file' | 'new-folder' | 'refresh'): string | undefined =>
+    matrix[id].disabled ? (matrix[id].hint ?? '当前模式或项目不支持') : undefined;
 
   /**
    * "隐藏项"开关（UX-02C-03-P1 / R1）。
@@ -45,9 +65,10 @@ export function TreeToolbar() {
       <button
         type="button"
         className="icon-button"
-        title={whyNot ?? '在当前目录新建文件'}
+        data-toolbar-command="new-file"
+        title={whyNot('new-file') ?? '在当前目录新建文件'}
         aria-label="新建文件"
-        disabled={!usable}
+        disabled={matrix['new-file'].disabled}
         onClick={() => commands.toolbarCreate('file')}
       >
         ＋
@@ -55,9 +76,10 @@ export function TreeToolbar() {
       <button
         type="button"
         className="icon-button"
-        title={whyNot ?? '在当前目录新建文件夹'}
+        data-toolbar-command="new-folder"
+        title={whyNot('new-folder') ?? '在当前目录新建文件夹'}
         aria-label="新建文件夹"
-        disabled={!usable}
+        disabled={matrix['new-folder'].disabled}
         onClick={() => commands.toolbarCreate('directory')}
       >
         ▣
@@ -65,9 +87,10 @@ export function TreeToolbar() {
       <button
         type="button"
         className="icon-button"
-        title={whyNot ?? '刷新当前目录'}
+        data-toolbar-command="refresh"
+        title={whyNot('refresh') ?? '刷新当前目录'}
         aria-label="刷新当前目录"
-        disabled={!usable}
+        disabled={matrix.refresh.disabled}
         onClick={commands.toolbarRefresh}
       >
         ↻
@@ -79,6 +102,7 @@ export function TreeToolbar() {
       <button
         type="button"
         className="tree__visibility-toggle"
+        data-toolbar-command="show-hidden"
         aria-pressed={state.showHidden}
         aria-label={
           state.showHidden

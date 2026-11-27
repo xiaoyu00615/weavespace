@@ -1,0 +1,19 @@
+### host
+[g1] live api  http://127.0.0.1:5401  mode=multi  store=D:\Workspace\projects\weavespace-test\c05\store
+[g1] 浏览器请访问 http://127.0.0.1:5178（Vite 会把 /api 代理到本服务）
+[g1] 添加项目会弹出本机目录选择器；目录永远不会经由网页传入
+
+### vite
+
+> weavespace-shell@0.0.0-s9b dev
+> vite --port 5402 --strictPort
+
+
+  [32m[1mVITE[22m v8.3.8[39m  [2mready in [0m[1m494[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5402[22m/[39m
+
+### chrome
+
+DevTools listening on ws://127.0.0.1:9349/devtools/browser/3d2a8428-6f81-4af1-96f2-12c8695abd8e
+Created TensorFlow Lite XNNPACK delegate for CPU.
