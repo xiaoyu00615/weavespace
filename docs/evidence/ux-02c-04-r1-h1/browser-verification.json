@@ -1,0 +1,145 @@
+{
+  "run": "ux-02c-04-r1-h1-send-gate",
+  "at": "2026-11-27T05:27:00.233Z",
+  "checks": {
+    "E-00 fixture 就绪：v5 配置、零元数据记录": true,
+    "E-01 初始：note.md 没有标注": true,
+    "E-02 右键 →「设置标注名…」打开对话框": true,
+    "E-03 点击保存": true,
+    "E-04 恰好发出一次 POST /api/metadata/set（身份未变，正常放行）": true,
+    "E-05 行上生效：note.md（令牌窗口外）": true,
+    "E-06 配置里落了一条记录，且指向真实对象": true,
+    "E-07 再次打开对话框（目标仍是 note.md）": true,
+    "E-08 点击保存": true,
+    "E-09 令牌请求已被挂起（证明前置核验已通过、正处在可见窗口内）": true,
+    "E-10 此刻还没有发出任何新的 metadata/set": true,
+    "E-11 窗口内点击「演示」（换工作区身份）": true,
+    "E-12 放行令牌后仍然零 POST（发送前裁决把它挡在 fetch 之前）": true,
+    "E-13 配置没有被改动：仍然只有 E-06 那一条": true,
+    "E-14 回到真实模式后仍是原来的标注": true,
+    "E-15 接口只承认一条记录，状态 active": true,
+    "E-16 正文没有被改动（元数据从不写文件内容）": true
+  },
+  "detail": {
+    "E-01 初始：note.md 没有标注": {
+      "name": "note.md",
+      "alias": null,
+      "color": null
+    },
+    "E-04 恰好发出一次 POST /api/metadata/set（身份未变，正常放行）": [
+      {
+        "method": "POST",
+        "url": "http://127.0.0.1:5400/api/metadata/set",
+        "ts": 509966.173196
+      }
+    ],
+    "E-05 行上生效：note.md（令牌窗口外）": {
+      "name": "note.md",
+      "alias": "（令牌窗口外）",
+      "color": null
+    },
+    "E-06 配置里落了一条记录，且指向真实对象": [
+      {
+        "projectId": "proj-a",
+        "path": "note.md",
+        "rootToken": "1754858869:1125899907481279:1795757220255091300",
+        "identity": "1754858869:1125899907481281",
+        "alias": "令牌窗口外",
+        "tags": [],
+        "updatedAt": "2026-11-27T05:27:08.876Z"
+      }
+    ],
+    "E-10 此刻还没有发出任何新的 metadata/set": 1,
+    "E-12 放行令牌后仍然零 POST（发送前裁决把它挡在 fetch 之前）": {
+      "total": 1,
+      "detail": [
+        {
+          "method": "POST",
+          "url": "http://127.0.0.1:5400/api/metadata/set",
+          "ts": 509966.173196
+        }
+      ]
+    },
+    "E-13 配置没有被改动：仍然只有 E-06 那一条": [
+      {
+        "projectId": "proj-a",
+        "path": "note.md",
+        "rootToken": "1754858869:1125899907481279:1795757220255091300",
+        "identity": "1754858869:1125899907481281",
+        "alias": "令牌窗口外",
+        "tags": [],
+        "updatedAt": "2026-11-27T05:27:08.876Z"
+      }
+    ],
+    "E-14 回到真实模式后仍是原来的标注": {
+      "name": "note.md",
+      "alias": "（令牌窗口外）",
+      "color": null
+    },
+    "E-15 接口只承认一条记录，状态 active": [
+      {
+        "path": "note.md",
+        "state": "active",
+        "alias": "令牌窗口外",
+        "tags": []
+      }
+    ],
+    "E-16 正文没有被改动（元数据从不写文件内容）": {
+      "before": "42e1d556884c2483dd788a249c4ad550777cfa8990e073a399f493cd0d1cea9d",
+      "after": "42e1d556884c2483dd788a249c4ad550777cfa8990e073a399f493cd0d1cea9d"
+    }
+  },
+  "facts": {
+    "configBefore": {
+      "version": 5,
+      "commitSeq": 0,
+      "issuedIds": [
+        "proj-a"
+      ],
+      "revoked": [],
+      "projects": [
+        {
+          "projectId": "proj-a",
+          "name": "项目A",
+          "rootDir": "D:\\Workspace\\projects\\weavespace-test\\h1\\projA",
+          "canonicalRoot": "D:\\Workspace\\projects\\weavespace-test\\h1\\projA",
+          "rootToken": "1754858869:1125899907481279:1795757220255091300",
+          "grantedAt": "2026-11-27T00:00:00.000Z",
+          "grantSource": "os-dialog"
+        }
+      ],
+      "hidden": [],
+      "trash": [],
+      "metadata": []
+    },
+    "fileSha256Before": "42e1d556884c2483dd788a249c4ad550777cfa8990e073a399f493cd0d1cea9d",
+    "configAfterNormalSave": [
+      {
+        "projectId": "proj-a",
+        "path": "note.md",
+        "rootToken": "1754858869:1125899907481279:1795757220255091300",
+        "identity": "1754858869:1125899907481281",
+        "alias": "令牌窗口外",
+        "tags": [],
+        "updatedAt": "2026-11-27T05:27:08.876Z"
+      }
+    ],
+    "configAfterAll": [
+      {
+        "projectId": "proj-a",
+        "path": "note.md",
+        "rootToken": "1754858869:1125899907481279:1795757220255091300",
+        "identity": "1754858869:1125899907481281",
+        "alias": "令牌窗口外",
+        "tags": [],
+        "updatedAt": "2026-11-27T05:27:08.876Z"
+      }
+    ],
+    "fileSha256After": "42e1d556884c2483dd788a249c4ad550777cfa8990e073a399f493cd0d1cea9d"
+  },
+  "summary": {
+    "total": 17,
+    "passed": 17,
+    "failed": []
+  }
+}

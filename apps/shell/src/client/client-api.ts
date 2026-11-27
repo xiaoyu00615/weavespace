@@ -264,6 +264,14 @@ export type MetadataOutcome =
       message?: string;
       httpStatus?: number;
     }
+  /**
+   * 发送前就被拒了：**一个请求都没有发出去**（UX-02C-04-R1-H1）。
+   *
+   * 必须与 `UNKNOWN` 分开：UNKNOWN 是"发出去了但没拿到结论"，处理方式是刷新核对；
+   * 这里连服务端都没碰过，刷新核对只会读到一份与本次编辑无关的旧状态，
+   * 用户却会以为"可能已经写进去了"。
+   */
+  | { status: 'NOT_SENT'; reason: MetadataSendRefusalReason }
   | { status: 'UNKNOWN'; message: string };
 
 /** 一次增量修改：`undefined` = 不改这一项；`null` / `[]` = 清除这一项。 */
@@ -283,6 +291,34 @@ export interface ResourceMetadataExpectation {
   /** 打开对话框那一刻从树行上捕获的资源锚。 */
   anchor?: string;
 }
+
+/**
+ * 发送前拒绝的原因（UX-02C-04-R1-H1）。
+ *
+ * 与编辑会话自己的 stale 原因是**同一集合**：拒绝只可能发生在"打开对话框之后世界变了"，
+ * 因此能给的结论也就是那四种，编排层不需要第二套词表。
+ */
+export type MetadataSendRefusalReason =
+  | 'workspace-switched'
+  | 'target-changed'
+  | 'target-missing'
+  | 'target-unverified';
+
+export type MetadataSendDecision =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: MetadataSendRefusalReason };
+
+/**
+ * 元数据的发送前最终裁决。
+ *
+ * 与回收区的 `TrashSendGate` 同一个道理、同一处位置：由**编排层**提供，由**传输层**
+ * 在 `sessionToken()` 之后、`fetch()` 之前**同步**调用一次。早先那次归属核验与真正的
+ * POST 之间隔着"取会话令牌"这个 await，用户完全可以在这段窗口里切工作区。
+ *
+ * 无参、同步、不返回 Promise：**任何** `await` 都可能成为新的窗口。
+ * 它只回答"这次编辑还属于当前世界吗"，不做身份推导、不做授权。
+ */
+export type MetadataSendGate = () => MetadataSendDecision;
 
 /** 元数据记录当前是否仍然成立（与隐藏同一套四态）。 */
 export type MetadataEntryState = 'active' | 'missing' | 'rebound' | 'unverified';
@@ -879,25 +915,33 @@ export interface WeaveSpaceClient {
    * "只改颜色"不会把对方刚写的标签覆盖回旧值。
    *
    * `expect` 携带打开对话框时的资源锚：Host 比对不上就拒绝（目标对象已被替换），
-   * 绝不让这次草稿落到新对象上。省略它表示"不声明身份预期"（旧调用方）。
+   * 绝不让这次草稿落到新对象上。传 `undefined` 表示"不声明身份预期"。
+   *
+   * `gate` 是发送前的最终裁决（R1-H1），**必填**：取完令牌、真正发出请求之前
+   * 同步再判一次归属。裁决不过就是 `NOT_SENT`，零请求、零副作用。
    */
   setResourceMetadata(
     projectId: string,
     path: string,
     patch: ResourceMetadataPatch,
-    expect?: ResourceMetadataExpectation,
+    expect: ResourceMetadataExpectation | undefined,
+    gate: MetadataSendGate,
   ): Promise<MetadataOutcome>;
   /**
    * 清除元数据记录。
    *
    * `scope` 缺省 `object`：只清**当前对象**那一条（带 `expect` 时对象缺失即拒绝）；
    * `stale` 是显式的失效清理：只删身份对不上的历史记录。
+   *
+   * `gate` 与设置同一条纪律（R1-H1）：清除同样会把不可逆的删除写到"以为自己在编辑"
+   * 的那个对象上，所以两条路径都必须有发送前裁决。
    */
   clearResourceMetadata(
     projectId: string,
     path: string,
-    expect?: ResourceMetadataExpectation,
-    scope?: 'object' | 'stale',
+    expect: ResourceMetadataExpectation | undefined,
+    scope: 'object' | 'stale' | undefined,
+    gate: MetadataSendGate,
   ): Promise<MetadataOutcome>;
   /** 查询元数据记录及其当前状态（只读；含 missing / rebound 这类失效态）。 */
   resourceMetadata(projectId: string): Promise<MetadataListOutcome>;
@@ -1095,7 +1139,46 @@ export const TRASH_SEND_GATE_MESSAGES = {
   invalid: TRASH_GATE_INVALID_MESSAGE,
 } as const;
 
+/* ---------------- 元数据发送前裁决的运行时保护（R1-H1-01） ---------------- */
 
+/** 拒绝裁决里允许的四个 `reason`，与 `MetadataSendRefusalReason` 一一对应。 */
+const METADATA_REFUSAL_REASONS: ReadonlySet<string> = new Set<MetadataSendRefusalReason>([
+  'workspace-switched',
+  'target-changed',
+  'target-missing',
+  'target-unverified',
+]);
+
+/**
+ * 把 gate 的结果收窄成裁决（R1-H1-01）。
+ *
+ * 三条纪律与回收区那份完全一致：
+ * - **不读原始对象的可疑字段**：只承认 `ok === true` 或 `ok === false + 合法 reason`，
+ *   其余（null / 数字 / 缺字段 / 未知 reason）一律 fail-closed；
+ * - **不把 gate 的原始对象传下去**：裁决一律是新构造的普通对象；
+ * - **不抛**：gate 自己抛异常与"拒绝"同性质，冒泡出去会被上层当成 `UNKNOWN`
+ *   ——那正好是"没发请求却说结果未知"的错误结论。
+ *
+ * fail-closed 的原因固定为 `target-unverified`：我们确实**无法确认**这次编辑指向谁，
+ * 而它对应的提示词是"没有保存"，不是"失败"，也不建议重试同一个对话框。
+ */
+function evaluateMetadataSendGate(gate: MetadataSendGate | undefined): MetadataSendDecision {
+  if (typeof gate !== 'function') return { ok: false, reason: 'target-unverified' };
+  try {
+    const raw: unknown = gate();
+    if (typeof raw !== 'object' || raw === null) return { ok: false, reason: 'target-unverified' };
+    const source = raw as { ok?: unknown; reason?: unknown };
+    if (source.ok === true) return { ok: true };
+    if (source.ok !== false) return { ok: false, reason: 'target-unverified' };
+    const reason = source.reason;
+    if (typeof reason !== 'string' || !METADATA_REFUSAL_REASONS.has(reason)) {
+      return { ok: false, reason: 'target-unverified' };
+    }
+    return { ok: false, reason: reason as MetadataSendRefusalReason };
+  } catch {
+    return { ok: false, reason: 'target-unverified' };
+  }
+}
 
 /**
  * 把一条回收记录收窄成 DTO（UX-02C-03-P2-02）。
@@ -1936,7 +2019,7 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
 
     /* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
 
-    async setResourceMetadata(projectId, path, patch, expect) {
+    async setResourceMetadata(projectId, path, patch, expect, gate) {
       // 只把**用户真的改过**的字段发出去：没传的字段由 Host 保持原值
       const payload: Record<string, unknown> = { projectId, path };
       if (patch.alias !== undefined) payload.alias = patch.alias;
@@ -1944,14 +2027,14 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       if (patch.color !== undefined) payload.color = patch.color;
       // 资源锚只是前置条件：有才发，绝不补一个客户端猜测的值
       if (expect?.anchor) payload.anchor = expect.anchor;
-      return postMetadata('/api/metadata/set', payload);
+      return postMetadata('/api/metadata/set', payload, gate);
     },
 
-    async clearResourceMetadata(projectId, path, expect, scope) {
+    async clearResourceMetadata(projectId, path, expect, scope, gate) {
       const payload: Record<string, unknown> = { projectId, path };
       if (expect?.anchor) payload.anchor = expect.anchor;
       if (scope) payload.scope = scope;
-      return postMetadata('/api/metadata/clear', payload);
+      return postMetadata('/api/metadata/clear', payload, gate);
     },
 
     async resourceMetadata(projectId) {
@@ -2191,10 +2274,16 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
    *
    * 与可见性同一纪律：网络中断/超时时**不重发**（虽然写入幂等，但重发会让用户看到
    * 两次结果、也可能覆盖别人刚改的字段），返回 `UNKNOWN`，由调用方刷新该层核对真实结果。
+   *
+   * R1-H1-01：`gate` 在**令牌到手之后、请求发出之前**同步执行一次。从
+   * `await sessionToken()` 返回到 `request(...)` 之间**不允许**出现任何 `await`——
+   * `request()` 的第一句就是 `fetch()`，所以这段同步片段就是真正的 POST 边界。
+   * 不通过即 `NOT_SENT`（零请求），绝不与 `UNKNOWN` 混为一谈。
    */
   async function postMetadata(
     endpoint: string,
     payload: Record<string, unknown>,
+    gate: MetadataSendGate,
   ): Promise<MetadataOutcome> {
     const projectId = typeof payload.projectId === 'string' ? payload.projectId : '';
     const path = typeof payload.path === 'string' ? payload.path : '';
@@ -2209,6 +2298,9 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         httpStatus: 403,
       };
     }
+    // ==== POST 边界：这一段到 `request(...)` 之间必须保持同步 ====
+    const decision = evaluateMetadataSendGate(gate);
+    if (!decision.ok) return { status: 'NOT_SENT', reason: decision.reason };
     let response: { httpStatus: number; body: ApiEnvelope };
     try {
       response = await request(baseUrl, endpoint, {

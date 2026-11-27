@@ -13,6 +13,7 @@
  */
 import type {
   MetadataOutcome,
+  MetadataSendGate,
   ResourceMetadataDto,
   ResourceMetadataPatch,
 } from '../client/client-api.ts';
@@ -91,13 +92,26 @@ export interface MetadataRunnerHost {
   identityKey(): string;
   /** 那一行此刻的状态（从层表里查，不做任何磁盘/网络推断）。 */
   targetState(projectId: string, path: string): MetadataTargetState;
+  /**
+   * 设置 / 清除。
+   *
+   * `gate` 必须原样交给传输层，由它在 `sessionToken()` 之后、`fetch()` 之前
+   * **同步**执行一次（R1-H1-01）：这里的前置判定与真正的 POST 之间隔着取令牌的
+   * await，只有把最后一次判定压进那个同步片段才没有可插入的窗口。
+   */
   set(
     projectId: string,
     path: string,
     patch: ResourceMetadataPatch,
     anchor: string | null,
+    gate: MetadataSendGate,
   ): Promise<MetadataOutcome>;
-  clear(projectId: string, path: string, anchor: string | null): Promise<MetadataOutcome>;
+  clear(
+    projectId: string,
+    path: string,
+    anchor: string | null,
+    gate: MetadataSendGate,
+  ): Promise<MetadataOutcome>;
   /** 只刷新该行所在的层。 */
   refresh(projectId: string, path: string): Promise<void>;
   notice(message: string): void;
@@ -110,11 +124,30 @@ export interface MetadataRunner {
 
 type MetadataAction = 'save' | 'clear';
 
+/**
+ * 发送前裁决（R1-H1-01）。
+ *
+ * 与 `run()` 开头的判定**是同一个判据**，区别只在**时刻**：那一次是"用户按下按钮时"，
+ * 这一次是"令牌到手、马上就要 fetch 时"。中间这段时间用户可能已经切走或换了对象。
+ *
+ * 无参、同步、不读任何外部状态以外的异步源：它只会调 `host` 的两个同步读口。
+ */
+function sendGateOf(host: MetadataRunnerHost, binding: MetadataSessionBinding): MetadataSendGate {
+  return () => {
+    const ownership = metadataOwnershipOf({
+      binding,
+      currentKey: host.identityKey(),
+      target: host.targetState(binding.projectId, binding.path),
+    });
+    return ownership === 'current' ? { ok: true } : { ok: false, reason: staleReasonOf(ownership) };
+  };
+}
+
 async function run(
   host: MetadataRunnerHost,
   binding: MetadataSessionBinding,
   action: MetadataAction,
-  send: () => Promise<MetadataOutcome>,
+  send: (gate: MetadataSendGate) => Promise<MetadataOutcome>,
 ): Promise<MetadataRunResult> {
   const ownership = metadataOwnershipOf({
     binding,
@@ -129,7 +162,7 @@ async function run(
 
   let outcome: MetadataOutcome;
   try {
-    outcome = await send();
+    outcome = await send(sendGateOf(host, binding));
   } catch {
     return { kind: 'rejected', message: '本地服务不可用，资源标注没有保存' };
   }
@@ -140,6 +173,18 @@ async function run(
    */
   if (host.identityKey() !== binding.key) {
     return { kind: 'stale', reason: 'workspace-switched' };
+  }
+
+  /*
+   * 发送前被拒（R1-H1-01）：一个请求都没发出去。
+   *
+   * 它既不是 `UNKNOWN`（那会去刷新核对一份与本次编辑无关的旧状态，用户还会以为
+   * "可能写进去了"），也不是失败（没有任何人拒绝过这次编辑）。归到 stale：
+   * 同一工作区内明确告诉用户"没保存"；工作区已经切走则上面那一支已经静默丢弃。
+   */
+  if (outcome.status === 'NOT_SENT') {
+    host.notice(metadataStaleNotice(outcome.reason, action));
+    return { kind: 'stale', reason: outcome.reason };
   }
 
   if (outcome.status === 'UNKNOWN') {
@@ -172,10 +217,14 @@ async function run(
 export function createMetadataRunner(host: MetadataRunnerHost): MetadataRunner {
   return {
     submit(binding, patch) {
-      return run(host, binding, 'save', () => host.set(binding.projectId, binding.path, patch, binding.anchor));
+      return run(host, binding, 'save', (gate) =>
+        host.set(binding.projectId, binding.path, patch, binding.anchor, gate),
+      );
     },
     clear(binding) {
-      return run(host, binding, 'clear', () => host.clear(binding.projectId, binding.path, binding.anchor));
+      return run(host, binding, 'clear', (gate) =>
+        host.clear(binding.projectId, binding.path, binding.anchor, gate),
+      );
     },
   };
 }

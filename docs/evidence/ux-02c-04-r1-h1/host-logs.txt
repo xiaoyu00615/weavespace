@@ -1,0 +1,4 @@
+### host-1
+[g1] live api  http://127.0.0.1:5399  mode=multi  store=D:\Workspace\projects\weavespace-test\h1\store
+[g1] 浏览器请访问 http://127.0.0.1:5178（Vite 会把 /api 代理到本服务）
+[g1] 添加项目会弹出本机目录选择器；目录永远不会经由网页传入

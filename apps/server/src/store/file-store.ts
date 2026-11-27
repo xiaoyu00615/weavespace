@@ -1414,12 +1414,24 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     async commitMetadataRelocate(input) {
       assertOpen();
       assertMutationsAllowed();
-      const keyOf = (path: string, identity: string): string =>
-        `${process.platform === 'win32' ? path.toLowerCase() : path}\u0000${identity}`;
+      /*
+       * 去重键是**完整身份四元组**（H1-02）：项目 + 根令牌 + 路径 + 对象身份。
+       *
+       * 只按 `path + identity` 会跨项目/跨根令牌误伤：同一个对象完全可能同时出现在
+       * 两个项目里（硬链接、嵌套授权），那时另一个项目的记录会被当成"重复"，
+       * 把本次真实迁移的记录静默丢掉——配置里看不出任何异常，用户只是发现标注没了。
+       * 路径按平台口径归一（Windows 大小写不敏感），与 `sameEntryPath` 保持一致。
+       */
+      const pathKey = (path: string): string => (process.platform === 'win32' ? path.toLowerCase() : path);
+      const keyOf = (projectId: string, rootToken: string, path: string, identity: string): string =>
+        `${projectId}\u0000${rootToken}\u0000${pathKey(path)}\u0000${identity}`;
       const moveByKey = new Map(
         input.moves
           .filter((move) => move.from !== '' && move.to !== '' && !sameEntryPath(move.from, move.to))
-          .map((move) => [keyOf(move.from, move.identity), move] as const),
+          .map(
+            (move) =>
+              [keyOf(input.projectId, input.rootToken, move.from, move.identity), move] as const,
+          ),
       );
       if (moveByKey.size === 0) return { changed: false, moved: 0 };
 
@@ -1429,7 +1441,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       for (const entry of current.metadata) {
         const move =
           entry.projectId === input.projectId && entry.rootToken === input.rootToken
-            ? moveByKey.get(keyOf(entry.path, entry.identity))
+            ? moveByKey.get(keyOf(entry.projectId, entry.rootToken, entry.path, entry.identity))
             : undefined;
         if (!move) {
           kept.push(entry);
@@ -1443,12 +1455,15 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       /*
        * 同一对象在目标路径已有记录（同项目 + 同根令牌 + 同身份 + 同路径）时只保留一条：
        * 那说明之前的迁移没写全或者同一路径被访问了两次，重复记录会让"显示哪一条"
-       * 变成未定义。**只按四元组判重**——目标路径上别的身份的历史记录一律保留。
+       * 变成未定义。**只按四元组判重**——目标路径上别的身份、别的项目、别的根令牌的
+       * 历史记录一律保留。
        */
-      const seen = new Set(kept.map((entry) => keyOf(entry.path, entry.identity)));
+      const seen = new Set(
+        kept.map((entry) => keyOf(entry.projectId, entry.rootToken, entry.path, entry.identity)),
+      );
       const deduped: ConfigMetadataEntry[] = [];
       for (const entry of relocated) {
-        const key = keyOf(entry.path, entry.identity);
+        const key = keyOf(entry.projectId, entry.rootToken, entry.path, entry.identity);
         if (seen.has(key)) continue;
         seen.add(key);
         deduped.push(entry);
@@ -1504,6 +1519,26 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         return { changed: false, outcome: 'skipped-missing' as const };
       }
       if (existing.identity === input.identity) return { changed: false, outcome: 'unchanged' as const };
+
+      /*
+       * 目标四元组已经存在（H1-02）：把它改过去就会写出**两条同一四元组**的记录，
+       * 而 `parseConfig` 把重复四元组判为损坏——下次启动整份配置都读不出来。
+       *
+       * 保守处理只有一个：什么都不写，如实回报 `skipped-conflict`。
+       * - 不覆盖目标记录（那是另一个对象的标注，静默改动它比"这次没刷新"更糟）；
+       * - 不删掉旧记录（它仍是一条可能还有用的历史）；
+       * - 不抛错：调用方是**已经成功的正文保存**，这里失败绝不能反过来把保存说成失败。
+       * 结果只是这条标注暂时停在旧身份上（读取侧如实报 `rebound`），用户可重新设置。
+       */
+      const collision = current.metadata.some(
+        (entry) =>
+          entry !== existing &&
+          entry.projectId === input.projectId &&
+          sameEntryPath(entry.path, input.path) &&
+          entry.rootToken === input.rootToken &&
+          entry.identity === input.identity,
+      );
+      if (collision) return { changed: false, outcome: 'skipped-conflict' as const };
 
       const record: ConfigMetadataEntry = { ...existing, identity: input.identity };
       const next: ConfigState = {

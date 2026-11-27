@@ -253,6 +253,12 @@ interface Captured {
  * 这里要证明的是**请求体里有哪些字段**：多带一个字段就可能覆盖用户在另一个窗口里
  * 刚写下的值，少带一个字段则会让"清除"变成"没改"。
  */
+/**
+ * 这些用例只钉请求体形状，不涉及发送前裁决（那在套件 105）：
+ * 给一个恒通过的 gate，保证调用链完整但不引入第二个变量。
+ */
+const allowSend = () => ({ ok: true as const });
+
 function installFetch(status = 200): { calls: Captured[]; restore(): void; fail(): void } {
   const original = globalThis.fetch;
   const calls: Captured[] = [];
@@ -299,7 +305,7 @@ test('S-15 setResourceMetadata 只发送用户改过的字段', async () => {
   const net = installFetch();
   try {
     const client = createLiveClient('http://host.test');
-    const outcome = await client.setResourceMetadata(PROJ, 'a.md', { color: 'blue' });
+    const outcome = await client.setResourceMetadata(PROJ, 'a.md', { color: 'blue' }, undefined, allowSend);
     assert.equal(outcome.status, 'APPLIED');
     assert.equal(net.calls.length, 1);
     assert.equal(net.calls[0]?.url, 'http://host.test/api/metadata/set');
@@ -314,7 +320,7 @@ test('S-16 清除单项：alias / color 以 null 发送，tags 以空数组发�
   const net = installFetch();
   try {
     const client = createLiveClient('http://host.test');
-    await client.setResourceMetadata(PROJ, 'a.md', { alias: null, tags: [], color: null });
+    await client.setResourceMetadata(PROJ, 'a.md', { alias: null, tags: [], color: null }, undefined, allowSend);
     assert.deepEqual(net.calls[0]?.body, { projectId: PROJ, path: 'a.md', alias: null, tags: [], color: null });
   } finally {
     net.restore();
@@ -326,7 +332,7 @@ test('S-17 网络中断 → UNKNOWN（不是失败，也不自动重试）', asy
   try {
     net.fail();
     const client = createLiveClient('http://host.test');
-    const outcome = await client.setResourceMetadata(PROJ, 'a.md', { alias: 'x' });
+    const outcome = await client.setResourceMetadata(PROJ, 'a.md', { alias: 'x' }, undefined, allowSend);
     assert.equal(outcome.status, 'UNKNOWN');
     assert.equal(net.calls.filter((call) => call.url.endsWith('/api/metadata/set')).length, 0);
   } finally {
@@ -338,7 +344,7 @@ test('S-18 清除接口：只发 projectId + path', async () => {
   const net = installFetch();
   try {
     const client = createLiveClient('http://host.test');
-    const outcome = await client.clearResourceMetadata(PROJ, 'a.md');
+    const outcome = await client.clearResourceMetadata(PROJ, 'a.md', undefined, undefined, allowSend);
     assert.equal(outcome.status, 'APPLIED');
     assert.equal(net.calls[0]?.url, 'http://host.test/api/metadata/clear');
     assert.deepEqual(net.calls[0]?.body, { projectId: PROJ, path: 'a.md' });

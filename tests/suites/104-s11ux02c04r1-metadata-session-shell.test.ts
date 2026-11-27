@@ -303,6 +303,12 @@ interface Captured {
   body: Record<string, unknown> | null;
 }
 
+/**
+ * 发送前裁决恒通过：这一组钉的是请求/响应**形状**，裁决本身在套件 105
+ * （那边用真实的令牌窗口驱动同一个调用链）。
+ */
+const allowSend = () => ({ ok: true as const });
+
 function installFetch(reply: () => { status: number; body: unknown }): {
   calls: Captured[];
   restore(): void;
@@ -337,7 +343,7 @@ test('R1-D03 资源锚只作为前置条件随请求发送（不额外自述身�
   }));
   try {
     const client = createLiveClient('http://host.test');
-    await client.setResourceMetadata(PROJ, 'a.md', { color: 'blue' }, { anchor: ANCHOR_A });
+    await client.setResourceMetadata(PROJ, 'a.md', { color: 'blue' }, { anchor: ANCHOR_A }, allowSend);
     assert.deepEqual(net.calls[0]?.body, { projectId: PROJ, path: 'a.md', color: 'blue', anchor: ANCHOR_A });
     assert.equal('identity' in (net.calls[0]?.body ?? {}), false);
     assert.equal('rootToken' in (net.calls[0]?.body ?? {}), false);
@@ -353,7 +359,7 @@ test('R1-D04 410/409 错误原样传递：清除冲突可见', async () => {
   }));
   try {
     const client = createLiveClient('http://host.test');
-    const outcome = await client.clearResourceMetadata(PROJ, 'a.md', { anchor: ANCHOR_A });
+    const outcome = await client.clearResourceMetadata(PROJ, 'a.md', { anchor: ANCHOR_A }, undefined, allowSend);
     assert.equal(outcome.status, 'REJECTED');
     if (outcome.status !== 'REJECTED') return;
     assert.equal(outcome.errorCode, 'ERR_METADATA_TARGET_CHANGED');

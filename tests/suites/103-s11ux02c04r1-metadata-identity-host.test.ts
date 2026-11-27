@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,7 @@ import { test } from 'node:test';
 import { createShellServer, type ShellServer } from '../../apps/server/src/server.ts';
 import { createFakePicker } from '../../apps/server/src/folder-picker/fake-picker.ts';
 import { parseConfig, serializeConfig } from '../../apps/server/src/store/config.ts';
+import { CONFIG_FILE, createFileProjectStore } from '../../apps/server/src/store/index.ts';
 import { rootTokenOf } from '../../packages/storage/path-safety.ts';
 
 interface ApiResponse {
@@ -196,6 +197,31 @@ function anchorOf(body: any, name: string, dir = ''): string {
 
 function recordsAt(config: { parsed: ReturnType<typeof parseConfig> }, path: string): any[] {
   return (config.parsed?.state.metadata ?? []).filter((record) => record.path === path);
+}
+
+/** 按**项目 + 路径**取记录：同一路径可能在多个项目里都有记录（H1-B01 的前提）。 */
+function recordsOf(config: { parsed: ReturnType<typeof parseConfig> }, projectId: string, path: string): any[] {
+  return (config.parsed?.state.metadata ?? []).filter(
+    (record) => record.projectId === projectId && record.path === path,
+  );
+}
+
+/**
+ * 直接往配置里再加几条记录（构造"历史记录已经存在"的前置状态）。
+ *
+ * 走 `serializeConfig` 而不是手拼 JSON：校验和必须由实现自己算，否则注入出来的
+ * 配置一加载就会被判损坏，测的就不是迁移了。
+ */
+async function injectRecords(ctx: Ctx, records: any[]): Promise<void> {
+  const current = await ctx.config();
+  const state = current.parsed?.state;
+  assert.ok(state, '注入记录前，配置本身必须是可以解析的');
+  await writeFile(
+    join(ctx.storeDir, 'workspace.json'),
+    serializeConfig({ ...state, commitSeq: state.commitSeq + 1, metadata: [...state.metadata, ...records] }),
+    'utf8',
+  );
+  await ctx.restart();
 }
 
 /* ================================================================== */
@@ -530,6 +556,189 @@ test('R1-B04 被拒绝的改名：元数据零变更', async () => {
     assert.deepEqual(after.parsed?.state.metadata, before.parsed?.state.metadata);
     assert.equal(nodeOf((await ctx.tree(PROJ_A)).body, 'a.md').meta.alias, '不该丢');
   });
+});
+
+/* ================================================================== */
+/* B 组（H1-02）：迁移与身份再绑定必须用完整四元组                      */
+/* ================================================================== */
+
+test('H1-B01 另一个项目里"同路径 + 同身份"的记录，不得让本次迁移丢记录', async () => {
+  await withHost(async (ctx) => {
+    /*
+     * 真造出"同一个对象出现在两个项目里"：B 的 renamed.md 硬链接到 A 的 a.md，
+     * 于是两条记录的项目不同、根令牌不同，但 dev:ino 完全相同。
+     * 这是"只按 path + identity 去重"会误伤的**唯一**真实成因，不该用假数据模拟。
+     */
+    await rm(join(ctx.rootB, 'a.md'));
+    await link(join(ctx.rootA, 'a.md'), join(ctx.rootB, 'renamed.md'));
+
+    await ctx.set(PROJ_A, 'a.md', { alias: 'A 的标注' }, anchorOf((await ctx.tree(PROJ_A)).body, 'a.md'));
+    await ctx.set(
+      PROJ_B,
+      'renamed.md',
+      { alias: 'B 的标注' },
+      anchorOf((await ctx.tree(PROJ_B)).body, 'renamed.md'),
+    );
+
+    const before = await ctx.config();
+    const a = recordsOf(before, PROJ_A, 'a.md')[0];
+    const b = recordsOf(before, PROJ_B, 'renamed.md')[0];
+    assert.ok(a && b, '前置条件：两个项目各有一条记录');
+    assert.equal(a.identity, b.identity, '前置条件：硬链接让两个项目看到同一个对象身份');
+    assert.notEqual(a.rootToken, b.rootToken);
+
+    const renamed = await ctx.post('/api/files/rename', {
+      projectId: PROJ_A,
+      sourcePath: 'a.md',
+      name: 'renamed.md',
+    });
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+    assert.equal(renamed.body.metadataMigration, 'moved');
+    assert.equal(renamed.body.metadataMoved, 1, 'A 的记录必须跟着真实移动过去');
+
+    const after = await ctx.config();
+    assert.ok(after.parsed, '迁移后的配置必须仍然可以通过校验和自检');
+    const movedRows = recordsOf(after, PROJ_A, 'renamed.md');
+    assert.equal(movedRows.length, 1, '本项目迁移的记录不得被另一个项目的记录挤掉');
+    assert.equal(movedRows[0]?.alias, 'A 的标注');
+
+    const otherRows = recordsOf(after, PROJ_B, 'renamed.md');
+    assert.equal(otherRows.length, 1, '另一个项目的记录与本项目迁移无关，一条都不许动');
+    assert.equal(otherRows[0]?.alias, 'B 的标注');
+  });
+});
+
+test('H1-B02 同项目不同根令牌的记录不参与本次迁移的去重', async () => {
+  await withHost(async (ctx) => {
+    await ctx.set(PROJ_A, 'a.md', { alias: '真记录' }, anchorOf((await ctx.tree(PROJ_A)).body, 'a.md'));
+    const before = await ctx.config();
+    const real = recordsOf(before, PROJ_A, 'a.md')[0];
+    assert.ok(real);
+
+    // 换根令牌（重新授权/换目录）之后留在配置里的旧记录：路径恰好是本次迁移的目标
+    await injectRecords(ctx, [
+      { ...real, path: 'renamed.md', rootToken: `${real.rootToken}-old`, alias: '旧根令牌记录' },
+    ]);
+
+    const renamed = await ctx.post('/api/files/rename', {
+      projectId: PROJ_A,
+      sourcePath: 'a.md',
+      name: 'renamed.md',
+    });
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+    assert.equal(renamed.body.metadataMigration, 'moved');
+    assert.equal(renamed.body.metadataMoved, 1);
+
+    const after = await ctx.config();
+    assert.ok(after.parsed);
+    const rows = recordsOf(after, PROJ_A, 'renamed.md');
+    assert.equal(rows.length, 2, '不同根令牌的记录各自保留，不互相去重');
+    assert.ok(
+      rows.some((row) => row.alias === '真记录' && row.rootToken === real.rootToken),
+      '本次迁移的记录不得被别的根令牌的记录挤掉',
+    );
+    assert.ok(rows.some((row) => row.alias === '旧根令牌记录'), '旧根令牌的记录也必须在');
+  });
+});
+
+test('H1-B03 迁移后出现同一完整四元组：只留一条，且配置仍然可解析', async () => {
+  await withHost(async (ctx) => {
+    await ctx.set(PROJ_A, 'a.md', { alias: '源位标注' }, anchorOf((await ctx.tree(PROJ_A)).body, 'a.md'));
+    const before = await ctx.config();
+    const real = recordsOf(before, PROJ_A, 'a.md')[0];
+    assert.ok(real);
+
+    // 目标路径上已有同一个对象的记录（同一四元组的前身）：迁移会把它变成重复
+    await injectRecords(ctx, [{ ...real, path: 'renamed.md', alias: '目标位已有' }]);
+    const injected = await ctx.config();
+    assert.equal(recordsOf(injected, PROJ_A, 'renamed.md').length, 1);
+    assert.equal(recordsOf(injected, PROJ_A, 'a.md').length, 1, '两条记录在迁移前是两个合法的四元组');
+
+    const renamed = await ctx.post('/api/files/rename', {
+      projectId: PROJ_A,
+      sourcePath: 'a.md',
+      name: 'renamed.md',
+    });
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+
+    const after = await ctx.config();
+    assert.ok(after.parsed, '同一四元组只能留一条，否则重启时整份配置会被判损坏');
+    const rows = recordsOf(after, PROJ_A, 'renamed.md');
+    assert.equal(rows.length, 1, '同一完整四元组不得产生重复记录');
+    assert.ok(['源位标注', '目标位已有'].includes(rows[0]?.alias), '留下的必须是这两条之一，不许凭空生成');
+
+    await ctx.restart();
+    const reloaded = await ctx.config();
+    assert.ok(reloaded.parsed, '重启后仍必须能加载');
+  });
+});
+
+test('H1-B04 身份再绑定撞上已有目标四元组：不写损坏配置，重启仍可加载', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ws-h1-rebind-'));
+  try {
+    const store = createFileProjectStore({ dir });
+    try {
+      await store.commitAdd({
+        projectId: 'proj',
+        name: '项目',
+        rootDir: 'C:/tmp/proj',
+        canonicalRoot: 'C:\\tmp\\proj',
+        rootToken: 'root-1',
+        opId: 'op-rebind-1',
+      });
+      // 同一路径上两个身份各自一条记录：这是"同名新文件"的合法形态
+      await store.commitMetadata({
+        projectId: 'proj',
+        path: 'a.md',
+        rootToken: 'root-1',
+        identity: 'dev:1:2',
+        alias: '旧对象',
+      });
+      await store.commitMetadata({
+        projectId: 'proj',
+        path: 'a.md',
+        rootToken: 'root-1',
+        identity: 'dev:1:3',
+        alias: '目标对象',
+      });
+
+      /*
+       * 保存后的再绑定：把 dev:1:2 那条换成 dev:1:3 —— 但 dev:1:3 已经有记录了。
+       * 若直接改身份，就会写出两条**同一四元组**的记录，下次加载整份配置判损坏。
+       */
+      const rebound = await store.commitMetadataUpdateIdentity({
+        projectId: 'proj',
+        path: 'a.md',
+        rootToken: 'root-1',
+        identity: 'dev:1:3',
+        expectIdentity: 'dev:1:2',
+      });
+      assert.equal(rebound.changed, false, '撞上已有四元组时不得写入');
+      assert.equal(rebound.outcome, 'skipped-conflict');
+
+      const text = await readFile(join(dir, CONFIG_FILE), 'utf8');
+      const parsed = parseConfig(text);
+      assert.ok(parsed, '不得写出下次重启时无法通过解析的数据');
+      assert.equal(parsed?.state.metadata.length, 2, '两条记录都还在，谁也没有被静默覆盖');
+      assert.deepEqual(
+        parsed?.state.metadata.map((record) => `${record.identity}:${record.alias ?? ''}`).sort(),
+        ['dev:1:2:旧对象', 'dev:1:3:目标对象'],
+      );
+    } finally {
+      store.close();
+    }
+
+    // 真正的"重启"：新实例重新加载同一份配置
+    const reopened = createFileProjectStore({ dir });
+    try {
+      assert.equal(reopened.loadState().integrity, 'OK', '重启后必须照常加载');
+      assert.equal(reopened.metadataOf('proj').length, 2);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 /* ================================================================== */

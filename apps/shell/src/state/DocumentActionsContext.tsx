@@ -32,6 +32,7 @@ import {
   type TrashOpQueryOutcome,
   type TrashSendGate,
   type MetadataOutcome,
+  type MetadataSendGate,
   type ResourceMetadataExpectation,
   type ResourceMetadataPatch,
 } from '../client/client-api';
@@ -236,12 +237,16 @@ export interface DocumentActions {
    *
    * `expect` 是**打开对话框那一刻**的资源锚：Host 与它自己核验的身份比对不上就
    * 拒绝写入（目标对象已被替换）。它只作前置条件，不是身份，也不是授权。
+   *
+   * `gate` 必须原样转给传输层（R1-H1-01）：它是"取完令牌、真正 fetch 之前"的最后一次
+   * 归属判定；在这里提前调用一次再传下去，等于把窗口又放回来了。
    */
   setResourceMetadata(
     projectId: string,
     path: string,
     patch: ResourceMetadataPatch,
-    expect?: ResourceMetadataExpectation,
+    expect: ResourceMetadataExpectation | undefined,
+    gate: MetadataSendGate,
   ): Promise<MetadataOutcome>;
   /**
    * 清除元数据记录。
@@ -249,12 +254,15 @@ export interface DocumentActions {
    * `scope` 缺省 `object`：只清**当前对象**那条；`stale` 是显式的失效清理
    * （只删身份对不上的历史记录）。两者绝不互相代劳——清除当前对象时顺手删掉
    * 同路径别的对象的历史记录，是不可逆的破坏。
+   *
+   * `gate` 与设置同一条纪律：删除同样必须压在 POST 边界上判一次。
    */
   clearResourceMetadata(
     projectId: string,
     path: string,
-    expect?: ResourceMetadataExpectation,
-    scope?: 'object' | 'stale',
+    expect: ResourceMetadataExpectation | undefined,
+    scope: 'object' | 'stale' | undefined,
+    gate: MetadataSendGate,
   ): Promise<MetadataOutcome>;
   /**
    * 当前工作区身份键（模式 + 工作区模式 + 工作区摘要 + 加载代次）。
@@ -1184,18 +1192,18 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
 
       /* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
 
-      async setResourceMetadata(projectId, path, patch, expect) {
+      async setResourceMetadata(projectId, path, patch, expect, gate) {
         if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
           return unsupportedMetadata('当前模式没有工作区配置，无法保存资源标注');
         }
-        return liveClient.setResourceMetadata(projectId, path, patch, expect);
+        return liveClient.setResourceMetadata(projectId, path, patch, expect, gate);
       },
 
-      async clearResourceMetadata(projectId, path, expect, scope) {
+      async clearResourceMetadata(projectId, path, expect, scope, gate) {
         if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
           return unsupportedMetadata('当前模式没有工作区配置，无法清除资源标注');
         }
-        return liveClient.clearResourceMetadata(projectId, path, expect, scope);
+        return liveClient.clearResourceMetadata(projectId, path, expect, scope, gate);
       },
 
       metadataIdentityKey() {

@@ -17,7 +17,11 @@ import {
   RESOURCE_COLORS,
   type ResourceColor,
 } from '../../../../packages/contracts/metadata.ts';
-import type { ResourceMetadataDto, ResourceMetadataPatch } from '../client/client-api.ts';
+import type {
+  MetadataSendRefusalReason,
+  ResourceMetadataDto,
+  ResourceMetadataPatch,
+} from '../client/client-api.ts';
 
 /** 预设色的展示名。顺序即调色板顺序（从"警示"到"中性"）。 */
 const COLOR_LABELS: Readonly<Record<ResourceColor, string>> = {
@@ -176,12 +180,11 @@ export function metadataUnknownNotice(): string {
  * 四种原因与"保存失败"是**两件事**：失败是"试过了、Host 拒绝了"，
  * 这里是"这次编辑已经不再指向原来那个对象/工作区"，因此提示文案里
  * 不允许出现"失败"二字，也不该建议用户"重试"同一个对话框。
+ *
+ * 类型直接取自传输层的 `MetadataSendRefusalReason`（R1-H1-01）：发送前裁决
+ * 给出的就是这四个原因，两处各写一份联合类型迟早会漂移。
  */
-export type MetadataStaleReason =
-  | 'workspace-switched'
-  | 'target-changed'
-  | 'target-missing'
-  | 'target-unverified';
+export type MetadataStaleReason = MetadataSendRefusalReason;
 
 export const METADATA_STALE_REASONS: readonly MetadataStaleReason[] = Object.freeze([
   'workspace-switched',

@@ -1,0 +1,65 @@
+{
+  "at": "2026-11-27T05:20:47.193Z",
+  "results": [
+    {
+      "id": "H1-M1",
+      "desc": "H1-01：去掉令牌到手之后的最终归属复核（身份已变仍然发出 POST）",
+      "file": "apps/shell/src/client/client-api.ts",
+      "baselineSha256": "c3479acafa4f750cfa9bf0adae3654f3413f29e23bfcf813a7281175f5e142e4",
+      "mutatedSha256": "8c937fe68f77687a50144d7b38c0a9601e8ef3bb5503ee213a7ae667363b8de8",
+      "restoredSha256": "c3479acafa4f750cfa9bf0adae3654f3413f29e23bfcf813a7281175f5e142e4",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "H1-A01 设置：令牌在途时切换工作区 → metadata/set 零 POST，也不刷新新工作区",
+        "H1-A02 清除：同样制造令牌等待窗口 → metadata/clear 零 POST",
+        "H1-A04 发送前拒绝不是 UNKNOWN、不是成功：零 POST、零刷新、只给\"没保存\"的提示",
+        "H1-A05 gate 自身不可用时 fail-closed：零 POST，且不冒充 UNKNOWN"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "H1-M2",
+      "desc": "H1-01：发送前拒绝被当成 UNKNOWN（会去刷新一份与本次编辑无关的旧状态）",
+      "file": "apps/shell/src/state/metadata-session.ts",
+      "baselineSha256": "4e27697c1b45ad9c22c65d83749e180feaa65ac10676c83251c993f4921511d4",
+      "mutatedSha256": "c8bf367fb941699fd3d4e4c3b56701dcd26ea91829d8636260aa89dcab24d267",
+      "restoredSha256": "4e27697c1b45ad9c22c65d83749e180feaa65ac10676c83251c993f4921511d4",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "H1-A04 发送前拒绝不是 UNKNOWN、不是成功：零 POST、零刷新、只给\"没保存\"的提示"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "H1-M3",
+      "desc": "H1-02：迁移去重退回\"只按 path + identity\"（别的项目/根令牌会挤掉本次记录）",
+      "file": "apps/server/src/store/file-store.ts",
+      "baselineSha256": "3b7c12f302f17dc46d4ad53357ea16a71c358e0f4ef5bfc7f7e7dd141c3ce6d5",
+      "mutatedSha256": "b76eb6a51a992eac132213aaa2be62da52f2f8f350af10af9ef6e30f56390d07",
+      "restoredSha256": "3b7c12f302f17dc46d4ad53357ea16a71c358e0f4ef5bfc7f7e7dd141c3ce6d5",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "H1-B01 另一个项目里\"同路径 + 同身份\"的记录，不得让本次迁移丢记录",
+        "H1-B02 同项目不同根令牌的记录不参与本次迁移的去重"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "H1-M4",
+      "desc": "H1-02：身份再绑定不检查目标四元组（写出重启后无法解析的配置）",
+      "file": "apps/server/src/store/file-store.ts",
+      "baselineSha256": "3b7c12f302f17dc46d4ad53357ea16a71c358e0f4ef5bfc7f7e7dd141c3ce6d5",
+      "mutatedSha256": "9988c4bf5873bee46adc6d44c38d6754478158f7bd6bdd261b482b205e8107dd",
+      "restoredSha256": "3b7c12f302f17dc46d4ad53357ea16a71c358e0f4ef5bfc7f7e7dd141c3ce6d5",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "H1-B04 身份再绑定撞上已有目标四元组：不写损坏配置，重启仍可加载"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

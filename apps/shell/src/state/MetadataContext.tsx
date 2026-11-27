@@ -99,10 +99,20 @@ export function MetadataProvider({ children }: { children: ReactNode }) {
     const host: MetadataRunnerHost = {
       identityKey: () => actions.metadataIdentityKey(),
       targetState: (projectId, path) => actions.metadataTargetState(projectId, path),
-      set: (projectId, path, patch, anchor) =>
-        actions.setResourceMetadata(projectId, path, patch, anchor === null ? undefined : { anchor }),
-      clear: (projectId, path, anchor) =>
-        actions.clearResourceMetadata(projectId, path, anchor === null ? undefined : { anchor }),
+      /*
+       * `gate` 原样透传：最终裁决必须发生在传输层（取令牌之后、fetch 之前），
+       * 这里不做任何二次包装——包装一次就等于把"何时判"又挪回了组件层。
+       */
+      set: (projectId, path, patch, anchor, gate) =>
+        actions.setResourceMetadata(projectId, path, patch, anchor === null ? undefined : { anchor }, gate),
+      clear: (projectId, path, anchor, gate) =>
+        actions.clearResourceMetadata(
+          projectId,
+          path,
+          anchor === null ? undefined : { anchor },
+          undefined,
+          gate,
+        ),
       refresh: (projectId, path) => actions.applyMetadataChange(projectId, path),
       notice: (message) => dispatch({ type: 'NOTICE', message }),
     };
