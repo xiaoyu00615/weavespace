@@ -223,6 +223,13 @@ export const ERROR_CODES = {
    * 现在路径上的这一个（外部删除/重建）。拒绝移动，绝不"删掉占着路径的陌生人"。
    */
   ERR_ENTRY_SOURCE_CHANGED: 'ERR_ENTRY_SOURCE_CHANGED',
+  /**
+   * 资源元数据条目已达配置体量上限（UX-02C-04）。
+   *
+   * 与回收区满仓同性质：这是"需要先清理"的容量冲突，不是写盘失败。
+   * 绝不静默淘汰用户写过的标注名/标签来腾位置——那会让一次保存悄悄删掉别处的数据。
+   */
+  ERR_METADATA_LIMIT: 'ERR_METADATA_LIMIT',
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

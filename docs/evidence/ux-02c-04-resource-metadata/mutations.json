@@ -1,0 +1,65 @@
+{
+  "at": "2026-11-27T01:23:45.588Z",
+  "results": [
+    {
+      "id": "C04-A",
+      "desc": "读取侧不再区分 rebound（换了对象也当作同一个）",
+      "file": "apps/server/src/metadata.ts",
+      "baselineSha256": "6434969e447fe8ac3dd5788429570a314b4326fb423de298169a5edec885f8dc",
+      "mutatedSha256": "ccee0c8e95e4185f4f3d1dcf7a1d254eb877de489d283852507487fafd8464a8",
+      "restoredSha256": "6434969e447fe8ac3dd5788429570a314b4326fb423de298169a5edec885f8dc",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "M-B08 原位置被外部换成新对象：旧标注不继承（rebound）",
+        "M-C01 回收后标注不丢；同名新文件不继承；恢复后重新生效"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C04-B",
+      "desc": "改名/移动后不迁移元数据路径",
+      "file": "apps/server/src/store/file-store.ts",
+      "baselineSha256": "0cf58d4074057d761eb9974b30282b2a3c5d7b6b5037aeff6b91dbd1a3011c78",
+      "mutatedSha256": "df5a540113f3358e1c487cb35584d5303cdbc7fc21d88ae2a398b3dadf3ee0a4",
+      "restoredSha256": "0cf58d4074057d761eb9974b30282b2a3c5d7b6b5037aeff6b91dbd1a3011c78",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "M-B04 真实改名后元数据跟随（旧路径不再显示）",
+        "M-B05 真实移动到其他目录后元数据跟随",
+        "M-B06 目录改名：子资源元数据按前缀迁移"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C04-C",
+      "desc": "标签大小写不敏感去重被移除",
+      "file": "packages/contracts/metadata.ts",
+      "baselineSha256": "a2eced373ff14304c6aea96d12986d745cc8939fdaeae6dcf921bc745b6f4aa4",
+      "mutatedSha256": "92393eb0ad56e4da0229984b20453be1fe99fcafe488391d283be54a944856e1",
+      "restoredSha256": "a2eced373ff14304c6aea96d12986d745cc8939fdaeae6dcf921bc745b6f4aa4",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "M-A06 标签规范化：trim、丢空、大小写不敏感去重并保留首次写法",
+        "M-D01 normalizeTags：保持顺序、大小写不敏感去重、丢弃空白项"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C04-D",
+      "desc": "颜色接受任意字符串（不再限定 token）",
+      "file": "apps/server/src/metadata.ts",
+      "baselineSha256": "6434969e447fe8ac3dd5788429570a314b4326fb423de298169a5edec885f8dc",
+      "mutatedSha256": "e9b83c5eb9e5250272ef22dd84284cb08dab983f4eb7b4502fb2d95360c19909",
+      "restoredSha256": "6434969e447fe8ac3dd5788429570a314b4326fb423de298169a5edec885f8dc",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "M-A08 颜色只接受预设 token，任意 CSS 字符串被拒绝"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

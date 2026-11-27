@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ERROR_CODES } from '../../../../packages/contracts/index.ts';
-import { sameEntryPath } from '../../../../packages/storage/entry-name.ts';
+import { isEntryUnder, sameEntryPath } from '../../../../packages/storage/entry-name.ts';
 import {
   BACKUP_FILE,
   CONFIG_FILE,
@@ -31,12 +31,14 @@ import {
 } from './io.ts';
 import {
   MAX_HIDDEN_ENTRIES,
+  MAX_METADATA_ENTRIES,
   MAX_TRASH_RECORDS,
   MAX_TRASH_UNRESOLVED,
   TRASH_UNRESOLVED_STATES,
   parseConfig,
   serializeConfig,
   type ConfigHiddenEntry,
+  type ConfigMetadataEntry,
   type ConfigRevokedEntry,
   type ConfigState,
   type ConfigTrashEntry,
@@ -130,6 +132,64 @@ export interface FileProjectStore {
     changed: boolean;
     outcome: 'updated' | 'unchanged' | 'skipped-missing' | 'skipped-conflict';
   }>;
+  /**
+   * 该项目的资源元数据（只读内存投影，按 `path` 升序）。
+   *
+   * 只返回属于**现存项目**的记录：项目撤销后其元数据不再对外可见
+   * （撤销时也会从配置里清掉，这里兜住"墓碑已生效、配置尚未补写"的中间态）。
+   */
+  metadataOf(projectId: string): readonly ConfigMetadataEntry[];
+  /**
+   * 写入一条资源元数据（UX-02C-04）。**三态**语义，每个字段独立：
+   * - `undefined` → 保持原值（本次不改这一项）；
+   * - `null`（`tags` 为 `[]`）→ 清除这一项；
+   * - 其它值 → 设置为该值（调用方已做过规范化与校验）。
+   *
+   * 写入后三个字段全空的记录会被**删除**，不保留空壳：
+   * "没有标注"只有一种表示，否则界面与配置会出现两种等价的空状态。
+   *
+   * `path === ''` 只用于项目根展示项，此时 `identity` 必须等于 `rootToken`
+   * （根没有 `dev:ino` 意义上的对象身份，根令牌就是它的身份）。
+   *
+   * 内容没有变化时不写盘、不推进 `commitSeq`，返回 `changed: false`。
+   * 写不进去抛 `ERR_PERSIST_FAILED`，内存投影保持原样。
+   */
+  commitMetadata(input: {
+    projectId: string;
+    path: string;
+    rootToken: string;
+    identity: string;
+    alias?: string | null;
+    tags?: readonly string[];
+    color?: string | null;
+    at?: string;
+  }): Promise<{ changed: boolean; entry: ConfigMetadataEntry | null }>;
+  /**
+   * 删除一条元数据记录（幂等）。
+   *
+   * 与 `commitMetadata` 的"清除某一项"不同：它把整条记录删掉，
+   * 因此**不要求对象仍然存在**（外部删掉文件后仍要能把标注清干净）。
+   */
+  commitMetadataClear(input: { projectId: string; path: string }): Promise<{ changed: boolean }>;
+  /**
+   * 真实改名 / 移动成功后迁移元数据路径（UX-02C-04 / 契约 C3）。
+   *
+   * 只在这三种情况下被调用：Host 明确 `APPLIED`、目标路径已知、源与目标都属于
+   * 同一个项目。`UNKNOWN` / 失败一律不调用——那时连"文件到底在哪"都不知道，
+   * 迁移就是把标注名绑到一个猜测的位置上。
+   *
+   * 语义：
+   * - `path === sourcePath` 或 `path` 在 `sourcePath/` 之下 → 前缀替换成 `targetPath`；
+   * - 目标路径上已有的记录若属于**另一个对象**（`identity` 不同），它是失效记录，
+   *   直接丢弃（它匹配不到任何现存对象，留着只会在下次移动时继续抢占路径）；
+   * - 属于**同一个对象**的重复记录只保留一条；
+   * - 没有任何记录受影响时 `changed: false`（不写盘）。
+   */
+  commitMetadataMove(input: {
+    projectId: string;
+    sourcePath: string;
+    targetPath: string;
+  }): Promise<{ changed: boolean; moved: number }>;
   /**
    * 该项目的回收记录（只读内存投影，按 `deletedAt` 倒序）。
    *
@@ -391,13 +451,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     // ---- 首次初始化：配置与日志都不存在（该判定独立于其它分支）----
     if (primaryText === undefined && backupText === undefined && logText === undefined) {
       const initial: ConfigState = {
-        version: 4,
+        version: 5,
         commitSeq: 0,
         issuedIds: [],
         revoked: [],
         projects: [],
         hidden: [],
         trash: [],
+        metadata: [],
       };
       writeConfigAtomic(initial);
       materializeLogHeader();
@@ -497,6 +558,15 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     );
 
     /**
+     * 元数据与隐藏记录**同向**：它指向"当前根里某个路径上的某个对象"，
+     * 项目没了既无法核验也无法展示，因此在加载期就按已撤销项目过滤。
+     * （撤销提交时也会从配置里删掉，这里是"墓碑已生效、配置尚未补写"的兜底。）
+     */
+    const metadata = (parsed?.state.metadata ?? []).filter(
+      (entry) => !revokedIds.has(entry.projectId) && visible.some((project) => project.projectId === entry.projectId),
+    );
+
+    /**
      * 回收记录**不过滤**已撤销项目（UX-02C-03-P2-01 §二.6）。
      *
      * 理由与隐藏记录正好相反：隐藏记录指向的是"当前根里的某个路径"，项目没了就毫无
@@ -506,7 +576,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     const trash = parsed?.state.trash ?? [];
 
     const config: ConfigState = {
-      version: 4,
+      version: 5,
       commitSeq,
       issuedIds: [...issuedIds],
       revoked: configRevoked,
@@ -524,6 +594,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       // 加载期的回收记录同样要"按已撤销项目过滤"吗？不。文件还在磁盘上，
       // 记录本身就是唯一的索引；撤销不清索引（见 commitRevoke 的说明）。
       trash,
+      metadata,
     };
 
     return {
@@ -745,7 +816,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         throw domainError(ERROR_CODES.ERR_STORE_ID_REUSED, `projectId 已签发过，不得复用: ${entry.projectId}`);
       }
       const next: ConfigState = {
-        version: 4,
+        version: 5,
         commitSeq: current.commitSeq + 1,
         issuedIds: [...current.issuedIds, entry.projectId],
         revoked: current.revoked,
@@ -765,6 +836,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         ],
         hidden: current.hidden,
         trash: current.trash,
+        metadata: current.metadata,
       };
       writeConfigAtomic(next);
       applyConfig(next);
@@ -776,7 +848,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       assertMutationsAllowed();
       const project = assertProjectKnown(input.projectId);
       const next: ConfigState = {
-        version: 4,
+        version: 5,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
@@ -785,6 +857,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         ),
         hidden: current.hidden,
         trash: current.trash,
+        metadata: current.metadata,
       };
       writeConfigAtomic(next);
       applyConfig(next);
@@ -868,7 +941,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
       // ---- step 3：补写配置（失败不回滚）----
       const next: ConfigState = {
-        version: 4,
+        version: 5,
         commitSeq: seq,
         issuedIds: current.issuedIds,
         revoked: [...current.revoked, { projectId: input.projectId, revokedAtSeq: seq, opId: input.opId }],
@@ -878,6 +951,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         // 回收记录**故意保留**（UX-02C-03-P2-01 §二.6）：文件仍在 .weavespace/trash 里，
         // 删掉索引等于让用户静默失去"还能救回来"这一事实。入口由项目状态决定。
         trash: current.trash,
+        metadata: current.metadata,
       };
       try {
         writeConfigAtomic(next);
@@ -925,13 +999,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       if (!input.hidden) {
         if (!existing) return { changed: false };
         const next: ConfigState = {
-          version: 4,
+          version: 5,
           commitSeq: current.commitSeq + 1,
           issuedIds: current.issuedIds,
           revoked: current.revoked,
           projects: current.projects,
           hidden: current.hidden.filter((entry) => entry !== existing),
           trash: current.trash,
+          metadata: current.metadata,
         };
         try {
           writeConfigAtomic(next);
@@ -969,7 +1044,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         hiddenAt: input.at ?? clock().toISOString(),
       };
       const next: ConfigState = {
-        version: 4,
+        version: 5,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
@@ -978,6 +1053,7 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
           ? current.hidden.map((entry) => (entry === existing ? record : entry))
           : [...current.hidden, record],
         trash: current.trash,
+        metadata: current.metadata,
       };
       try {
         writeConfigAtomic(next);
@@ -1027,13 +1103,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
 
       const record: ConfigHiddenEntry = { ...existing, identity: input.identity };
       const next: ConfigState = {
-        version: 4,
+        version: 5,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
         projects: current.projects,
         hidden: current.hidden.map((entry) => (entry === existing ? record : entry)),
         trash: current.trash,
+        metadata: current.metadata,
       };
       try {
         writeConfigAtomic(next);
@@ -1047,6 +1124,236 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       applyConfig(next);
       state = { ...state, commitSeq: next.commitSeq };
       return { changed: true, outcome: 'updated' as const };
+    },
+
+    metadataOf(projectId) {
+      if (!current.projects.some((project) => project.projectId === projectId)) return [];
+      return current.metadata
+        .filter((entry) => entry.projectId === projectId)
+        .slice()
+        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    },
+
+    /**
+     * 写入一条资源元数据（UX-02C-04）。
+     *
+     * 三个字段各自三态（`undefined` 不改 / `null` 清除 / 值 设置），合并后的**整条**
+     * 记录才是这次提交的结果。这样"只改颜色"不会把别的窗口刚写的标签覆盖回旧值——
+     * 因为没传的字段根本不参与写入。
+     *
+     * 全程同步：`writeConfigAtomic` 内部无 await，因此与其它配置提交之间不存在
+     * "读旧值—写新值"的交错。
+     */
+    async commitMetadata(input) {
+      assertOpen();
+      assertMutationsAllowed();
+      assertProjectKnown(input.projectId);
+      if (input.rootToken === '' || input.identity === '') {
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, '缺少根令牌或对象身份，不能登记资源元数据');
+      }
+      if (input.path === '' && input.identity !== input.rootToken) {
+        // 项目根没有 dev:ino 意义上的身份：只有根令牌能证明"还是那个根"
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, '项目根元数据的身份必须是根令牌本身');
+      }
+
+      const existing = current.metadata.find(
+        (entry) => entry.projectId === input.projectId && sameEntryPath(entry.path, input.path),
+      );
+
+      /*
+       * 身份变了（同一路径换了对象）→ 旧记录作废，本次写入以新身份为准。
+       * 这是"新文件不继承旧标注"的写入口保障：读取侧还有一道 `rebound` 判定，
+       * 但那道判定只在记录还带着旧身份时才会命中。
+       */
+      const alias = input.alias === undefined ? existing?.alias : input.alias === null ? undefined : input.alias;
+      const tags = input.tags === undefined ? (existing?.tags ?? []) : input.tags;
+      const color =
+        input.color === undefined
+          ? existing?.color
+          : input.color === null
+            ? undefined
+            : (input.color as ConfigMetadataEntry['color']);
+
+      const empty = alias === undefined && tags.length === 0 && color === undefined;
+
+      // 已经什么都没有、这次也没写任何东西：幂等 no-op
+      if (empty && !existing) return { changed: false, entry: null };
+
+      const others = current.metadata.filter((entry) => entry !== existing);
+
+      if (empty) {
+        const next: ConfigState = {
+          version: 5,
+          commitSeq: current.commitSeq + 1,
+          issuedIds: current.issuedIds,
+          revoked: current.revoked,
+          projects: current.projects,
+          hidden: current.hidden,
+          trash: current.trash,
+          metadata: others,
+        };
+        try {
+          writeConfigAtomic(next);
+        } catch (err) {
+          throw Object.assign(new Error('资源元数据未能写入工作区配置'), {
+            errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+            cause: err,
+          });
+        }
+        applyConfig(next);
+        state = { ...state, commitSeq: next.commitSeq };
+        return { changed: true, entry: null };
+      }
+
+      if (!existing && current.metadata.length >= MAX_METADATA_ENTRIES) {
+        throw domainError(ERROR_CODES.ERR_METADATA_LIMIT, `资源元数据已达上限（${MAX_METADATA_ENTRIES} 条）`);
+      }
+
+      const record: ConfigMetadataEntry = {
+        projectId: input.projectId,
+        path: input.path,
+        rootToken: input.rootToken,
+        identity: input.identity,
+        ...(alias !== undefined ? { alias } : {}),
+        tags: [...tags],
+        ...(color !== undefined ? { color } : {}),
+        updatedAt: input.at ?? clock().toISOString(),
+      };
+
+      // 内容与身份都没变：不写盘、不推进序号（否则每次"打开再保存"都会改配置）
+      if (
+        existing &&
+        existing.rootToken === record.rootToken &&
+        existing.identity === record.identity &&
+        existing.alias === record.alias &&
+        existing.color === record.color &&
+        existing.tags.length === record.tags.length &&
+        existing.tags.every((tag, index) => tag === record.tags[index])
+      ) {
+        return { changed: false, entry: existing };
+      }
+
+      const next: ConfigState = {
+        version: 5,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: current.hidden,
+        trash: current.trash,
+        metadata: [...others, record],
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        throw Object.assign(new Error('资源元数据未能写入工作区配置'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true, entry: record };
+    },
+
+    async commitMetadataClear(input) {
+      assertOpen();
+      assertMutationsAllowed();
+      const existing = current.metadata.find(
+        (entry) => entry.projectId === input.projectId && sameEntryPath(entry.path, input.path),
+      );
+      if (!existing) return { changed: false };
+      const next: ConfigState = {
+        version: 5,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: current.hidden,
+        trash: current.trash,
+        metadata: current.metadata.filter((entry) => entry !== existing),
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        throw Object.assign(new Error('资源元数据未能从工作区配置中删除'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true };
+    },
+
+    /**
+     * 结构变更成功后的路径迁移（UX-02C-04 / 契约 C3）。
+     *
+     * 只改 `path`：`rootToken` / `identity` 原样保留——对象没有变，只是换了位置。
+     * 目录改名/移动时按前缀覆盖全部后代（`docs` → `doc`，`docs/a.md` → `doc/a.md`）。
+     */
+    async commitMetadataMove(input) {
+      assertOpen();
+      assertMutationsAllowed();
+      const source = input.sourcePath;
+      const target = input.targetPath;
+      if (source === '' || target === '' || sameEntryPath(source, target)) return { changed: false, moved: 0 };
+
+      const isUnder = (path: string): boolean => isEntryUnder(path, source);
+      const pathKey = (path: string): string => (process.platform === 'win32' ? path.toLowerCase() : path);
+
+      const affected = current.metadata.filter((entry) => entry.projectId === input.projectId && isUnder(entry.path));
+      if (affected.length === 0) return { changed: false, moved: 0 };
+
+      const moving = new Set(affected);
+      const rewritten = affected.map((entry) => ({
+        ...entry,
+        path: sameEntryPath(entry.path, source) ? target : `${target}${entry.path.slice(source.length)}`,
+      }));
+
+      /*
+       * 目标位置可能已经有记录：
+       * - 与移动过来的是**同一个对象**（identity 相同）→ 只保留一条；
+       * - 是另一个对象（identity 不同）→ 它是失效记录（那个对象早就不在目标位置了），
+       *   丢弃它，让移动过来的记录接管这个路径。绝不能反过来把移动过来的丢掉：
+       *   那等于用户刚给文件起的标注名在一次移动后就消失了。
+       */
+      const byPath = new Map<string, ConfigMetadataEntry>();
+      for (const entry of current.metadata) {
+        if (moving.has(entry) || entry.projectId !== input.projectId) continue;
+        byPath.set(pathKey(entry.path), entry);
+      }
+      let moved = 0;
+      for (const entry of rewritten) {
+        const key = pathKey(entry.path);
+        const occupant = byPath.get(key);
+        if (occupant && occupant.identity === entry.identity) continue;
+        byPath.set(key, entry);
+        moved += 1;
+      }
+
+      const untouched = current.metadata.filter((entry) => !moving.has(entry) && entry.projectId !== input.projectId);
+      const next: ConfigState = {
+        version: 5,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: current.hidden,
+        trash: current.trash,
+        metadata: [...untouched, ...byPath.values()],
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        throw Object.assign(new Error('资源元数据路径未能随结构变更写入工作区配置'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true, moved };
     },
 
     trashOf(projectId) {
@@ -1118,13 +1425,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       // 配置体积护栏：只淘汰**不再占用文件**的终态记录（不损失任何恢复能力）
       const trimmed = trimTrashHistory(appended);
       const next: ConfigState = {
-        version: 4,
+        version: 5,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
         projects: current.projects,
         hidden: current.hidden,
         trash: trimmed,
+        metadata: current.metadata,
       };
       try {
         writeConfigAtomic(next);
@@ -1166,13 +1474,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         ...(input.restoredTo !== undefined ? { restoredTo: input.restoredTo } : {}),
       };
       const next: ConfigState = {
-        version: 4,
+        version: 5,
         commitSeq: current.commitSeq + 1,
         issuedIds: current.issuedIds,
         revoked: current.revoked,
         projects: current.projects,
         hidden: current.hidden,
         trash: current.trash.map((row) => (row === existing ? record : row)),
+        metadata: current.metadata,
       };
       try {
         writeConfigAtomic(next);

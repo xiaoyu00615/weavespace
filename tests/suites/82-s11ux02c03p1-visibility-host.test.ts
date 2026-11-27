@@ -425,12 +425,13 @@ test('P1-01i 隐藏与取消隐藏都必须通过 T1 令牌与显式 Origin', as
 /* P1-01j 重启保持                                                     */
 /* ------------------------------------------------------------------ */
 
-test('P1-01j 重启后隐藏状态仍然有效（配置 v4 + 校验和自洽）', async () => {
+test('P1-01j 重启后隐藏状态仍然有效（配置为当前版本 + 校验和自洽）', async () => {
   await withHost(async (h) => {
     assert.equal((await h.hide(PROJ_A, 'a.md')).status, 200);
     assert.equal((await h.hide(PROJ_A, 'docs')).status, 200);
     const { raw, parsed } = await h.configFile();
-    assert.equal(raw.version, 4, '发生变更后必须写成当前版本 v4');
+    // UX-02C-04 起当前版本是 v5（+ metadata）；断言"写成当前版本"而不是钉死某个数字
+    assert.equal(raw.version, 5, '发生变更后必须写成当前版本 v5');
     assert.ok(parsed, 'checksum 必须可复算，否则下次启动会整份配置不可用');
     assert.equal(parsed?.state.hidden.length, 2);
 
@@ -449,7 +450,7 @@ test('P1-01j 重启后隐藏状态仍然有效（配置 v4 + 校验和自洽）'
 /* P1-01k v2 → v4 迁移                                                 */
 /* ------------------------------------------------------------------ */
 
-test('P1-01k v2 配置可以直接使用；发生变更时升级到 v4 且保留原有项目表', async () => {
+test('P1-01k v2 配置可以直接使用；发生变更时升级到当前版本 v5 且保留原有项目表', async () => {
   await withHost(async (h) => {
     const initial = await h.configFile();
     assert.equal(initial.raw.version, 2, '夹具是 v2');
@@ -457,23 +458,23 @@ test('P1-01k v2 配置可以直接使用；发生变更时升级到 v4 且保留
 
     assert.equal((await h.hide(PROJ_A, 'a.md')).status, 200);
     const { raw, parsed } = await h.configFile();
-    assert.equal(raw.version, 4);
+    assert.equal(raw.version, 5);
     assert.equal(raw.projects.length, 2, '迁移不得丢项目');
     assert.deepEqual(raw.issuedIds.slice().sort(), [PROJ_A, PROJ_B]);
     assert.equal(raw.hidden.length, 1);
-    assert.ok(parsed, 'v4 校验和必须自洽');
+    assert.ok(parsed, '当前版本的校验和必须自洽');
     assert.equal(parsed?.state.projects.length, 2);
   });
 });
 
-test('P1-01k2 v1 配置同样可用：升级后仍能隐藏，写回 v4', async () => {
+test('P1-01k2 v1 配置同样可用：升级后仍能隐藏，写回当前版本 v5', async () => {
   await withHost(
     async (h) => {
       assert.equal((await h.tree(PROJ_A)).status, 200);
       assert.equal((await h.hide(PROJ_A, 'b.md')).status, 200);
       const { raw, parsed } = await h.configFile();
-      assert.equal(raw.version, 4);
-      assert.ok(parsed, 'v1 → v4 后的校验和必须自洽');
+      assert.equal(raw.version, 5);
+      assert.ok(parsed, 'v1 → v5 后的校验和必须自洽');
       assert.deepEqual(parsed?.state.hidden.map((item) => item.path), ['b.md']);
     },
     { configVersion: 1 },

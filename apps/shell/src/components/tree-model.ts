@@ -46,6 +46,16 @@ export interface TreeLevelState {
    * 唯一的来源；`0` 表示这一层没有隐藏项（或旧版服务端不返回）。
    */
   readonly hiddenCount: number;
+  /**
+   * 项目根展示项的元数据（UX-02C-04）：只有根层（`dir === ''`）才会有。
+   *
+   * 根不是一个磁盘条目，因此它不在这里的 `entries` 里；项目根行从这一项取标注。
+   */
+  readonly projectMeta?: {
+    alias?: string;
+    tags: string[];
+    color?: string;
+  };
 }
 
 export type TreeLevels = Readonly<Record<string, TreeLevelState>>;
@@ -89,6 +99,8 @@ export function entryToNode(entry: TreeEntry): ResourceNodeState {
     // 隐藏标记必须穿过这一层：否则"显示隐藏项"里所有行都和普通行一样（UX-02C-03-P1）
     ...(entry.hidden ? { hidden: true } : {}),
     ...(entry.hiddenBy ? { hiddenBy: entry.hiddenBy } : {}),
+    // 展示元数据同样要穿过去：否则"设置标注名"保存成功、刷新后行上什么都没有
+    ...(entry.meta ? { meta: entry.meta } : {}),
   };
 }
 
@@ -122,6 +134,8 @@ export interface AppliedPage {
   readonly snapshot?: string | null;
   /** 本层隐藏条目数；旧版响应没有。 */
   readonly hiddenCount?: number;
+  /** 项目根展示项的元数据（只有根层会带）。 */
+  readonly projectMeta?: TreeLevelState['projectMeta'];
 }
 
 /**
@@ -163,6 +177,12 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
       // `0` 是真实值（这一层没有隐藏项），`undefined` 才是"没给"。用 `??` 或
       // 任何 truthy 判断都会把真实的 0 当成缺失，或把缺失当成 0（R1-01）。
       hiddenCount: typeof page.hiddenCount === 'number' ? page.hiddenCount : previous.hiddenCount,
+      // 根层元数据是"这个项目根"的属性：第一页带回、续页沿用（续页不带时不清空）
+      ...(page.projectMeta !== undefined
+        ? { projectMeta: page.projectMeta }
+        : previous.projectMeta
+          ? { projectMeta: previous.projectMeta }
+          : {}),
     },
   };
 }

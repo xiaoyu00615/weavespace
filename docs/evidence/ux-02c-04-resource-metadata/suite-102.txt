@@ -1,0 +1,124 @@
+TAP version 13
+# Subtest: S-01 entryToNode 带上 meta；没有 meta 时不产生空对象
+ok 1 - S-01 entryToNode 带上 meta；没有 meta 时不产生空对象
+  ---
+  duration_ms: 3.0119
+  type: 'test'
+  ...
+# Subtest: S-02 applyPage 保存根层 projectMeta，且续页不带时沿用
+ok 2 - S-02 applyPage 保存根层 projectMeta，且续页不带时沿用
+  ---
+  duration_ms: 0.4837
+  type: 'test'
+  ...
+# Subtest: S-03 子层没有 projectMeta：根标注不会串到子目录
+ok 3 - S-03 子层没有 projectMeta：根标注不会串到子目录
+  ---
+  duration_ms: 0.347
+  type: 'test'
+  ...
+# Subtest: S-04 materializeTree 保留 folder 的 meta
+ok 4 - S-04 materializeTree 保留 folder 的 meta
+  ---
+  duration_ms: 0.2749
+  type: 'test'
+  ...
+# Subtest: S-05 draftOf / patchOfDraft：未改动时补丁为空
+ok 5 - S-05 draftOf / patchOfDraft：未改动时补丁为空
+  ---
+  duration_ms: 0.5431
+  type: 'test'
+  ...
+# Subtest: S-06 只改颜色：补丁里没有 alias / tags（不覆盖别人刚写的字段）
+ok 6 - S-06 只改颜色：补丁里没有 alias / tags（不覆盖别人刚写的字段）
+  ---
+  duration_ms: 0.2316
+  type: 'test'
+  ...
+# Subtest: S-07 清空标注名 → alias: null；清空颜色 → color: null
+ok 7 - S-07 清空标注名 → alias: null；清空颜色 → color: null
+  ---
+  duration_ms: 0.4415
+  type: 'test'
+  ...
+# Subtest: S-08 标签增删：重复/空白被拒绝，大小写不敏感
+ok 8 - S-08 标签增删：重复/空白被拒绝，大小写不敏感
+  ---
+  duration_ms: 0.8673
+  type: 'test'
+  ...
+# Subtest: S-09 标签超过 16 个：拒绝并给出原因（不是静默截断）
+ok 9 - S-09 标签超过 16 个：拒绝并给出原因（不是静默截断）
+  ---
+  duration_ms: 3.3813
+  type: 'test'
+  ...
+# Subtest: S-10 draftIsEmpty / draftErrorOf
+ok 10 - S-10 draftIsEmpty / draftErrorOf
+  ---
+  duration_ms: 1.0921
+  type: 'test'
+  ...
+# Subtest: S-11 颜色 token：映射到类名，未知值不产生类名
+ok 11 - S-11 颜色 token：映射到类名，未知值不产生类名
+  ---
+  duration_ms: 0.446
+  type: 'test'
+  ...
+# Subtest: S-12 标签摘要：最多两颗 + 剩余计数
+ok 12 - S-12 标签摘要：最多两颗 + 剩余计数
+  ---
+  duration_ms: 0.2808
+  type: 'test'
+  ...
+# Subtest: S-13 右键入口：链接不给、项目根给、未授权项目给但禁用
+ok 13 - S-13 右键入口：链接不给、项目根给、未授权项目给但禁用
+  ---
+  duration_ms: 0.2435
+  type: 'test'
+  ...
+# Subtest: S-14 提示文案：保存/无变化/未确认三态可区分
+ok 14 - S-14 提示文案：保存/无变化/未确认三态可区分
+  ---
+  duration_ms: 0.1704
+  type: 'test'
+  ...
+# Subtest: S-15 setResourceMetadata 只发送用户改过的字段
+ok 15 - S-15 setResourceMetadata 只发送用户改过的字段
+  ---
+  duration_ms: 2.2823
+  type: 'test'
+  ...
+# Subtest: S-16 清除单项：alias / color 以 null 发送，tags 以空数组发送
+ok 16 - S-16 清除单项：alias / color 以 null 发送，tags 以空数组发送
+  ---
+  duration_ms: 0.7375
+  type: 'test'
+  ...
+# Subtest: S-17 网络中断 → UNKNOWN（不是失败，也不自动重试）
+ok 17 - S-17 网络中断 → UNKNOWN（不是失败，也不自动重试）
+  ---
+  duration_ms: 0.5011
+  type: 'test'
+  ...
+# Subtest: S-18 清除接口：只发 projectId + path
+ok 18 - S-18 清除接口：只发 projectId + path
+  ---
+  duration_ms: 0.4077
+  type: 'test'
+  ...
+# Subtest: S-19 列表响应里的非法展示字段被丢弃（不会渲染 color-undefined）
+ok 19 - S-19 列表响应里的非法展示字段被丢弃（不会渲染 color-undefined）
+  ---
+  duration_ms: 0.9075
+  type: 'test'
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 59.6202

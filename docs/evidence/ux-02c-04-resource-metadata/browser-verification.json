@@ -1,0 +1,243 @@
+{
+  "run": "ux-02c-04-resource-metadata",
+  "at": "2026-11-27T01:23:19.810Z",
+  "environment": {
+    "host": "http://127.0.0.1:5297",
+    "app": "http://127.0.0.1:5298",
+    "chrome": "headless via CDP 9347",
+    "workspace": "D:/Workspace/projects/weavespace-test/c04",
+    "note": "真实 Host + 真实 Vite + 真实 Chrome + 真实文件系统；未使用用户真实工作文件"
+  },
+  "phases": {
+    "phase1": {
+      "total": 19,
+      "passed": 19,
+      "failed": [],
+      "checks": [
+        {
+          "ok": true,
+          "name": "C-01 初始状态：note.md 存在且没有任何标注"
+        },
+        {
+          "ok": true,
+          "name": "C-02 右键文件 → 「设置标注名…」打开标注对话框"
+        },
+        {
+          "ok": true,
+          "name": "C-03 对话框把焦点放在标注名输入框"
+        },
+        {
+          "ok": true,
+          "name": "C-04 点「保存」后对话框关闭"
+        },
+        {
+          "ok": true,
+          "name": "C-05 行上显示真实名称 +（标注名）"
+        },
+        {
+          "ok": true,
+          "name": "C-06 真实名称仍是 note.md（标注名不替代文件名）"
+        },
+        {
+          "ok": true,
+          "name": "C-07 再次右键 → 「编辑标签…」"
+        },
+        {
+          "ok": true,
+          "name": "C-08 对话框里两枚标签已就位"
+        },
+        {
+          "ok": true,
+          "name": "C-09 行上有两枚标签（折叠为 +2，title 里全列）"
+        },
+        {
+          "ok": true,
+          "name": "C-10 再次右键 → 「设置颜色…」"
+        },
+        {
+          "ok": true,
+          "name": "C-11 行带上 blue 颜色类名"
+        },
+        {
+          "ok": true,
+          "name": "C-12 文件内容 SHA-256 未变"
+        },
+        {
+          "ok": true,
+          "name": "C-13 目录结构未变（元数据不落任何用户目录）"
+        },
+        {
+          "ok": true,
+          "name": "C-14 GET /api/metadata 返回 active 记录"
+        },
+        {
+          "ok": true,
+          "name": "C-15 记录字段正确（path/alias/tags/color）"
+        },
+        {
+          "ok": true,
+          "name": "C-16 工作区配置升到 v5"
+        },
+        {
+          "ok": true,
+          "name": "C-17 配置里只有一条元数据且带对象身份"
+        },
+        {
+          "ok": true,
+          "name": "C-18 旧字段仍在（projects / hidden / trash）"
+        },
+        {
+          "ok": true,
+          "name": "C-19 刷新后三项仍在"
+        }
+      ]
+    },
+    "phase2": {
+      "total": 22,
+      "passed": 22,
+      "failed": [],
+      "checks": [
+        {
+          "ok": true,
+          "name": "C-20 重启 Host 后三项仍在"
+        },
+        {
+          "ok": true,
+          "name": "C-21 文件内容仍然一字未改"
+        },
+        {
+          "ok": true,
+          "name": "C-22 右键 → 「重命名」"
+        },
+        {
+          "ok": true,
+          "name": "C-23 改名后标注跟随到新名称"
+        },
+        {
+          "ok": true,
+          "name": "C-24 旧名称已不在磁盘上"
+        },
+        {
+          "ok": true,
+          "name": "C-25 右键 → 「移动到…」"
+        },
+        {
+          "ok": true,
+          "name": "C-26 移动后标注跟随"
+        },
+        {
+          "ok": true,
+          "name": "C-27 文件已在 docs 目录里"
+        },
+        {
+          "ok": true,
+          "name": "C-28 通过右键「移入回收区」把已标注文件回收"
+        },
+        {
+          "ok": true,
+          "name": "C-29 回收后标注记录仍在配置里（不随回收丢失）"
+        },
+        {
+          "ok": true,
+          "name": "C-30 同名新文件不继承标注（rebound）"
+        },
+        {
+          "ok": true,
+          "name": "C-31 回收区里能看到这一条"
+        },
+        {
+          "ok": true,
+          "name": "C-32 恢复后标注重新生效"
+        },
+        {
+          "ok": true,
+          "name": "C-33 恢复的是同一份内容（SHA 一致）"
+        },
+        {
+          "ok": true,
+          "name": "C-34a 接口给 A 的 same.md 设置标注"
+        },
+        {
+          "ok": true,
+          "name": "C-34b 只有 A 的 same.md 带标注，B 的同名文件保持干净"
+        },
+        {
+          "ok": true,
+          "name": "C-34c A 的行有颜色、B 的行没有"
+        },
+        {
+          "ok": true,
+          "name": "C-34d 清除 A 的 same.md 标注"
+        },
+        {
+          "ok": true,
+          "name": "C-35 打开标注对话框"
+        },
+        {
+          "ok": true,
+          "name": "C-36 清除后恢复默认显示"
+        },
+        {
+          "ok": true,
+          "name": "C-37 配置里已没有元数据记录"
+        },
+        {
+          "ok": true,
+          "name": "C-38 清除标注不影响文件本身"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "total": 41,
+    "passed": 41,
+    "failed": []
+  },
+  "filesystem": {
+    "annotatedFileAfterPhase1": {
+      "path": "projA/note.md",
+      "sha256": "1c7bffd833eed2258623cd35a726ccab80bde9aa3e074b717d184ed9aac6f5f6"
+    },
+    "afterPhase2": {
+      "restoredPath": "projA/docs/renamed.md",
+      "sha256": "1c7bffd833eed2258623cd35a726ccab80bde9aa3e074b717d184ed9aac6f5f6",
+      "sameAsBefore": true,
+      "projAFiles": [
+        {
+          "path": "docs/guide.md",
+          "size": 27,
+          "sha256": "c4ed4c4c8e5e8f7c68938bd4a978703024c3fec887c5b9943be551a2ee8455de"
+        },
+        {
+          "path": "docs/renamed.md",
+          "size": 48,
+          "sha256": "1c7bffd833eed2258623cd35a726ccab80bde9aa3e074b717d184ed9aac6f5f6"
+        },
+        {
+          "path": "same.md",
+          "size": 9,
+          "sha256": "81115ee8c00aa5609bd18beee2d8609de498a021b4fc61f67543a615d7abf91c"
+        }
+      ],
+      "projBFiles": [
+        {
+          "path": "other.md",
+          "size": 8,
+          "sha256": "f32b0240fc28d4473e92dab1f773274687d806250f15e2f93b3316a27a559996"
+        },
+        {
+          "path": "same.md",
+          "size": 9,
+          "sha256": "72df5333323a3a55ccdff455794bca24a95d59364fbff5955f0bb7b0fd2ac2b6"
+        }
+      ]
+    }
+  },
+  "workspaceConfig": {
+    "version": 5,
+    "metadataEntries": 0,
+    "hiddenEntries": 0,
+    "trashEntries": 1,
+    "note": "phase2 结束时标注已全部清除，配置里 metadata 为空；回收记录保留（恢复过的历史）"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "alias": "核心架构",
+  "tags": [
+    "重要",
+    "架构"
+  ],
+  "sha": "1c7bffd833eed2258623cd35a726ccab80bde9aa3e074b717d184ed9aac6f5f6",
+  "tree": [
+    ".weavespace/.gitignore",
+    "docs/guide.md",
+    "note.md",
+    "same.md"
+  ],
+  "note": "phase1 结束状态：note.md 已标注三项，磁盘未变"
+}

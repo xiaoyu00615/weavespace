@@ -43,6 +43,17 @@ export interface ResourceNodeState {
   hidden?: boolean;
   /** 自身没有记录，但上级目录被隐藏：值是那个上级的相对路径。 */
   hiddenBy?: string;
+  /**
+   * 资源展示元数据（UX-02C-04）：标注名 / 标签 / 行颜色。
+   *
+   * 只是**展示**：它不影响真实名称、扩展名、打开/保存/移动等任何真实操作。
+   * 缺省 = 没有标注（Host 不会下发空对象）。
+   */
+  meta?: {
+    alias?: string;
+    tags: string[];
+    color?: string;
+  };
 }
 
 export type SaveUiStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN' | 'DEMO' | null;

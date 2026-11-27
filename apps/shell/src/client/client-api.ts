@@ -159,6 +159,20 @@ export interface TreeEntry {
   hidden?: boolean;
   /** 自身没有记录，但某个上级目录被隐藏：值是那个上级的相对路径。 */
   hiddenBy?: string;
+  /**
+   * 资源展示元数据（UX-02C-04）：标注名 / 标签 / 行颜色。
+   *
+   * Host 只下发**身份核验通过**的记录：路径上换了另一个对象时，旧标注不会出现。
+   * 因此这里不需要（也不允许）客户端再做"是不是同一个文件"的判断。
+   */
+  meta?: ResourceMetadataDto;
+}
+
+/** 三个展示字段：都缺省表示"没有标注"（Host 不会下发空对象）。 */
+export interface ResourceMetadataDto {
+  alias?: string;
+  tags: string[];
+  color?: string;
 }
 
 export interface TreePageMeta {
@@ -216,6 +230,53 @@ export interface HiddenEntryDto {
 
 export type HiddenListOutcome =
   | { status: 'APPLIED'; projectId: string; entries: HiddenEntryDto[] }
+  | { status: 'REJECTED'; errorCode: string | null; message?: string };
+
+/* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
+
+/**
+ * 设置 / 清除资源元数据的结果。
+ *
+ * 与隐藏同一套语义：`changed: false` 是"这条指令没有改变任何记录"（幂等命中），
+ * 不是失败；失败一定是 `REJECTED` 且带 `errorCode`。
+ *
+ * `UNKNOWN` 只用于"请求已发出但没拿到结论"：元数据写入是幂等的（同一份内容重复写
+ * 结果相同），因此处理方式只有一条——**刷新该层看真实结果**，不自动重发。
+ */
+export type MetadataOutcome =
+  | {
+      status: 'APPLIED';
+      projectId: string;
+      path: string;
+      changed: boolean;
+      /** 写入后的完整展示状态；全空时为 `{ tags: [] }`。 */
+      metadata: ResourceMetadataDto;
+    }
+  | {
+      status: 'REJECTED';
+      errorCode: string | null;
+      message?: string;
+      httpStatus?: number;
+    }
+  | { status: 'UNKNOWN'; message: string };
+
+/** 一次增量修改：`undefined` = 不改这一项；`null` / `[]` = 清除这一项。 */
+export interface ResourceMetadataPatch {
+  alias?: string | null;
+  tags?: string[];
+  color?: string | null;
+}
+
+/** 元数据记录当前是否仍然成立（与隐藏同一套四态）。 */
+export type MetadataEntryState = 'active' | 'missing' | 'rebound' | 'unverified';
+
+export interface MetadataEntryDto extends ResourceMetadataDto {
+  path: string;
+  state: MetadataEntryState;
+}
+
+export type MetadataListOutcome =
+  | { status: 'APPLIED'; projectId: string; entries: MetadataEntryDto[] }
   | { status: 'REJECTED'; errorCode: string | null; message?: string };
 
 /* ---- UX-02C-03-P2-02：回收区（Shell） ---- */
@@ -335,6 +396,8 @@ export type TreeQueryOutcome =
       level: string;
       entries: TreeEntry[];
       page: TreePageMeta;
+      /** 项目根展示项的元数据（只在 `level === ''` 且项目有标注时出现）。 */
+      projectMeta?: ResourceMetadataDto;
     }
   | {
       status: 'REJECTED';
@@ -583,6 +646,18 @@ export interface StructureChangeApplied {
   targetName: string;
   entryKind: CreateEntryKindDto;
   contentSha256: string | null;
+  /**
+   * 元数据是否随这次结构变更迁移（UX-02C-04）。
+   *
+   * - `moved`：路径已随文件走；
+   * - `none`：这个文件本来就没有标注（或没有任何记录受影响）；
+   * - `failed`：磁盘确实变了，但标注没能写进配置 —— 界面必须提示，
+   *   不能让用户以为"标注还在"。
+   *
+   * 缺省（旧版服务端）= 未知，按 `none` 处理但不承诺。
+   */
+  metadataMigration?: 'moved' | 'none' | 'failed';
+  metadataMoved?: number;
 }
 export type StructureChangeOutcome =
   | StructureChangeApplied
@@ -768,6 +843,24 @@ export interface WeaveSpaceClient {
   unhideEntry(projectId: string, path: string): Promise<VisibilityOutcome>;
   /** 查询隐藏记录及其当前状态（只读；含 missing / rebound 这类失效态）。 */
   hiddenEntries(projectId: string): Promise<HiddenListOutcome>;
+
+  /* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
+
+  /**
+   * 增量设置一个资源的展示元数据。
+   *
+   * 只提交用户改过的字段：没传的字段保持原值——两个窗口同时改同一个文件时，
+   * "只改颜色"不会把对方刚写的标签覆盖回旧值。
+   */
+  setResourceMetadata(
+    projectId: string,
+    path: string,
+    patch: ResourceMetadataPatch,
+  ): Promise<MetadataOutcome>;
+  /** 清除整条元数据记录（不要求对象仍存在）。 */
+  clearResourceMetadata(projectId: string, path: string): Promise<MetadataOutcome>;
+  /** 查询元数据记录及其当前状态（只读；含 missing / rebound 这类失效态）。 */
+  resourceMetadata(projectId: string): Promise<MetadataListOutcome>;
 
   /* ---- UX-02C-03-P2-02：回收区 ---- */
 
@@ -1003,6 +1096,49 @@ function parseTrashEntry(raw: unknown): TrashEntryDto | null {
  * live 客户端：同源 `/api`（开发时由 Vite 代理到 apps/server）。
  * 不缓存任何内容；每次操作都以服务端返回的会话状态为准。
  */
+/**
+ * 展示字段的窄化（UX-02C-04）。
+ *
+ * 三个字段都来自 Host，但仍然逐字段校验：形状不对就当"这一项没有"，
+ * 绝不把 `undefined` / 数字 / 对象塞进 `className` 或 JSX（那会渲染出 `color-undefined`）。
+ */
+function metadataFieldsOf(raw: unknown): ResourceMetadataDto {
+  if (typeof raw !== 'object' || raw === null) return { tags: [] };
+  const row = raw as { alias?: unknown; tags?: unknown; color?: unknown };
+  const tags: string[] = [];
+  if (Array.isArray(row.tags)) {
+    for (const item of row.tags as unknown[]) {
+      if (typeof item === 'string' && item !== '') tags.push(item);
+    }
+  }
+  return {
+    ...(typeof row.alias === 'string' && row.alias !== '' ? { alias: row.alias } : {}),
+    tags,
+    ...(typeof row.color === 'string' && row.color !== '' ? { color: row.color } : {}),
+  };
+}
+
+/** 三个字段全空时返回 `undefined`（"没有标注"只有一种表示）。 */
+function metadataFieldsOrUndefined(raw: unknown): ResourceMetadataDto | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const fields = metadataFieldsOf(raw);
+  if (fields.alias === undefined && fields.tags.length === 0 && fields.color === undefined) return undefined;
+  return fields;
+}
+
+/**
+ * 树条目的窄化：元数据字段形状不对就当"没有标注"。
+ *
+ * 这里**不推导**任何东西（不做路径猜测、不做继承）：Host 已经按对象身份核验过，
+ * 客户端多推一步只会在将来引入第二种"什么算同一个文件"的判定。
+ */
+function normalizeTreeEntry(entry: TreeEntry): TreeEntry {
+  if (typeof entry !== 'object' || entry === null) return entry;
+  const meta = metadataFieldsOrUndefined((entry as { meta?: unknown }).meta);
+  const { meta: _ignored, ...rest } = entry as TreeEntry & { meta?: unknown };
+  return (meta ? { ...rest, meta } : rest) as TreeEntry;
+}
+
 export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
   /**
    * 取一个会话令牌（T1）。
@@ -1077,17 +1213,20 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         level?: string;
         entries?: TreeEntry[];
         page?: Partial<TreePageMeta>;
+        projectMeta?: unknown;
       };
       // 响应形状不完整时按"拒绝"处理，绝不把半截数据渲染成一棵不完整的树
-      const entries = Array.isArray(asTree.entries) ? asTree.entries : null;
+      const entries = Array.isArray(asTree.entries) ? asTree.entries.map(normalizeTreeEntry) : null;
       const page = asTree.page;
       if (!entries || !page || typeof page.total !== 'number') {
         return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_INTERNAL', message: '目录响应不完整' };
       }
+      const projectMeta = metadataFieldsOrUndefined(asTree.projectMeta);
       return {
         status: 'APPLIED' as const,
         level: typeof asTree.level === 'string' ? asTree.level : dir,
         entries,
+        ...(projectMeta ? { projectMeta } : {}),
         page: {
           limit: typeof page.limit === 'number' ? page.limit : entries.length,
           cursor: page.cursor ?? null,
@@ -1727,6 +1866,61 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       return postTrashAction('/api/trash/restore', { projectId, opId }, projectId, opId, { gate });
     },
 
+
+    /* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
+
+    async setResourceMetadata(projectId, path, patch) {
+      // 只把**用户真的改过**的字段发出去：没传的字段由 Host 保持原值
+      const payload: Record<string, unknown> = { projectId, path };
+      if (patch.alias !== undefined) payload.alias = patch.alias;
+      if (patch.tags !== undefined) payload.tags = patch.tags;
+      if (patch.color !== undefined) payload.color = patch.color;
+      return postMetadata('/api/metadata/set', payload);
+    },
+
+    async clearResourceMetadata(projectId, path) {
+      return postMetadata('/api/metadata/clear', { projectId, path });
+    },
+
+    async resourceMetadata(projectId) {
+      let token: string;
+      try {
+        token = await sessionToken();
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_PERMISSION_DENIED', message: '无法获取会话令牌' };
+      }
+      let response: { httpStatus: number; body: ApiEnvelope };
+      try {
+        response = await request(baseUrl, `/api/metadata?projectId=${encodeURIComponent(projectId)}`, {
+          headers: { 'x-ws-token': token },
+        });
+      } catch {
+        return { status: 'REJECTED' as const, errorCode: 'ERR_STORAGE_IO', message: '读取资源标注失败' };
+      }
+      const { httpStatus, body } = response;
+      if (httpStatus !== 200 || body.status !== 'APPLIED') {
+        return { status: 'REJECTED' as const, errorCode: body.errorCode ?? null, message: body.message };
+      }
+      const raw = (body as unknown as { entries?: unknown }).entries;
+      const entries: MetadataEntryDto[] = [];
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          if (typeof item !== 'object' || item === null) continue;
+          const row = item as { path?: unknown; state?: unknown };
+          if (typeof row.path !== 'string') continue;
+          entries.push({
+            path: row.path,
+            state:
+              row.state === 'missing' || row.state === 'rebound' || row.state === 'unverified'
+                ? row.state
+                : 'active',
+            ...metadataFieldsOf(item),
+          });
+        }
+      }
+      return { status: 'APPLIED' as const, projectId, entries };
+    },
+
     async queryTrashOp(projectId, opId) {
       let token: string;
       try {
@@ -1919,6 +2113,59 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
    * 与结构变更不同，这里**没有 UNKNOWN 的磁盘副作用**：隐藏只写工作台配置，
    * 且是幂等的。因此网络中断只报告"未确认"，由调用方刷新目录核对。
    */
+
+  /**
+   * 元数据写入的共享收口（UX-02C-04）。
+   *
+   * 与可见性同一纪律：网络中断/超时时**不重发**（虽然写入幂等，但重发会让用户看到
+   * 两次结果、也可能覆盖别人刚改的字段），返回 `UNKNOWN`，由调用方刷新该层核对真实结果。
+   */
+  async function postMetadata(
+    endpoint: string,
+    payload: Record<string, unknown>,
+  ): Promise<MetadataOutcome> {
+    const projectId = typeof payload.projectId === 'string' ? payload.projectId : '';
+    const path = typeof payload.path === 'string' ? payload.path : '';
+    let token: string;
+    try {
+      token = await sessionToken();
+    } catch {
+      return {
+        status: 'REJECTED',
+        errorCode: 'ERR_PERMISSION_DENIED',
+        message: '无法获取会话令牌',
+        httpStatus: 403,
+      };
+    }
+    let response: { httpStatus: number; body: ApiEnvelope };
+    try {
+      response = await request(baseUrl, endpoint, {
+        method: 'POST',
+        headers: { 'x-ws-token': token },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      return { status: 'UNKNOWN', message: '网络中断或请求超时，资源标注的结果未确认' };
+    }
+    const { httpStatus, body } = response;
+    if (httpStatus === 200 && body.status === 'APPLIED') {
+      const raw = (body as unknown as { metadata?: unknown }).metadata;
+      return {
+        status: 'APPLIED',
+        projectId: typeof body.projectId === 'string' ? body.projectId : projectId,
+        path: typeof body.path === 'string' ? body.path : path,
+        changed: body.changed === false ? false : true,
+        metadata: raw === null ? { tags: [] } : metadataFieldsOf(raw),
+      };
+    }
+    return {
+      status: 'REJECTED',
+      errorCode: body.errorCode ?? (httpStatus === 200 ? 'ERR_COMMAND_INTERNAL' : null),
+      message: body.message ?? '资源标注保存失败',
+      httpStatus,
+    };
+  }
+
   async function postVisibility(
     endpoint: string,
     projectId: string,
@@ -2305,6 +2552,38 @@ export function createDemoClient(
     },
 
     // 演示模式没有工作台配置：绝不"假装隐藏"，也不在演示树里凭空消失一行
+    /* ---- UX-02C-04：演示模式没有工作区配置，标注名/标签/颜色一概不支持 ---- */
+
+    async setResourceMetadata(projectId, path) {
+      return {
+        status: 'REJECTED' as const,
+        projectId,
+        path,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式没有工作区配置，无法保存资源标注',
+        httpStatus: 501,
+      };
+    },
+
+    async clearResourceMetadata(projectId, path) {
+      return {
+        status: 'REJECTED' as const,
+        projectId,
+        path,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式没有工作区配置，无法保存资源标注',
+        httpStatus: 501,
+      };
+    },
+
+    async resourceMetadata() {
+      return {
+        status: 'REJECTED' as const,
+        errorCode: 'ERR_COMMAND_UNSUPPORTED',
+        message: '演示模式没有工作区配置，无法读取资源标注',
+      };
+    },
+
     async hideEntry() {
       return {
         status: 'REJECTED' as const,

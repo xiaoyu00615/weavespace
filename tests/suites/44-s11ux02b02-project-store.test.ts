@@ -837,7 +837,7 @@ test('S-22 重命名的 opId 也可确认（改的是同一条目证据）', asy
 
 // UX-02C-03-P1 起工作区配置升级到 v3（新增隐藏记录）：v1 仍然只读兼容，
 // 但"发生变更即写回"的目标版本变成 3。断言随契约更新，用例本身保留。
-test('S-23 v1 配置只读兼容：可加载，变更后写回当前版本 v4', async () => {
+test('S-23 v1 配置只读兼容：可加载，变更后写回当前版本 v5', async () => {
   const dir = await newDir();
   try {
     await writeFile(
@@ -856,7 +856,7 @@ test('S-23 v1 配置只读兼容：可加载，变更后写回当前版本 v4', 
     }
 
     const config = await readJson(dir, CONFIG_FILE);
-    assert.equal(config?.version, 4, '发生变更即写回当前版本（v4）');
+    assert.equal(config?.version, 5, '发生变更即写回当前版本（v5）');
     assert.deepEqual(config?.issuedIds, ['legacy', 'b']);
   } finally {
     await rm(dir, { recursive: true, force: true });

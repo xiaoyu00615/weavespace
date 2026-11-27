@@ -14,6 +14,7 @@ import type { MouseEvent, ReactNode } from 'react';
 import type {
   CreateEntryKindDto,
   CreateEntryOutcome,
+  ResourceMetadataDto,
   StructureChangeOutcome,
 } from '../client/client-api.ts';
 import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
@@ -47,6 +48,8 @@ import {
   visibilityUnknownNotice,
 } from '../state/visibility.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
+import { useResourceMetadata } from '../state/MetadataContext.tsx';
+import { metadataCommandState } from '../state/resource-metadata.ts';
 import { useTrash } from '../state/TrashContext.tsx';
 import { trashDeleteCommandState } from '../state/trash.ts';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
@@ -69,6 +72,13 @@ export interface TreeTarget {
    * 只有"显示隐藏项"打开时才可能为 true；据此决定菜单给"隐藏"还是"取消隐藏"。
    */
   readonly nodeHidden?: boolean;
+  /**
+   * 该行当前的展示元数据（UX-02C-04）。
+   *
+   * 传给对话框当"打开时的基准"：只有它才能算出"用户到底改了哪几个字段"，
+   * 从而只提交差异，不覆盖别人刚改的其它字段。
+   */
+  readonly nodeMeta?: ResourceMetadataDto;
 }
 
 export interface NamingState {
@@ -146,6 +156,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
   const { state, dispatch } = useWorkspace();
   const actions = useDocumentActions();
   const trash = useTrash();
+  const metadata = useResourceMetadata();
   const { ready, registry, resolveViewer, revision } = useCapabilities();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuSeq = useRef(0);
@@ -541,6 +552,30 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     };
     const structural = structureSource(target) !== null;
     const visibility = visibilityCommandState({ target, supported: usable });
+    const metadataCommand = metadataCommandState({
+      origin: target.origin,
+      entryKind: target.entryKind === 'link' ? 'link' : target.entryKind,
+      supported: usable,
+    });
+    /** 三个入口打开的是同一个对话框，只是把焦点放在对应分区。 */
+    const openMetadata = (focus: 'alias' | 'tags' | 'color') => () => {
+      setMenu(null);
+      const projectId = target.projectId;
+      const path = target.nodePath == null ? '' : normalizeDir(target.nodePath);
+      if (!projectId || (path === '' && target.origin !== 'project-root')) {
+        dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件、文件夹或项目根可以标注' });
+        return;
+      }
+      metadata.open(
+        {
+          projectId,
+          path,
+          name: path === '' ? '项目根' : (path.split('/').pop() ?? path),
+          ...(target.nodeMeta ? { meta: target.nodeMeta } : {}),
+        },
+        focus,
+      );
+    };
     // 只有"普通文件 + 已授权项目"可回收；目录/链接/项目根显示为禁用并说明原因
     const trashCommand = trashDeleteCommandState({
       origin: target.origin,
@@ -600,6 +635,37 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
           trash.openDelete(projectId, path);
         },
       },
+      /**
+       * 资源标注（UX-02C-04）：标注名 / 标签 / 行颜色。
+       *
+       * 三条入口打开同一个对话框，分别把焦点放在对应分区——用户点哪一项，
+       * 光标就在哪一项，不需要在三个区块之间自己找。
+       * 只改工作台展示，不动真实文件名、不碰文件内容。
+       */
+      {
+        id: 'meta-alias',
+        label: '设置标注名…',
+        hidden: !metadataCommand.visible,
+        ...(metadataCommand.hint ? { hint: metadataCommand.hint } : {}),
+        disabled: metadataCommand.disabled,
+        command: openMetadata('alias'),
+      },
+      {
+        id: 'meta-tags',
+        label: '编辑标签…',
+        hidden: !metadataCommand.visible,
+        ...(metadataCommand.hint ? { hint: metadataCommand.hint } : {}),
+        disabled: metadataCommand.disabled,
+        command: openMetadata('tags'),
+      },
+      {
+        id: 'meta-color',
+        label: '设置颜色…',
+        hidden: !metadataCommand.visible,
+        ...(metadataCommand.hint ? { hint: metadataCommand.hint } : {}),
+        disabled: metadataCommand.disabled,
+        command: openMetadata('color'),
+      },
       {
         id: 'new-file',
         label: '新建文件',
@@ -645,6 +711,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     actions,
     toggleVisibility,
     trash,
+    metadata,
   ]);
 
   const value = useMemo<TreeCommandsValue>(

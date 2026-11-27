@@ -1,0 +1,208 @@
+TAP version 13
+# Subtest: M-A01 设置标注名：树里出现 meta.alias，真实文件名与字节零变更
+ok 1 - M-A01 设置标注名：树里出现 meta.alias，真实文件名与字节零变更
+  ---
+  duration_ms: 246.9666
+  type: 'test'
+  ...
+# Subtest: M-A02 幂等写入：内容没变时不写盘、不推进 commitSeq
+ok 2 - M-A02 幂等写入：内容没变时不写盘、不推进 commitSeq
+  ---
+  duration_ms: 114.4276
+  type: 'test'
+  ...
+# Subtest: M-A03 只改颜色不清掉已有的标注名与标签
+ok 3 - M-A03 只改颜色不清掉已有的标注名与标签
+  ---
+  duration_ms: 102.8885
+  type: 'test'
+  ...
+# Subtest: M-A04 标注名与颜色可单独清除，其余字段保留
+ok 4 - M-A04 标注名与颜色可单独清除，其余字段保留
+  ---
+  duration_ms: 99.5216
+  type: 'test'
+  ...
+# Subtest: M-A05 三个字段全清后整条记录被删除（不保留空壳）
+ok 5 - M-A05 三个字段全清后整条记录被删除（不保留空壳）
+  ---
+  duration_ms: 121.7025
+  type: 'test'
+  ...
+# Subtest: M-A06 标签规范化：trim、丢空、大小写不敏感去重并保留首次写法
+ok 6 - M-A06 标签规范化：trim、丢空、大小写不敏感去重并保留首次写法
+  ---
+  duration_ms: 76.968
+  type: 'test'
+  ...
+# Subtest: M-A07 标签上限与非法输入：明确的 400 且零写入
+ok 7 - M-A07 标签上限与非法输入：明确的 400 且零写入
+  ---
+  duration_ms: 65.0291
+  type: 'test'
+  ...
+# Subtest: M-A08 颜色只接受预设 token，任意 CSS 字符串被拒绝
+ok 8 - M-A08 颜色只接受预设 token，任意 CSS 字符串被拒绝
+  ---
+  duration_ms: 73.3695
+  type: 'test'
+  ...
+# Subtest: M-A09 客户端不能自述身份：rootToken / identity / updatedAt 字段一律 400
+ok 9 - M-A09 客户端不能自述身份：rootToken / identity / updatedAt 字段一律 400
+  ---
+  duration_ms: 60.577
+  type: 'test'
+  ...
+# Subtest: M-A10 保留路径与越界路径不能标注
+ok 10 - M-A10 保留路径与越界路径不能标注
+  ---
+  duration_ms: 69.9473
+  type: 'test'
+  ...
+# Subtest: M-A11 目标不存在 → 404，不登记看不见的标注
+ok 11 - M-A11 目标不存在 → 404，不登记看不见的标注
+  ---
+  duration_ms: 60.427
+  type: 'test'
+  ...
+# Subtest: M-A12 缺少令牌 / Origin / 未授权项目：分别 403 与 404
+ok 12 - M-A12 缺少令牌 / Origin / 未授权项目：分别 403 与 404
+  ---
+  duration_ms: 78.2347
+  type: 'test'
+  ...
+# Subtest: M-A13 重启 Host 后元数据仍在，且树里仍然生效
+ok 13 - M-A13 重启 Host 后元数据仍在，且树里仍然生效
+  ---
+  duration_ms: 148.1995
+  type: 'test'
+  ...
+# Subtest: M-A14 从 v4 配置启动：只读兼容，写入后升到 v5 且保留旧字段
+ok 14 - M-A14 从 v4 配置启动：只读兼容，写入后升到 v5 且保留旧字段
+  ---
+  duration_ms: 76.9102
+  type: 'test'
+  ...
+# Subtest: M-A15 v1 配置（无校验和）也能读到元数据端点，写入后成为 v5
+ok 15 - M-A15 v1 配置（无校验和）也能读到元数据端点，写入后成为 v5
+  ---
+  duration_ms: 72.6601
+  type: 'test'
+  ...
+# Subtest: M-A16 校验和覆盖元数据：手改 alias 不更新校验和 → 整份配置被判损坏
+ok 16 - M-A16 校验和覆盖元数据：手改 alias 不更新校验和 → 整份配置被判损坏
+  ---
+  duration_ms: 78.1336
+  type: 'test'
+  ...
+# Subtest: M-B01 跨项目隔离：A 的 same.md 与 B 的 same.md 互不影响
+ok 17 - M-B01 跨项目隔离：A 的 same.md 与 B 的 same.md 互不影响
+  ---
+  duration_ms: 99.3049
+  type: 'test'
+  ...
+# Subtest: M-B02 同一项目不同目录的同名文件互不影响
+ok 18 - M-B02 同一项目不同目录的同名文件互不影响
+  ---
+  duration_ms: 74.1247
+  type: 'test'
+  ...
+# Subtest: M-B03 文件夹也能标注，且不影响子项
+ok 19 - M-B03 文件夹也能标注，且不影响子项
+  ---
+  duration_ms: 76.6903
+  type: 'test'
+  ...
+# Subtest: M-B04 真实改名后元数据跟随（旧路径不再显示）
+ok 20 - M-B04 真实改名后元数据跟随（旧路径不再显示）
+  ---
+  duration_ms: 117.492
+  type: 'test'
+  ...
+# Subtest: M-B05 真实移动到其他目录后元数据跟随
+ok 21 - M-B05 真实移动到其他目录后元数据跟随
+  ---
+  duration_ms: 126.7033
+  type: 'test'
+  ...
+# Subtest: M-B06 目录改名：子资源元数据按前缀迁移
+ok 22 - M-B06 目录改名：子资源元数据按前缀迁移
+  ---
+  duration_ms: 188.1638
+  type: 'test'
+  ...
+# Subtest: M-B07 改名被拒绝（同名已存在）：元数据不动
+ok 23 - M-B07 改名被拒绝（同名已存在）：元数据不动
+  ---
+  duration_ms: 95.4265
+  type: 'test'
+  ...
+# Subtest: M-B08 原位置被外部换成新对象：旧标注不继承（rebound）
+ok 24 - M-B08 原位置被外部换成新对象：旧标注不继承（rebound）
+  ---
+  duration_ms: 105.2749
+  type: 'test'
+  ...
+# Subtest: M-B09 文件被外部删除：记录保留但标为 missing，不再显示
+ok 25 - M-B09 文件被外部删除：记录保留但标为 missing，不再显示
+  ---
+  duration_ms: 127.5589
+  type: 'test'
+  ...
+# Subtest: M-B10 项目根展示项：用项目身份标注，出现在 tree 的 projectMeta
+ok 26 - M-B10 项目根展示项：用项目身份标注，出现在 tree 的 projectMeta
+  ---
+  duration_ms: 86.0939
+  type: 'test'
+  ...
+# Subtest: M-B11 项目根标注不能借此改任何磁盘对象（文件集合与字节零变更）
+ok 27 - M-B11 项目根标注不能借此改任何磁盘对象（文件集合与字节零变更）
+  ---
+  duration_ms: 77.3509
+  type: 'test'
+  ...
+# Subtest: M-C01 回收后标注不丢；同名新文件不继承；恢复后重新生效
+ok 28 - M-C01 回收后标注不丢；同名新文件不继承；恢复后重新生效
+  ---
+  duration_ms: 211.9901
+  type: 'test'
+  ...
+# Subtest: M-C02 回收失败（目录）不产生任何元数据变更
+ok 29 - M-C02 回收失败（目录）不产生任何元数据变更
+  ---
+  duration_ms: 109.901
+  type: 'test'
+  ...
+# Subtest: M-C03 清除整条记录：文件不存在时也能清（不留孤儿）
+ok 30 - M-C03 清除整条记录：文件不存在时也能清（不留孤儿）
+  ---
+  duration_ms: 142.7697
+  type: 'test'
+  ...
+# Subtest: M-D01 normalizeTags：保持顺序、大小写不敏感去重、丢弃空白项
+ok 31 - M-D01 normalizeTags：保持顺序、大小写不敏感去重、丢弃空白项
+  ---
+  duration_ms: 0.4746
+  type: 'test'
+  ...
+# Subtest: M-D02 配置序列化往返：v5 元数据字段顺序稳定、校验和可复算
+ok 32 - M-D02 配置序列化往返：v5 元数据字段顺序稳定、校验和可复算
+  ---
+  duration_ms: 0.5321
+  type: 'test'
+  ...
+# Subtest: M-D03 配置里出现空壳元数据（三字段全空）即判损坏
+ok 33 - M-D03 配置里出现空壳元数据（三字段全空）即判损坏
+  ---
+  duration_ms: 0.3284
+  type: 'test'
+  ...
+1..33
+# tests 33
+# suites 0
+# pass 33
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3201.3525

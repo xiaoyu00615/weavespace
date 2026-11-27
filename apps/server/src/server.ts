@@ -76,6 +76,15 @@ import {
   parseVisibilityBody,
   type HiddenRecordState,
 } from './hidden.ts';
+import {
+  classifyMetadataRecord,
+  displayOf,
+  isEmptyDisplay,
+  markMetadata,
+  parseMetadataClearBody,
+  parseMetadataSetBody,
+  type MetadataRecordState,
+} from './metadata.ts';
 import { decideHiddenRefresh, type HiddenRefreshSkipReason } from './hidden-refresh.ts';
 import {
   parseTrashDeleteBody,
@@ -272,10 +281,15 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     // 错误码与文案必须与 `ERR_PERMISSION_DENIED` 分开（契约 B.6 / T-22）。
     case 'ERR_PERMISSION_DENIED':
     case 'ERR_PATH_OUTSIDE_ROOT':
+    // 内部保留命名空间（回收区）：不是越界也不是权限，是"这个路径不对普通接口开放"
+    case 'ERR_PATH_RESERVED':
     case 'ERR_RESOURCE_IDENTITY_CONFLICT':
     case 'ERR_PROJECT_REVOKE_UNKNOWN':
     case 'ERR_DIR_UNREADABLE':
       return 403;
+    // 资源标注容量上限：需要先清理，属冲突而非服务端故障（UX-02C-04）
+    case 'ERR_METADATA_LIMIT':
+      return 409;
     // 链接不可展开：客户端指错了对象（既不是路径越界，也不是权限问题）。
     case 'ERR_DIR_IS_LINK':
       return 400;
@@ -331,6 +345,8 @@ function httpStatusOfTrashError(errorCode: string | undefined): number {
   switch (errorCode) {
     case 'ERR_PERSIST_FAILED':
     case 'ERR_TRASH_FULL':
+    // 元数据容量上限：同样是"先清理再写"的冲突，不是 IO 失败
+    case 'ERR_METADATA_LIMIT':
     case 'ERR_TRASH_STATE_CONFLICT':
     case 'ERR_TRASH_UNAVAILABLE':
     case 'ERR_ENTRY_SOURCE_CHANGED':
@@ -450,6 +466,7 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_TRASH_RECORD_NOT_FOUND: '回收记录不存在',
   ERR_TRASH_STATE_CONFLICT: '该回收记录当前不可执行此操作，需要人工核对',
   ERR_ENTRY_SOURCE_CHANGED: '该路径上的文件已被外部替换，未执行任何移动',
+  ERR_METADATA_LIMIT: '资源标注已达上限，请先清理部分标注再保存',
 };
 
 function publicMessageOf(errorCode: ErrorCode): string {
@@ -1944,6 +1961,207 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     }
 
     /**
+     * 资源元数据查询（UX-02C-04，只读）。
+     *
+     * 与 `/api/workspace/hidden` 同构：只返回**路径 + 展示字段 + 当前状态**，
+     * 不返回正文、不返回本机绝对路径。每条记录都被核验一次（`dev:ino` 比对），
+     * 因此调用方能看见 `missing` / `rebound` / `unverified` 这类失效状态。
+     */
+    if (method === 'GET' && pathname === '/api/metadata') {
+      if (!runtime || !managedFileStore) {
+        throw new HttpError(
+          501,
+          'ERR_COMMAND_UNSUPPORTED',
+          PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持资源标注',
+        );
+      }
+      requireSessionToken(req);
+      const projectId = url.searchParams.get('projectId') ?? '';
+      if (!projectId) {
+        throw new HttpError(
+          400,
+          'ERR_PROJECT_REQUIRED',
+          PUBLIC_ERROR_MESSAGES.ERR_PROJECT_REQUIRED ?? '必须声明 projectId',
+        );
+      }
+      const handle = requireProjectHandle(projectId);
+      const decision = permission.authorize({
+        actorId,
+        action: 'read',
+        resourcePath: '',
+        providerId: handle.providerId,
+      });
+      if (!decision.allowed) {
+        throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+      }
+      const records = managedFileStore
+        .metadataOf(projectId)
+        .filter((record) => record.rootToken === handle.rootToken);
+      const entries = await withDiskOp(projectId, async () => {
+        const out: Array<{ path: string; state: MetadataRecordState } & ReturnType<typeof displayOf>> = [];
+        for (const record of records) {
+          const state = await classifyMetadataRecord(record, handle.provider, handle.rootToken);
+          out.push({ path: record.path, state, ...displayOf(record) });
+        }
+        return out;
+      });
+      sendJson(res, 200, { status: 'APPLIED', projectId, entries });
+      return;
+    }
+
+    /**
+     * 设置资源元数据（UX-02C-04）：标注名 / 标签 / 行颜色。
+     *
+     * 这是**工作台元数据**，不是文件内容，也不是真实文件名：
+     * 不移动、不改写、不删除任何磁盘对象，也不需要结构变更屏障——
+     * 但仍然要在 `withDiskOp` 里取一次对象身份，否则"给一个已经不存在的路径写标注"
+     * 会被登记成一条永远不可能生效的记录。
+     *
+     * 校验顺序：模式(501) → T1(403) → 显式同源 Origin(403) → 体/路径形状(400，零 IO)
+     * → 项目可用性(G-DISK 前置) → 项目级写授权(403) → 内部保留路径(403)
+     * → 身份核验（`withDiskOp` 下）→ 配置原子提交。
+     *
+     * 失败语义：
+     * - 目标不存在 → 404（不得登记"看不见的标注"）；
+     * - Provider 不提供对象身份 → 501（无法在下次读取时判断"还是不是同一个对象"）；
+     * - 配置写不进去 → `ERR_PERSIST_FAILED`，内存投影不变；
+     * - 内容没变化 → 200 + `changed: false`（幂等，不写盘）。
+     */
+    if (method === 'POST' && pathname === '/api/metadata/set') {
+      if (!runtime || !managedFileStore) {
+        throw new HttpError(
+          501,
+          'ERR_COMMAND_UNSUPPORTED',
+          PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持资源标注',
+        );
+      }
+      requireSessionToken(req);
+      if (req.headers.origin === undefined) {
+        throw new HttpError(403, 'ERR_PERMISSION_DENIED', '变更类请求必须声明 Origin');
+      }
+      const setBody = await readJsonBody(req, maxBodyBytes);
+      rejectTrustedFields(setBody, mode);
+      const parsed = parseMetadataSetBody(setBody);
+      if (!parsed.ok) {
+        throw new HttpError(
+          httpStatusOfDomainError(parsed.errorCode),
+          parsed.errorCode,
+          parsed.message,
+        );
+      }
+      const { request } = parsed;
+      const handle = requireProjectHandle(request.projectId);
+      const decision = permission.authorize({
+        actorId,
+        action: 'write',
+        resourcePath: request.path,
+        providerId: handle.providerId,
+      });
+      if (!decision.allowed) {
+        throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+      }
+      assertPathNotReserved(request.path);
+
+      let identity: string;
+      if (request.path === '') {
+        // 项目根展示项：身份就是根令牌本身（根没有 dev:ino 意义上的对象身份）
+        identity = handle.rootToken;
+      } else {
+        const probe = await withDiskOp(request.projectId, async () => {
+          if (typeof handle.provider.identityOf !== 'function') return { status: 'unsupported' as const };
+          return { status: 'ok' as const, identity: await handle.provider.identityOf(request.path) };
+        });
+        if (probe.status === 'unsupported') {
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            '该项目的存储实现不提供对象身份，无法安全地登记资源标注',
+          );
+        }
+        if (probe.identity === null) {
+          throw new HttpError(
+            404,
+            'ERR_RESOURCE_NOT_FOUND',
+            PUBLIC_ERROR_MESSAGES.ERR_RESOURCE_NOT_FOUND ?? '该路径已不存在',
+          );
+        }
+        identity = probe.identity;
+      }
+
+      const result = await managedFileStore.commitMetadata({
+        projectId: request.projectId,
+        path: request.path,
+        rootToken: handle.rootToken,
+        identity,
+        ...(request.alias !== undefined ? { alias: request.alias } : {}),
+        ...(request.tags !== undefined ? { tags: request.tags } : {}),
+        ...(request.color !== undefined ? { color: request.color } : {}),
+      });
+      sendJson(res, 200, {
+        status: 'APPLIED',
+        projectId: request.projectId,
+        path: request.path,
+        changed: result.changed,
+        metadata: result.entry ? displayOf(result.entry) : { tags: [] },
+      });
+      return;
+    }
+
+    /**
+     * 清除资源元数据（UX-02C-04）：整条记录删除。
+     *
+     * 与 `set` 的差别：**不要求对象仍然存在**。文件被外部删掉之后，标注必须还能清掉，
+     * 否则那条记录会永远留在配置里，而且没有任何入口能看见它。
+     */
+    if (method === 'POST' && pathname === '/api/metadata/clear') {
+      if (!runtime || !managedFileStore) {
+        throw new HttpError(
+          501,
+          'ERR_COMMAND_UNSUPPORTED',
+          PUBLIC_ERROR_MESSAGES.ERR_COMMAND_UNSUPPORTED ?? '当前运行模式不支持资源标注',
+        );
+      }
+      requireSessionToken(req);
+      if (req.headers.origin === undefined) {
+        throw new HttpError(403, 'ERR_PERMISSION_DENIED', '变更类请求必须声明 Origin');
+      }
+      const clearBody = await readJsonBody(req, maxBodyBytes);
+      rejectTrustedFields(clearBody, mode);
+      const parsed = parseMetadataClearBody(clearBody);
+      if (!parsed.ok) {
+        throw new HttpError(
+          httpStatusOfDomainError(parsed.errorCode),
+          parsed.errorCode,
+          parsed.message,
+        );
+      }
+      const { request } = parsed;
+      const handle = requireProjectHandle(request.projectId);
+      const decision = permission.authorize({
+        actorId,
+        action: 'write',
+        resourcePath: request.path,
+        providerId: handle.providerId,
+      });
+      if (!decision.allowed) {
+        throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
+      }
+      assertPathNotReserved(request.path);
+      const result = await managedFileStore.commitMetadataClear({
+        projectId: request.projectId,
+        path: request.path,
+      });
+      sendJson(res, 200, {
+        status: 'APPLIED',
+        projectId: request.projectId,
+        path: request.path,
+        changed: result.changed,
+        metadata: null,
+      });
+      return;
+    }
+
+    /**
      * UX-02B-TREE：只读、逐层、可分页的真实目录树。
      *
      * 与 `/api/resources` 的关系：旧端点的实现与输出**冻结**（递归、只认文本后缀），
@@ -2000,11 +2218,40 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           ? managedFileStore.hiddenOf(treeProjectId).filter((record) => record.rootToken === treeRootToken)
           : [];
 
+      /**
+       * 元数据同样只对当前项目根有效（UX-02C-04）：根换了，`rootToken` 变化，
+       * 旧记录自动失效——不会把旧标注名继续挂在新根里的同名文件上。
+       */
+      const metadataRecords =
+        treeProjectId && managedFileStore && treeRootToken !== ''
+          ? managedFileStore.metadataOf(treeProjectId).filter((record) => record.rootToken === treeRootToken)
+          : [];
+      /** 项目根展示项的元数据：根没有 `dev:ino` 身份，用根令牌关联。 */
+      const rootRecord =
+        dir === '' ? metadataRecords.find((record) => record.path === '') : undefined;
+      let projectMeta: ReturnType<typeof displayOf> | undefined;
+      if (rootRecord) {
+        const state = await classifyMetadataRecord(rootRecord, treeProvider, treeRootToken);
+        if (state === 'active') projectMeta = displayOf(rootRecord);
+      }
+
       try {
         const page = await withDiskOp(treeProjectId, async () => {
           const raw = await treeProvider.readDir(dir === '' ? '.' : dir);
-          if (hiddenRecords.length === 0) return { entries: raw, hiddenCount: 0 };
-          const marked = await markVisibility(raw, {
+          // 元数据打标只对**本层**条目生效，不做目录继承（契约 §4.4）
+          const withMeta =
+            metadataRecords.length === 0
+              ? raw
+              : (
+                  await markMetadata(raw, {
+                    level: dir,
+                    records: metadataRecords.filter((record) => record.path !== ''),
+                    probe: treeProvider,
+                    rootToken: treeRootToken,
+                  })
+                ).entries;
+          if (hiddenRecords.length === 0) return { entries: withMeta, hiddenCount: 0 };
+          const marked = await markVisibility(withMeta, {
             level: dir,
             records: hiddenRecords,
             probe: treeProvider,
@@ -2023,6 +2270,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             limit,
             expectedSnapshot,
             hiddenCount: page.hiddenCount,
+            ...(projectMeta && !isEmptyDisplay(projectMeta) ? { projectMeta } : {}),
           }),
         );
       } catch (err) {
@@ -2411,6 +2659,31 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             publicMessageOf(outcome.errorCode),
           );
         }
+        /**
+         * 元数据迁移（UX-02C-04 / 契约 C3）。
+         *
+         * 只在**磁盘已经真的变了**（APPLIED）且源/目标都已知时做，`UNKNOWN` 与失败
+         * 一律不动（那时连"文件在哪"都不知道，迁移就是把标注绑到猜测的位置上）。
+         *
+         * 失败不回滚磁盘、也不把这次结构变更说成失败：文件确实已经改名/移动了，
+         * 报错会让用户重试一次真实操作。改为在响应里显式报告 `metadataMigration`，
+         * 界面据此提示"标注未能随文件迁移"，由用户决定要不要重设。
+         */
+        let metadataMigration: 'moved' | 'none' | 'failed' = 'none';
+        let metadataMoved = 0;
+        if (managedFileStore) {
+          try {
+            const migration = await managedFileStore.commitMetadataMove({
+              projectId: request.projectId,
+              sourcePath: outcome.sourcePath,
+              targetPath: outcome.targetPath,
+            });
+            metadataMigration = migration.changed ? 'moved' : 'none';
+            metadataMoved = migration.moved;
+          } catch {
+            metadataMigration = 'failed';
+          }
+        }
         sendJson(res, 200, {
           status: 'APPLIED',
           projectId: request.projectId,
@@ -2421,6 +2694,8 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           targetName: outcome.targetName,
           entryKind: outcome.kind,
           contentSha256: outcome.contentSha256,
+          metadataMigration,
+          ...(metadataMoved > 0 ? { metadataMoved } : {}),
         });
         return;
       }

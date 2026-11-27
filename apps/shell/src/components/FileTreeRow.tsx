@@ -14,6 +14,7 @@
  */
 import type { MouseEvent, ReactNode } from 'react';
 import type { ResourceNodeState } from '../state/types';
+import { colorRowClassOf, tagBadges } from '../state/resource-metadata';
 import { ancestorGuides, type TreeTrails } from './tree-trails';
 
 /** 每一级的缩进步长（px）。行内计算与 CSS 都必须用这个值。 */
@@ -206,13 +207,34 @@ export function TreeRow({
    */
   const hiddenSelf = node.hidden === true;
   const hiddenBy = node.hiddenBy;
-  const rowTitle = isLink
+  /**
+   * 资源标注（UX-02C-04）：标注名是**附加**信息，永远排在真实名称之后。
+   *
+   * 真实名称不加任何修饰：用户判断"这是哪个文件"靠它，标注名只用来帮人记住用途。
+   * 颜色只落在 `color` 上（见样式表），不覆盖选中/焦点/禁用/错误态。
+   */
+  const meta = node.meta;
+  const colorClass = colorRowClassOf(meta?.color);
+  /*
+   * 侧栏只有 260px，放不下"名称 + 标注名 + 标签"三样：
+   * - 有标注名时，行内**不画**标签（它们进 `title`）——否则标注名会被挤成 `（…`，
+   *   而标注名正是用户刚刚输入、最需要确认的东西；
+   * - 没有标注名时，行内最多两枚标签 + `+N`。
+   *
+   * 标签本身没有丢：对话框里完整可编辑，行的 `title` 里也全列出来了。
+   */
+  const badges = tagBadges(meta?.tags ?? [], meta?.alias ? 0 : 2);
+  const annotated = Boolean(meta?.alias) || badges.shown.length > 0;
+  const baseTitle = isLink
     ? `${node.name}（链接不展开，避免越过项目根）`
     : hiddenSelf
       ? `${node.name}（已从文件树隐藏；文件仍在磁盘上，可正常打开与保存）`
       : hiddenBy
         ? `${node.name}（上级「${hiddenBy}」被隐藏；文件仍在磁盘上）`
         : node.name;
+  const aliasTitle = meta?.alias ? `\n标注名：${meta.alias}` : '';
+  const tagTitle = meta?.tags.length ? `\n标签：${meta.tags.join('、')}` : '';
+  const rowTitle = annotated ? `${baseTitle}${aliasTitle}${tagTitle}` : baseTitle;
   return (
     <li className="tree__item">
       <div className="tree__row-wrap">
@@ -225,6 +247,7 @@ export function TreeRow({
             selected ? 'tree__row--selected' : '',
             opened ? 'tree__row--opened' : '',
             hiddenSelf || hiddenBy ? 'tree__row--hidden' : '',
+            colorClass ?? '',
             actions ? 'tree__row--with-actions' : '',
             rowClassName ?? '',
           ]
@@ -245,6 +268,21 @@ export function TreeRow({
             <FileGlyph extension={node.extension} />
           )}
           <span className="tree__name">{node.name}</span>
+          {meta?.alias && (
+            <span className="tree__alias" title={`标注名：${meta.alias}（真实名称不变）`}>
+              （{meta.alias}）
+            </span>
+          )}
+          {badges.shown.map((tag) => (
+            <span key={tag} className="tree__tag" title={`标签：${tag}`}>
+              {tag}
+            </span>
+          ))}
+          {badges.more > 0 && (
+            <span className="tree__tag tree__tag--more" title={(meta?.tags ?? []).slice(2).join('、')}>
+              +{badges.more}
+            </span>
+          )}
           {hiddenSelf && (
             <span className="tree__hidden-badge" title="已从文件树隐藏（磁盘文件未删除）">
               隐藏

@@ -31,6 +31,8 @@ import {
   type TrashListOutcome,
   type TrashOpQueryOutcome,
   type TrashSendGate,
+  type MetadataOutcome,
+  type ResourceMetadataPatch,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
 import { backupDraftBeforeReload } from '../client/draft-backup';
@@ -221,6 +223,27 @@ export interface DocumentActions {
    * 只作废并重取**该路径的父层**，其它层/项目/标签/草稿一概不动。
    */
   applyVisibilityChange(projectId: string, path: string): Promise<void>;
+  /* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
+
+  /**
+   * 增量设置一个资源的展示元数据。
+   *
+   * 只提交用户改过的字段（见 `patchOfDraft`）：不传的字段由 Host 保持原值。
+   * Demo / Legacy / 静态 Multi 明确 501 —— 那里没有工作区配置可写。
+   */
+  setResourceMetadata(
+    projectId: string,
+    path: string,
+    patch: ResourceMetadataPatch,
+  ): Promise<MetadataOutcome>;
+  /** 清除整条元数据记录（不要求文件仍存在）。 */
+  clearResourceMetadata(projectId: string, path: string): Promise<MetadataOutcome>;
+  /**
+   * 标注保存后只重取**该路径所在的那一层**：元数据是行级展示，
+   * 不递归、不过滤、不影响其它层/项目/标签与草稿。
+   */
+  applyMetadataChange(projectId: string, path: string): Promise<void>;
+
   /**
    * 切换"显示隐藏项"。
    *
@@ -266,6 +289,16 @@ function unsupportedStructure(): StructureChangeOutcome {
 /** Demo / Legacy / 静态 Multi 明确不提供工作台隐藏，不制造"点了会假成功"的入口。 */
 function unsupportedVisibility(message: string): VisibilityOutcome {
   return { status: 'REJECTED', errorCode: 'ERR_COMMAND_UNSUPPORTED', message, httpStatus: 501 };
+}
+
+/** 演示/单根模式没有工作区配置：标注明确不支持，不制造"保存成功"的假象。 */
+function unsupportedMetadata(message: string): MetadataOutcome {
+  return {
+    status: 'REJECTED',
+    errorCode: 'ERR_COMMAND_UNSUPPORTED',
+    message,
+    httpStatus: 501,
+  };
 }
 
 /** 冲突重载前的草稿备份前缀：只写 sessionStorage，不落任何用户目录。 */
@@ -1060,9 +1093,19 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           );
           if (folder) dispatch({ type: 'EXPAND_PROJECT_NODE', projectId, path: folder.id });
         }
+        /*
+         * 标注是否跟着走了（UX-02C-04）。失败必须说：磁盘确实变了，
+         * 用户会以为标注还在，直到下次打开才发现没了。
+         */
+        const metadataNote =
+          outcome.metadataMigration === 'failed'
+            ? '；但资源标注未能写入工作区配置，请重新设置'
+            : outcome.metadataMigration === 'moved'
+              ? '，资源标注已随文件迁移'
+              : '';
         dispatch({
           type: 'NOTICE',
-          message: `已把「${outcome.sourcePath}」变更为「${outcome.targetPath}」（只刷新了相关目录）`,
+          message: `已把「${outcome.sourcePath}」变更为「${outcome.targetPath}」（只刷新了相关目录）${metadataNote}`,
         });
       },
 
@@ -1111,6 +1154,34 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           treeLoader.current.invalidateLevel(projectId, dir);
           await treeLoader.current.load(projectId, dir, false);
         }
+      },
+
+      /* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
+
+      async setResourceMetadata(projectId, path, patch) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return unsupportedMetadata('当前模式没有工作区配置，无法保存资源标注');
+        }
+        return liveClient.setResourceMetadata(projectId, path, patch);
+      },
+
+      async clearResourceMetadata(projectId, path) {
+        if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
+          return unsupportedMetadata('当前模式没有工作区配置，无法清除资源标注');
+        }
+        return liveClient.clearResourceMetadata(projectId, path);
+      },
+
+      /**
+       * 只重取该路径的父层（`''` 即项目根层，那里带着 `projectMeta`）。
+       *
+       * 不做"递归刷新所有子层"：标注是行级展示，子层的条目没有变化。
+       * 也不动标签、草稿、展开状态与选中项。
+       */
+      async applyMetadataChange(projectId, path) {
+        const parent = path === '' ? '' : parentDirOfEntry(path);
+        treeLoader.current.invalidateLevel(projectId, parent);
+        await treeLoader.current.load(projectId, parent, false);
       },
 
       /* ---- UX-02C-03-P2-02：回收区 ---- */

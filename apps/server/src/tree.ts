@@ -135,6 +135,18 @@ export interface TreeEntryDto {
   hidden?: true;
   /** 自身没有记录，但某个上级目录被隐藏：值是那个上级的相对路径。 */
   hiddenBy?: string;
+  /**
+   * 资源展示元数据（UX-02C-04）：标注名 / 标签 / 行颜色。
+   *
+   * 只包含**核验通过**（`active`）的记录：路径上换了另一个对象时，Host 不会把旧标注
+   * 发下来，界面因此不可能"新文件继承旧标注"。空对象不会出现——三个字段全空时
+   * 整条记录已被删除。
+   */
+  meta?: {
+    readonly alias?: string;
+    readonly tags: readonly string[];
+    readonly color?: string;
+  };
 }
 
 export interface TreePageMeta {
@@ -168,6 +180,17 @@ export interface TreePageDto {
   level: string;
   entries: TreeEntryDto[];
   page: TreePageMeta;
+  /**
+   * 项目根展示项的元数据（UX-02C-04）：只在 `level === ''` 且项目有标注时出现。
+   *
+   * 根不是磁盘条目，无法作为一个 `entries` 元素返回；它用项目身份（`rootToken`）
+   * 关联，与"借元数据获得根目录操作权限"无关——元数据端点完全不碰磁盘。
+   */
+  projectMeta?: {
+    readonly alias?: string;
+    readonly tags: readonly string[];
+    readonly color?: string;
+  };
 }
 
 export const TREE_PAGE_DEFAULT_LIMIT = 200;
@@ -180,6 +203,8 @@ interface DirEntryLike {
   readonly hidden?: boolean;
   /** 上级隐藏目录的相对路径（自身没有记录时才有）。 */
   readonly hiddenBy?: string;
+  /** 该条目的展示元数据已核验通过（UX-02C-04）。 */
+  readonly meta?: TreeEntryDto['meta'];
 }
 
 /** 扩展名（小写含点）。点开头的隐藏文件与无扩展名文件都返回空串。 */
@@ -244,6 +269,8 @@ export interface BuildTreePageOptions {
    * 真实数量，否则"此目录有 N 个隐藏项"会变成 0。
    */
   hiddenCount?: number;
+  /** 项目根展示项的元数据（只在 `level === ''` 时有意义）。 */
+  projectMeta?: TreePageDto['projectMeta'];
 }
 
 /**
@@ -300,6 +327,9 @@ export function buildTreePage(
       relPath: level ? `${level}/${entry.name}` : entry.name,
       ...(entry.hidden ? { hidden: true as const } : {}),
       ...(entry.hiddenBy ? { hiddenBy: entry.hiddenBy } : {}),
+      // 元数据**不参与**目录快照：它不影响"这一层有哪些条目"，
+      // 因此改一个颜色不该让正在进行的翻页作废。
+      ...(entry.meta ? { meta: entry.meta } : {}),
     })),
   );
 
@@ -332,5 +362,8 @@ export function buildTreePage(
       snapshot,
       hiddenCount,
     },
+    // 项目根展示项的元数据放在**顶层**：它不是"这一页"的属性，
+    // 而是这个项目根的展示信息（分页时每页都可以带同一个值）。
+    ...(options.projectMeta ? { projectMeta: options.projectMeta } : {}),
   };
 }

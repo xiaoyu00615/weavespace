@@ -91,10 +91,16 @@ function ProjectRoot({
   const levels = state.treeByProject[projectId] ?? emptyLevels();
   const nodes = useMemo(() => materializeTree(levels), [levels]);
   const rootLevel = levels[''];
+  /**
+   * 项目根行也要能标注（UX-02C-04）：根不是磁盘条目，它的标注来自根层的
+   * `projectMeta`（用项目身份关联），因此这里把它当成普通节点字段传下去。
+   */
+  const rootMeta = rootLevel?.projectMeta;
   const rootNode: ResourceNodeState = {
     id: `project:${projectId}`,
     name: project.name,
     kind: 'folder',
+    ...(rootMeta ? { meta: rootMeta } : {}),
   };
 
   return (
@@ -106,7 +112,13 @@ function ProjectRoot({
       expanded={open}
       selected={active}
       rowClassName="tree__row--with-rename"
-      onContextMenu={(event) => commands.openContextMenu(event, { origin: 'project-root', projectId })}
+      onContextMenu={(event) =>
+        commands.openContextMenu(event, {
+          origin: 'project-root',
+          projectId,
+          ...(rootMeta ? { nodeMeta: rootMeta } : {}),
+        })
+      }
       onActivate={() => {
         // 切换当前项目只改焦点：不清标签、不动草稿、不影响其它项目（G2-05/G2-07）
         if (!active) void actions.switchProject(projectId);

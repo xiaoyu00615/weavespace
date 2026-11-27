@@ -170,6 +170,8 @@ function TreeItem({
             entryKind: 'directory',
             // UX-02C-03-P1：这一行自身是否已隐藏（决定菜单给"隐藏"还是"取消隐藏"）
             nodeHidden: node.hidden === true,
+            // UX-02C-04：当前展示元数据，对话框据此只提交差异
+            ...(node.meta ? { nodeMeta: node.meta } : {}),
           })
         }
         onActivate={() => {
@@ -255,6 +257,7 @@ function TreeItem({
           nodePath: node.path ?? node.name,
           entryKind: 'file',
           nodeHidden: node.hidden === true,
+          ...(node.meta ? { nodeMeta: node.meta } : {}),
         })
       }
       onActivate={() => {

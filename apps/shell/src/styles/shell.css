@@ -314,8 +314,15 @@ button {
 }
 
 .tree__name {
-  flex: 1;
-  min-width: 0;
+  /*
+   * `flex-basis: auto`（而不是 `flex: 1` 的 0）很关键：标注名与标签出现之后，
+   * 若文件名从 0 开始分配空间，它会被后来者挤成 0 宽——真实名称是主信息，
+   * 任何"附加信息把它挤没"都是错的。这里让它先按内容宽度占位，
+   * 只有真的放不下时才收缩（仍然带省略号），并且保底保留几个字符。
+   */
+  flex: 1 1 auto;
+  /* 保底 5em：常见文件名（note.md / a.md / guide.md）必须完整可见 */
+  min-width: 5em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1946,4 +1953,245 @@ button {
 .trash__disabled {
   color: var(--muted);
   font-size: 11px;
+}
+
+/* ---------- 资源标注：标注名 / 标签 / 行颜色（UX-02C-04） ---------- */
+
+/*
+ * 颜色只落在**文件名**上，且用 `:not(.tree__row--selected)` 排除选中行：
+ * 选中/焦点/禁用/错误这些状态是"当前操作位置"的表达，任何用户自定义颜色
+ * 都不该把它们盖住——否则用户会分不清"这行是红的因为重要，还是因为出错"。
+ *
+ * 颜色 token → 具体色值的映射只有一个地方（这里）。数据里永远只有 token，
+ * 因此换主题不需要迁移任何配置。
+ */
+.tree__row--color-red:not(.tree__row--selected) .tree__name {
+  color: #c03a2b;
+}
+
+.tree__row--color-orange:not(.tree__row--selected) .tree__name {
+  color: #b4690e;
+}
+
+.tree__row--color-yellow:not(.tree__row--selected) .tree__name {
+  color: #8a6d00;
+}
+
+.tree__row--color-green:not(.tree__row--selected) .tree__name {
+  color: #1f7a4d;
+}
+
+.tree__row--color-blue:not(.tree__row--selected) .tree__name {
+  color: #2f6df6;
+}
+
+.tree__row--color-purple:not(.tree__row--selected) .tree__name {
+  color: #7a3ec0;
+}
+
+.tree__row--color-gray:not(.tree__row--selected) .tree__name {
+  color: #6b7686;
+}
+
+/* 标注名：真实名称之后、标签之前；空间不够时**它先让位**（收缩系数 2） */
+.tree__alias {
+  flex: 0 2 auto;
+  min-width: 0;
+  max-width: 52%;
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 标签：小胶囊，最多两颗 + `+N`；侧栏只有 260px，再多就没法看文件名了 */
+.tree__tag {
+  flex: 0 2 auto;
+  min-width: 0;
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+  max-width: 44px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree__tag--more {
+  border-style: dashed;
+}
+
+/* ---------- 资源标注对话框 ---------- */
+
+.meta__dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+}
+
+.meta__section {
+  margin: 0 0 14px;
+}
+
+.meta__label {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.meta__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meta__input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.meta__input:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.meta__input--invalid {
+  border-color: #d9534f;
+}
+
+.meta__clear {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.meta__hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.meta__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 8px;
+  min-height: 20px;
+}
+
+.meta__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-alt);
+  font-size: 11px;
+}
+
+.meta__tag-remove {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0 0 2px;
+  line-height: 1;
+}
+
+.meta__tag-remove:hover {
+  color: var(--text);
+}
+
+.meta__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meta__swatch {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+}
+
+.meta__swatch--default {
+  width: auto;
+  padding: 0 10px;
+  border-radius: 13px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.meta__swatch--red {
+  background: #e05b4c;
+}
+
+.meta__swatch--orange {
+  background: #e0902f;
+}
+
+.meta__swatch--yellow {
+  background: #d9b62c;
+}
+
+.meta__swatch--green {
+  background: #3aa76d;
+}
+
+.meta__swatch--blue {
+  background: #3f7ef0;
+}
+
+.meta__swatch--purple {
+  background: #8e5bd0;
+}
+
+.meta__swatch--gray {
+  background: #9aa4b1;
+}
+
+.meta__swatch--active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.meta__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.meta__error {
+  margin: 0 0 12px;
+  padding: 7px 9px;
+  border: 1px solid #f0dcc0;
+  border-radius: 7px;
+  background: #fdf6ec;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.55;
 }
