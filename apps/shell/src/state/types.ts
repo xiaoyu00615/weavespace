@@ -321,6 +321,13 @@ export type WorkspaceAction =
        * 放进条目会让"条目集合"随每次保存变化（契约 §4.4）。
        */
       anchors?: Readonly<Record<string, string>>;
+      /**
+       * 本层 Provider 的身份核验能力（UX-02C-05-R1.1）。
+       *
+       * `undefined` = 本次响应没声明（旧版服务端）：层表随后按 `unverified` 处理，
+       * 绝不因为"这一页恰好都有锚"就推断出能力。
+       */
+      identitySupport?: 'supported' | 'unsupported';
     }
   /** 该层加载失败：保留已加载条目，UI 显示"重试"。 */
   | { type: 'TREE_LEVEL_ERROR'; projectId: string; dir: string; errorCode: string | null }

@@ -322,6 +322,7 @@ export function createTreeLevelLoader(
         ...(outcome.projectMeta ? { projectMeta: outcome.projectMeta } : {}),
         ...(outcome.projectAnchor ? { projectAnchor: outcome.projectAnchor } : {}),
         ...(outcome.anchors ? { anchors: outcome.anchors } : {}),
+        ...(outcome.identitySupport ? { identitySupport: outcome.identitySupport } : {}),
       });
       return 'applied';
     } catch {

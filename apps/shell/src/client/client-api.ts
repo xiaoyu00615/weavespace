@@ -460,6 +460,12 @@ export type TreeQueryOutcome =
        * 放进条目会让任何一次普通保存都改变"条目集合"（见 `TreePageDto.anchors`）。
        */
       anchors?: Readonly<Record<string, string>>;
+      /**
+       * 本页 Provider 的身份核验能力（UX-02C-05-R1.1）。
+       *
+       * 缺省 = 旧版服务端未声明：调用方必须按 `unverified` 处理（fail-closed）。
+       */
+      identitySupport?: 'supported' | 'unsupported';
     }
   | {
       status: 'REJECTED';
@@ -1356,6 +1362,7 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         projectMeta?: unknown;
         projectAnchor?: unknown;
         anchors?: unknown;
+        identitySupport?: unknown;
       };
       // 响应形状不完整时按"拒绝"处理，绝不把半截数据渲染成一棵不完整的树
       const entries = Array.isArray(asTree.entries) ? asTree.entries.map(normalizeTreeEntry) : null;
@@ -1370,6 +1377,11 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
           ? asTree.projectAnchor
           : undefined;
       const anchors = normalizeAnchors(asTree.anchors);
+      // 能力声明只接受两个合法值；形状不对就当"未声明"（客户端随后 fail-closed）
+      const identitySupport =
+        asTree.identitySupport === 'supported' || asTree.identitySupport === 'unsupported'
+          ? asTree.identitySupport
+          : undefined;
       return {
         status: 'APPLIED' as const,
         level: typeof asTree.level === 'string' ? asTree.level : dir,
@@ -1377,6 +1389,7 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         ...(projectMeta ? { projectMeta } : {}),
         ...(projectAnchor ? { projectAnchor } : {}),
         ...(anchors ? { anchors } : {}),
+        ...(identitySupport ? { identitySupport } : {}),
         page: {
           limit: typeof page.limit === 'number' ? page.limit : entries.length,
           cursor: page.cursor ?? null,

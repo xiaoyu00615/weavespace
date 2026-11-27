@@ -2509,6 +2509,13 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             hiddenCount: page.hiddenCount,
             ...(projectMeta && !isEmptyDisplay(projectMeta) ? { projectMeta } : {}),
             ...(projectAnchor ? { projectAnchor } : {}),
+            /*
+             * 身份能力按 Provider 的**实际实现**声明（UX-02C-05-R1.1）：
+             * 有 `identityOf` 才算"能核验身份"，某行缺锚就只能是"这次没探到"；
+             * 没有它才是"明确不支持"，客户端才允许按路径身份降级。
+             * 绝不由"这一页没有锚"反推——那会把一次探测异常伪装成不支持。
+             */
+            identitySupport: typeof treeProvider.identityOf === 'function' ? 'supported' : 'unsupported',
           }),
         );
       } catch (err) {

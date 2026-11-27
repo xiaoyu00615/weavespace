@@ -361,6 +361,8 @@ const ROW_IDENTITY = {
   projectId: 'p1',
   path: 'note.md',
   anchor: 'anchor-a1',
+  // R1.1：身份状态是身份的一部分（这条固定的身份是"已核验"）
+  verification: 'verified',
 } as const;
 
 function arbiterWith(clock: ReturnType<typeof fakeClock>) {
@@ -436,8 +438,15 @@ test('D05 取消（关闭菜单 / 卸载）后不再有延迟激活', () => {
 test('D06 连续两次"双击"不会顺带激活（重复确认也不产生第二次副作用）', () => {
   const clock = fakeClock();
   const { arbiter, calls } = arbiterWith(clock);
+  /*
+   * R1.1：一段手势必须由**第一次点击**（detail=1）开始。
+   * 旧写法直接发两次 `click(2)`，恰好依赖了"孤立的 detail=2 也能当起点"这个缺陷
+   * （见 108 A02）；断言本身没有放宽——每次手势仍然只改名一次、绝不额外单击。
+   */
+  arbiter.click(1, ROW_IDENTITY);
   arbiter.click(2, ROW_IDENTITY);
   arbiter.doubleClick(ROW_IDENTITY);
+  arbiter.click(1, ROW_IDENTITY);
   arbiter.click(2, ROW_IDENTITY);
   arbiter.doubleClick(ROW_IDENTITY);
   clock.advance(5000);

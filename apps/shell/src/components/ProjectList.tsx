@@ -90,15 +90,25 @@ function ProjectRoot({
       rowClassName="tree__row--with-rename"
       onContextMenu={(event) => commands.openContextMenu(event, rootTarget)}
       onFocus={(event) => commands.noteFocus(rootTarget, event.currentTarget)}
-      // 双击项目根名称：只改**显示名称**，不改磁盘目录名，也不改标注名
-      onRenameRequest={() => commands.beginProjectRename(projectId)}
-      // 身份锚 = 根令牌（projectAnchor）：项目根被替换后旧点击不得继续
-      activationIdentity={activationIdentityOf({
-        workspaceKey: state.workspaceKey,
-        projectId,
-        path: '',
-        anchor: rootLevel?.projectAnchor ?? null,
-      })}
+      /*
+       * 双击项目根名称：只改**显示名称**，不改磁盘目录名，也不改标注名。
+       *
+       * 只在拿到根令牌（`projectAnchor`）时才装配仲裁器（R1.1）：根行不是磁盘条目，
+       * 没有根令牌就真的没有可比的身份——此时**不**伪造一个"无法确认"的身份把
+       * 单击切换项目也一并挡掉，而是退回"点了就切"的即时行为。
+       */
+      {...(rootLevel?.projectAnchor
+        ? {
+            onRenameRequest: () => commands.beginProjectRename(projectId),
+            // 身份锚 = 根令牌（projectAnchor）：项目根被替换后旧点击不得继续
+            activationIdentity: activationIdentityOf({
+              workspaceKey: state.workspaceKey,
+              projectId,
+              path: '',
+              anchor: rootLevel.projectAnchor,
+            }),
+          }
+        : {})}
       onActivate={() => {
         // 切换当前项目只改焦点：不清标签、不动草稿、不影响其它项目（G2-05/G2-07）
         if (!active) void actions.switchProject(projectId);

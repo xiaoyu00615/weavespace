@@ -1,0 +1,532 @@
+TAP version 13
+# Subtest: A01 普通文件：改名/移动/隐藏/回收/标注/创建/刷新都在，根专有命令不在
+ok 1 - A01 普通文件：改名/移动/隐藏/回收/标注/创建/刷新都在，根专有命令不在
+  ---
+  duration_ms: 5.7408
+  type: 'test'
+  ...
+# Subtest: A02 文件夹：命令与文件一致，但「移入回收区」可见且禁用并说明只支持普通文件
+ok 2 - A02 文件夹：命令与文件一致，但「移入回收区」可见且禁用并说明只支持普通文件
+  ---
+  duration_ms: 1.3036
+  type: 'test'
+  ...
+# Subtest: A03 项目根：创建 / 显示名 / 标注 / 刷新 / 移除；不出现改名·移动·回收·隐藏
+ok 3 - A03 项目根：创建 / 显示名 / 标注 / 刷新 / 移除；不出现改名·移动·回收·隐藏
+  ---
+  duration_ms: 0.6669
+  type: 'test'
+  ...
+# Subtest: A04 空白区：只有创建与刷新；没有明确项目时禁用并提示"先选中一个项目"
+ok 4 - A04 空白区：只有创建与刷新；没有明确项目时禁用并提示"先选中一个项目"
+  ---
+  duration_ms: 0.476
+  type: 'test'
+  ...
+# Subtest: A05 链接节点：不提供改名/移动/隐藏/标注/刷新，创建与回收显示为禁用并说明原因
+ok 5 - A05 链接节点：不提供改名/移动/隐藏/标注/刷新，创建与回收显示为禁用并说明原因
+  ---
+  duration_ms: 0.3818
+  type: 'test'
+  ...
+# Subtest: A06 不可用项目：保留入口但禁用并给出原因（不是悄悄消失）
+ok 6 - A06 不可用项目：保留入口但禁用并给出原因（不是悄悄消失）
+  ---
+  duration_ms: 0.558
+  type: 'test'
+  ...
+# Subtest: A07 隐藏 / 取消隐藏互斥：任何上下文都不会同时出现两条
+ok 7 - A07 隐藏 / 取消隐藏互斥：任何上下文都不会同时出现两条
+  ---
+  duration_ms: 0.8062
+  type: 'test'
+  ...
+# Subtest: B01 工具栏与空白区对同一选中目录解析出同一个创建目标
+ok 8 - B01 工具栏与空白区对同一选中目录解析出同一个创建目标
+  ---
+  duration_ms: 0.854
+  type: 'test'
+  ...
+# Subtest: B02 选中/右键的是文件时，创建目标是它的父目录（绝不把文件路径当目录）
+ok 9 - B02 选中/右键的是文件时，创建目标是它的父目录（绝不把文件路径当目录）
+  ---
+  duration_ms: 0.8985
+  type: 'test'
+  ...
+# Subtest: B03 工具栏按钮直接取菜单矩阵的同一格，原因是同一句文案
+ok 10 - B03 工具栏按钮直接取菜单矩阵的同一格，原因是同一句文案
+  ---
+  duration_ms: 0.7972
+  type: 'test'
+  ...
+# Subtest: C01 任何可见但禁用的命令都必须带原因（否则用户只能猜）
+ok 11 - C01 任何可见但禁用的命令都必须带原因（否则用户只能猜）
+  ---
+  duration_ms: 0.745
+  type: 'test'
+  ...
+# Subtest: C02 禁用项在执行层不产生任何副作用：目标解析本身也会拒绝
+ok 12 - C02 禁用项在执行层不产生任何副作用：目标解析本身也会拒绝
+  ---
+  duration_ms: 0.2553
+  type: 'test'
+  ...
+# Subtest: D01 名称上单击一次：延迟窗口结束后恰好激活一次
+ok 13 - D01 名称上单击一次：延迟窗口结束后恰好激活一次
+  ---
+  duration_ms: 0.7613
+  type: 'test'
+  ...
+# Subtest: D02 双击：零激活 + 一次改名（文件不会被"先打开"而把自己挡住）
+ok 14 - D02 双击：零激活 + 一次改名（文件不会被"先打开"而把自己挡住）
+  ---
+  duration_ms: 0.26
+  type: 'test'
+  ...
+# Subtest: D03 键盘触发的 click（detail=0）立即激活，不进入窗口
+ok 15 - D03 键盘触发的 click（detail=0）立即激活，不进入窗口
+  ---
+  duration_ms: 0.1855
+  type: 'test'
+  ...
+# Subtest: D04 一次双击之后仲裁器仍可正常使用（不残留状态）
+ok 16 - D04 一次双击之后仲裁器仍可正常使用（不残留状态）
+  ---
+  duration_ms: 0.1965
+  type: 'test'
+  ...
+# Subtest: D05 取消（关闭菜单 / 卸载）后不再有延迟激活
+ok 17 - D05 取消（关闭菜单 / 卸载）后不再有延迟激活
+  ---
+  duration_ms: 0.2278
+  type: 'test'
+  ...
+# Subtest: D06 连续两次"双击"不会顺带激活（重复确认也不产生第二次副作用）
+ok 18 - D06 连续两次"双击"不会顺带激活（重复确认也不产生第二次副作用）
+  ---
+  duration_ms: 0.2039
+  type: 'test'
+  ...
+# Subtest: E01 F2 / Shift+F10 / 菜单键 / Escape 的意图映射
+ok 19 - E01 F2 / Shift+F10 / 菜单键 / Escape 的意图映射
+  ---
+  duration_ms: 0.3544
+  type: 'test'
+  ...
+# Subtest: E02 输入框 / 正文编辑器里不抢任何键
+ok 20 - E02 输入框 / 正文编辑器里不抢任何键
+  ---
+  duration_ms: 0.1977
+  type: 'test'
+  ...
+# Subtest: E03 没有当前焦点行时不给意图（不对空气动手）
+ok 21 - E03 没有当前焦点行时不给意图（不对空气动手）
+  ---
+  duration_ms: 0.1669
+  type: 'test'
+  ...
+# Subtest: G01 项目已不在工作区：任何行命令都不执行
+ok 22 - G01 项目已不在工作区：任何行命令都不执行
+  ---
+  duration_ms: 0.4273
+  type: 'test'
+  ...
+# Subtest: G02 项目当前不可用：命令不执行
+ok 23 - G02 项目当前不可用：命令不执行
+  ---
+  duration_ms: 0.3938
+  type: 'test'
+  ...
+# Subtest: G03 这一行已被移除：命令不执行（刷新/删除之后不许执行旧命令）
+ok 24 - G03 这一行已被移除：命令不执行（刷新/删除之后不许执行旧命令）
+  ---
+  duration_ms: 0.199
+  type: 'test'
+  ...
+# Subtest: G04 同一路径换了对象（锚不同）：命令不执行
+ok 25 - G04 同一路径换了对象（锚不同）：命令不执行
+  ---
+  duration_ms: 0.2359
+  type: 'test'
+  ...
+# Subtest: G05 一切正常 / 空白区 / 工具栏 / 项目根：不阻断
+ok 26 - G05 一切正常 / 空白区 / 工具栏 / 项目根：不阻断
+  ---
+  duration_ms: 0.2334
+  type: 'test'
+  ...
+# Subtest: H01 靠近右下边缘时向左上翻转，且始终留在视口内
+ok 27 - H01 靠近右下边缘时向左上翻转，且始终留在视口内
+  ---
+  duration_ms: 0.24
+  type: 'test'
+  ...
+# Subtest: H02 菜单比视口还大时仍然给出可用位置（不出现负坐标）
+ok 28 - H02 菜单比视口还大时仍然给出可用位置（不出现负坐标）
+  ---
+  duration_ms: 0.1401
+  type: 'test'
+  ...
+# Subtest: H03 模式 / 工作区 / 当前项目变化都会换一个"世界"，菜单必须失效
+ok 29 - H03 模式 / 工作区 / 当前项目变化都会换一个"世界"，菜单必须失效
+  ---
+  duration_ms: 0.2834
+  type: 'test'
+  ...
+# Subtest: I01 命令编排不直接发请求：不出现 fetch / 客户端实例
+ok 30 - I01 命令编排不直接发请求：不出现 fetch / 客户端实例
+  ---
+  duration_ms: 39.4336
+  type: 'test'
+  ...
+# Subtest: I02 工具栏与键盘共用同一条命令入口，不各自实现一遍
+ok 31 - I02 工具栏与键盘共用同一条命令入口，不各自实现一遍
+  ---
+  duration_ms: 7.4218
+  type: 'test'
+  ...
+# Subtest: I03 项目显示名改名走命令编排（菜单与铅笔按钮同一会话）
+ok 32 - I03 项目显示名改名走命令编排（菜单与铅笔按钮同一会话）
+  ---
+  duration_ms: 2.7875
+  type: 'test'
+  ...
+# Subtest: W01 双击窗口默认 500ms（200ms 不足以覆盖真实双击间隔）
+ok 33 - W01 双击窗口默认 500ms（200ms 不足以覆盖真实双击间隔）
+  ---
+  duration_ms: 2.5184
+  type: 'test'
+  ...
+# Subtest: W02 单击后 200ms 不得提前激活（旧窗口会在这一刻把文件打开）
+ok 34 - W02 单击后 200ms 不得提前激活（旧窗口会在这一刻把文件打开）
+  ---
+  duration_ms: 1.307
+  type: 'test'
+  ...
+# Subtest: W03 间隔 250ms 的双击：只改名，一次都不激活
+ok 35 - W03 间隔 250ms 的双击：只改名，一次都不激活
+  ---
+  duration_ms: 1.5976
+  type: 'test'
+  ...
+# Subtest: W04 间隔 350ms 的双击：只改名
+ok 36 - W04 间隔 350ms 的双击：只改名
+  ---
+  duration_ms: 0.3755
+  type: 'test'
+  ...
+# Subtest: W05 间隔 450ms 的双击：只改名（旧 200ms 窗口早就先打开了文件）
+ok 37 - W05 间隔 450ms 的双击：只改名（旧 200ms 窗口早就先打开了文件）
+  ---
+  duration_ms: 0.6939
+  type: 'test'
+  ...
+# Subtest: W06 超出窗口的单击：正常激活且只激活一次
+ok 38 - W06 超出窗口的单击：正常激活且只激活一次
+  ---
+  duration_ms: 0.2532
+  type: 'test'
+  ...
+# Subtest: W07 双击之后不残留定时器（不会在 500ms 后再打开一次）
+ok 39 - W07 双击之后不残留定时器（不会在 500ms 后再打开一次）
+  ---
+  duration_ms: 0.4291
+  type: 'test'
+  ...
+# Subtest: W08 键盘触发的 click（detail=0）仍然立即激活，不进入窗口
+ok 40 - W08 键盘触发的 click（detail=0）仍然立即激活，不进入窗口
+  ---
+  duration_ms: 0.3168
+  type: 'test'
+  ...
+# Subtest: J01 单击后资源锚变了：定时器不得打开"新的那个对象"
+ok 41 - J01 单击后资源锚变了：定时器不得打开"新的那个对象"
+  ---
+  duration_ms: 3.838
+  type: 'test'
+  ...
+# Subtest: J02 第一次点击后同路径文件被替换：第二次点击不得对新文件改名
+ok 42 - J02 第一次点击后同路径文件被替换：第二次点击不得对新文件改名
+  ---
+  duration_ms: 0.9731
+  type: 'test'
+  ...
+# Subtest: J03 项目身份变化：旧的单击与双击意图都失效
+ok 43 - J03 项目身份变化：旧的单击与双击意图都失效
+  ---
+  duration_ms: 0.4541
+  type: 'test'
+  ...
+# Subtest: J04 工作区身份变化：旧的仲裁意图不得执行
+ok 44 - J04 工作区身份变化：旧的仲裁意图不得执行
+  ---
+  duration_ms: 0.2264
+  type: 'test'
+  ...
+# Subtest: J05 正常双击（同一身份）：只改名，不打开
+ok 45 - J05 正常双击（同一身份）：只改名，不打开
+  ---
+  duration_ms: 0.1692
+  type: 'test'
+  ...
+# Subtest: J06 正常单击（同一身份）：照常打开一次
+ok 46 - J06 正常单击（同一身份）：照常打开一次
+  ---
+  duration_ms: 0.1434
+  type: 'test'
+  ...
+# Subtest: J07 身份不可确认（currentIdentity 为 null）：fail-closed，不打开也不改名
+ok 47 - J07 身份不可确认（currentIdentity 为 null）：fail-closed，不打开也不改名
+  ---
+  duration_ms: 0.1647
+  type: 'test'
+  ...
+# Subtest: J08 没有第一次点击时，孤立的 dblclick 不改名（无可核对的对象）
+ok 48 - J08 没有第一次点击时，孤立的 dblclick 不改名（无可核对的对象）
+  ---
+  duration_ms: 0.1357
+  type: 'test'
+  ...
+# Subtest: G06 原目标有锚、当前锚拿不到：拒绝（不得把"无法确认"当成"身份一致"）
+ok 49 - G06 原目标有锚、当前锚拿不到：拒绝（不得把"无法确认"当成"身份一致"）
+  ---
+  duration_ms: 0.5883
+  type: 'test'
+  ...
+# Subtest: G07 两个锚不同：拒绝（对象已被替换）
+ok 50 - G07 两个锚不同：拒绝（对象已被替换）
+  ---
+  duration_ms: 0.2089
+  type: 'test'
+  ...
+# Subtest: G08 锚相同：放行
+ok 51 - G08 锚相同：放行
+  ---
+  duration_ms: 0.1474
+  type: 'test'
+  ...
+# Subtest: G09 原目标没有锚（Provider 明确无身份能力）：不误伤，继续放行
+ok 52 - G09 原目标没有锚（Provider 明确无身份能力）：不误伤，继续放行
+  ---
+  duration_ms: 0.1573
+  type: 'test'
+  ...
+# Subtest: G10 空串锚也算"无法确认"：原目标有锚时同样拒绝
+ok 53 - G10 空串锚也算"无法确认"：原目标有锚时同样拒绝
+  ---
+  duration_ms: 0.1832
+  type: 'test'
+  ...
+# Subtest: G11 blank / toolbar / link / project-root 不受锚核验影响
+ok 54 - G11 blank / toolbar / link / project-root 不受锚核验影响
+  ---
+  duration_ms: 0.2914
+  type: 'test'
+  ...
+# Subtest: G12 项目消失 / 不可用 / 行被移除：仍然先于锚判断给出原因
+ok 55 - G12 项目消失 / 不可用 / 行被移除：仍然先于锚判断给出原因
+  ---
+  duration_ms: 0.2973
+  type: 'test'
+  ...
+# Subtest: S01 会话归属一致、项目可用：放行提交
+ok 56 - S01 会话归属一致、项目可用：放行提交
+  ---
+  duration_ms: 0.2328
+  type: 'test'
+  ...
+# Subtest: S02 工作区 / 模式变化：旧会话不得在新世界里提交
+ok 57 - S02 工作区 / 模式变化：旧会话不得在新世界里提交
+  ---
+  duration_ms: 0.2714
+  type: 'test'
+  ...
+# Subtest: S03 项目已不在工作区 / 已不可用：分别给出原因
+ok 58 - S03 项目已不在工作区 / 已不可用：分别给出原因
+  ---
+  duration_ms: 0.1956
+  type: 'test'
+  ...
+# Subtest: S04 每个不放行的原因都有可展示的文案，ok 没有文案
+ok 59 - S04 每个不放行的原因都有可展示的文案，ok 没有文案
+  ---
+  duration_ms: 0.3118
+  type: 'test'
+  ...
+# Subtest: S05 结果落地：已发出的请求不得被伪装成未发送，也不自动重试
+ok 60 - S05 结果落地：已发出的请求不得被伪装成未发送，也不自动重试
+  ---
+  duration_ms: 0.1729
+  type: 'test'
+  ...
+# Subtest: M01 行组件把点击绑定到身份，而不是只调用"最新回调"
+ok 61 - M01 行组件把点击绑定到身份，而不是只调用"最新回调"
+  ---
+  duration_ms: 34.7239
+  type: 'test'
+  ...
+# Subtest: M02 项目改名提交前复核会话归属，提交后按会话核对结果
+ok 62 - M02 项目改名提交前复核会话归属，提交后按会话核对结果
+  ---
+  duration_ms: 3.6129
+  type: 'test'
+  ...
+# Subtest: M03 改名链路仍然只有一条，且没有自动重试
+ok 63 - M03 改名链路仍然只有一条，且没有自动重试
+  ---
+  duration_ms: 2.5218
+  type: 'test'
+  ...
+# Subtest: A01 身份变化后新建的仲裁器收到 detail=2：不得改名，也不得打开
+ok 64 - A01 身份变化后新建的仲裁器收到 detail=2：不得改名，也不得打开
+  ---
+  duration_ms: 5.3802
+  type: 'test'
+  ...
+# Subtest: A02 detail=2 在 armed=null 时不得被重新解释为"新的第一次点击"
+ok 65 - A02 detail=2 在 armed=null 时不得被重新解释为"新的第一次点击"
+  ---
+  duration_ms: 0.4741
+  type: 'test'
+  ...
+# Subtest: A03 残响之后的**新**手势仍然正常（不能把仲裁器永久打死）
+ok 66 - A03 残响之后的**新**手势仍然正常（不能把仲裁器永久打死）
+  ---
+  duration_ms: 0.4565
+  type: 'test'
+  ...
+# Subtest: A04 第二次点击与第一次不是同一身份：整段手势作废，且不重新绑定
+ok 67 - A04 第二次点击与第一次不是同一身份：整段手势作废，且不重新绑定
+  ---
+  duration_ms: 0.2997
+  type: 'test'
+  ...
+# Subtest: A05 detail=2 与 armed 同身份：保留 armed 供 dblclick 落槌（正常双击不回归）
+ok 68 - A05 detail=2 与 armed 同身份：保留 armed 供 dblclick 落槌（正常双击不回归）
+  ---
+  duration_ms: 0.8273
+  type: 'test'
+  ...
+# Subtest: B01 identityVerificationOf：有锚即已核验
+ok 69 - B01 identityVerificationOf：有锚即已核验
+  ---
+  duration_ms: 0.2768
+  type: 'test'
+  ...
+# Subtest: B02 无锚时区分"Provider 不支持"与"探测失败"
+ok 70 - B02 无锚时区分"Provider 不支持"与"探测失败"
+  ---
+  duration_ms: 0.3043
+  type: 'test'
+  ...
+# Subtest: B03 身份探测失败（本地真实项目缺锚）：在途单击不得执行
+ok 71 - B03 身份探测失败（本地真实项目缺锚）：在途单击不得执行
+  ---
+  duration_ms: 0.5892
+  type: 'test'
+  ...
+# Subtest: B04 同路径文件被删除重建、前后都拿不到锚：路径相同也不得放行
+ok 72 - B04 同路径文件被删除重建、前后都拿不到锚：路径相同也不得放行
+  ---
+  duration_ms: 3.0551
+  type: 'test'
+  ...
+# Subtest: B05 身份从已核验变为未知：旧单击与旧双击都不执行
+ok 73 - B05 身份从已核验变为未知：旧单击与旧双击都不执行
+  ---
+  duration_ms: 0.9127
+  type: 'test'
+  ...
+# Subtest: B06 UNSUPPORTED 是唯一被批准的降级：按路径身份仍可单击/双击
+ok 74 - B06 UNSUPPORTED 是唯一被批准的降级：按路径身份仍可单击/双击
+  ---
+  duration_ms: 0.4431
+  type: 'test'
+  ...
+# Subtest: B07 菜单失效检测区分三种身份状态
+ok 75 - B07 菜单失效检测区分三种身份状态
+  ---
+  duration_ms: 0.5637
+  type: 'test'
+  ...
+# Subtest: B08 目标声称有锚、当前状态却不是已核验：拒绝（不得退回路径身份）
+ok 76 - B08 目标声称有锚、当前状态却不是已核验：拒绝（不得退回路径身份）
+  ---
+  duration_ms: 0.1963
+  type: 'test'
+  ...
+# Subtest: B09 未声明身份的旧目标（无锚）不再默认放行：fail-closed
+ok 77 - B09 未声明身份的旧目标（无锚）不再默认放行：fail-closed
+  ---
+  duration_ms: 0.143
+  type: 'test'
+  ...
+# Subtest: C01 请求在途时切换当前项目：旧结果只能 notice-only
+ok 78 - C01 请求在途时切换当前项目：旧结果只能 notice-only
+  ---
+  duration_ms: 0.2033
+  type: 'test'
+  ...
+# Subtest: C02 请求在途时切换工作区：旧结果只能 notice-only
+ok 79 - C02 请求在途时切换工作区：旧结果只能 notice-only
+  ---
+  duration_ms: 0.1371
+  type: 'test'
+  ...
+# Subtest: C03 会话仍当前：成功 close / 失败 keep-error
+ok 80 - C03 会话仍当前：成功 close / 失败 keep-error
+  ---
+  duration_ms: 0.1316
+  type: 'test'
+  ...
+# Subtest: C04 旧票据不得写进新会话，会话已收起也不得复活
+ok 81 - C04 旧票据不得写进新会话，会话已收起也不得复活
+  ---
+  duration_ms: 0.1614
+  type: 'test'
+  ...
+# Subtest: C05 源码守卫：提交结果按"票据 + 世界 + 活动项目"核对，且 notice-only 不写状态
+ok 82 - C05 源码守卫：提交结果按"票据 + 世界 + 活动项目"核对，且 notice-only 不写状态
+  ---
+  duration_ms: 25.6078
+  type: 'test'
+  ...
+# Subtest: D01 窗口仍是 500ms：200ms 时不提前激活
+ok 83 - D01 窗口仍是 500ms：200ms 时不提前激活
+  ---
+  duration_ms: 0.5567
+  type: 'test'
+  ...
+# Subtest: D02 250 / 350 / 450ms 的连击都只改名
+ok 84 - D02 250 / 350 / 450ms 的连击都只改名
+  ---
+  duration_ms: 0.5566
+  type: 'test'
+  ...
+# Subtest: D03 键盘 detail=0 仍然立即激活
+ok 85 - D03 键盘 detail=0 仍然立即激活
+  ---
+  duration_ms: 0.2088
+  type: 'test'
+  ...
+# Subtest: D04 项目根的正常操作不被身份检查误伤
+ok 86 - D04 项目根的正常操作不被身份检查误伤
+  ---
+  duration_ms: 1.2819
+  type: 'test'
+  ...
+# Subtest: D05 源码守卫：图标/空白仍立即激活，只有名称区进入仲裁
+ok 87 - D05 源码守卫：图标/空白仍立即激活，只有名称区进入仲裁
+  ---
+  duration_ms: 3.7744
+  type: 'test'
+  ...
+1..87
+# tests 87
+# suites 0
+# pass 87
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 562.1079

@@ -1,0 +1,158 @@
+{
+  "run": "ux-02c-05-r1-followup",
+  "at": "2026-11-27T13:23:37.925Z",
+  "checks": {
+    "R0-01 fixture 就绪（两个真实项目 / 零隐藏 / 零回收 / 零元数据）": true,
+    "V-01 Host 声明了身份能力（identitySupport=supported）": true,
+    "V-02 替换前 note.md 有锚（已核验身份）": true,
+    "V-03 找到 note.md 的名称文字": true,
+    "V-04 开始前 note.md 未被打开": true,
+    "V-05 找到工具栏刷新按钮": true,
+    "V-06 期间真的刷新了真实目录（Host 返回了新锚）": true,
+    "V-07 同路径重建换掉了对象身份（锚变化 → 仲裁器必须重建）": true,
+    "V-08 重建确实换了 inode（不是原地覆盖写）": true,
+    "V-09 浏览器确实报出 click(detail=1) → click(detail=2) → dblclick": true,
+    "V-10 两次点击的间隔在真实双击窗口内（页面计时 < 500ms）": true,
+    "V-11 残响没有打开新对象（未进入活动 View）": true,
+    "V-12 残响没有进入改名": true,
+    "V-13 残响没有发出改名请求": true,
+    "V-14 残响没有发出打开请求": true,
+    "V-15 残响没有改动磁盘文件（inode 与大小未变）": true,
+    "W-01 正常双击进入改名": true,
+    "W-02 正常双击没有先把文件打开": true,
+    "W-03 Escape 收起改名且零写入": true,
+    "X-01 单击照常打开文件": true,
+    "X-02 单击不会误开改名": true,
+    "X-03 单击确实发出了 open 请求": true,
+    "Y-01 找到项目B的根行名称": true,
+    "Y-02 项目根双击进入显示名编辑": true,
+    "Y-03 项目根单击仍然切换当前项目（未被身份检查误伤）": true
+  },
+  "detail": {
+    "R0-01 fixture 就绪（两个真实项目 / 零隐藏 / 零回收 / 零元数据）": [
+      "项目A",
+      "项目B"
+    ],
+    "V-01 Host 声明了身份能力（identitySupport=supported）": {
+      "support": "supported",
+      "anchor": "78705da34272f003155de4f610d1e360"
+    },
+    "V-02 替换前 note.md 有锚（已核验身份）": "78705da34272f003155de4f610d1e360",
+    "V-03 找到 note.md 的名称文字": {
+      "x": 262,
+      "y": 148.25
+    },
+    "V-05 找到工具栏刷新按钮": {
+      "x": 350.296875,
+      "y": 22
+    },
+    "V-06 期间真的刷新了真实目录（Host 返回了新锚）": {
+      "before": 0,
+      "after": 1
+    },
+    "V-07 同路径重建换掉了对象身份（锚变化 → 仲裁器必须重建）": {
+      "before": "78705da34272f003155de4f610d1e360",
+      "after": "1110a9257e640fee80aa4140ae294ca2"
+    },
+    "V-08 重建确实换了 inode（不是原地覆盖写）": {
+      "inodeBefore": 2533274791606766,
+      "inodeAfterReplace": 2814749768317422
+    },
+    "V-09 浏览器确实报出 click(detail=1) → click(detail=2) → dblclick": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "note.md",
+        "at": 3412
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "note.md",
+        "at": 3749
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "note.md",
+        "at": 3750
+      }
+    ],
+    "V-10 两次点击的间隔在真实双击窗口内（页面计时 < 500ms）": 337,
+    "V-13 残响没有发出改名请求": {
+      "before": 0,
+      "after": 0
+    },
+    "V-14 残响没有发出打开请求": {
+      "before": 0,
+      "after": 0
+    },
+    "V-15 残响没有改动磁盘文件（inode 与大小未变）": {
+      "ino": 2814749768317422,
+      "size": 58
+    },
+    "Y-01 找到项目B的根行名称": {
+      "x": 244,
+      "y": 194.25
+    },
+    "Y-03 项目根单击仍然切换当前项目（未被身份检查误伤）": "项目A"
+  },
+  "facts": {
+    "identityBefore": {
+      "support": "supported",
+      "anchor": "78705da34272f003155de4f610d1e360"
+    },
+    "identityAfter": {
+      "support": "supported",
+      "anchor": "1110a9257e640fee80aa4140ae294ca2"
+    },
+    "clickSequenceReplace": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "note.md",
+        "at": 3412
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "note.md",
+        "at": 3749
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "note.md",
+        "at": 3750
+      }
+    ],
+    "gapMs": 337,
+    "gapWallClockMs": 463,
+    "clickSequenceNormalDouble": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "note.md",
+        "at": 4645
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "note.md",
+        "at": 4964
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "note.md",
+        "at": 4965
+      }
+    ],
+    "activeProjectRow": "项目A"
+  },
+  "summary": {
+    "total": 25,
+    "passed": 25,
+    "failed": []
+  }
+}

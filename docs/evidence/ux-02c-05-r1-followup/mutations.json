@@ -1,0 +1,83 @@
+{
+  "at": "2026-11-27T13:25:01.300Z",
+  "suite": "tests/suites/108-s11ux02c05r11-activation-identity.test.ts",
+  "results": [
+    {
+      "id": "C05R11-M7",
+      "desc": "删掉\"armed=null 时拒绝第二次点击\"的保护（旧手势的残响被当成新手势起点，给新对象改名）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "mutatedSha256": "213d9c91cfc975e728f8dc1234b296094815e2457f4e196b18ea3feac98d0509",
+      "sourceChanged": true,
+      "restoredSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "A01 身份变化后新建的仲裁器收到 detail=2：不得改名，也不得打开",
+        "A02 detail=2 在 armed=null 时不得被重新解释为\"新的第一次点击\""
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R11-M8",
+      "desc": "把 UNVERIFIED 错误降级成 UNSUPPORTED（缺锚被当成\"Provider 不支持身份\"，按路径放行）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "mutatedSha256": "ecacd15c8ff9272fe66a35e7a8e0dcdb77d35217c3847adbad7adf4dd3f15b09",
+      "sourceChanged": true,
+      "restoredSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "B02 无锚时区分\"Provider 不支持\"与\"探测失败\""
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R11-M9",
+      "desc": "身份探测失败时仍允许执行旧点击（unverified 重新参与\"相等\"推断）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "mutatedSha256": "afe9854a41b8706992b2ab90641eb6575b56af2b8a2c0424b54015521adea27b",
+      "sourceChanged": true,
+      "restoredSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "B03 身份探测失败（本地真实项目缺锚）：在途单击不得执行",
+        "B04 同路径文件被删除重建、前后都拿不到锚：路径相同也不得放行"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R11-M10",
+      "desc": "请求返回时忽略当前工作区归属（旧世界的结果写进新世界的会话）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "mutatedSha256": "69599ca0bd4c463d2a1644f9d275ce060c221eceb07d6ae6f1c87eb539b35c99",
+      "sourceChanged": true,
+      "restoredSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "C02 请求在途时切换工作区：旧结果只能 notice-only"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R11-M11",
+      "desc": "请求返回时忽略当前活动项目（切了项目，旧结果仍被当成当前会话）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "mutatedSha256": "db0f3481b1be649d4380ab147e473e1150ffd8eae249c42007a8349d3088524f",
+      "sourceChanged": true,
+      "restoredSha256": "d1f9709d2560161900e1f2d2941901d10a5582152981519dd011d04719d3d30b",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "C01 请求在途时切换当前项目：旧结果只能 notice-only"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

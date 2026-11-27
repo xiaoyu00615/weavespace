@@ -36,9 +36,15 @@ const A = {
   projectId: 'p1',
   path: 'note.md',
   anchor: 'anchor-a1',
+  // R1.1：身份状态是身份的一部分（这条固定的身份是"已核验"）
+  verification: 'verified',
 } as const;
 
-const withAnchor = (anchor: string | null) => ({ ...A, anchor });
+/** 换锚：有锚 = 已核验；没有锚 = 无法确认（不是"Provider 不支持"）。 */
+const withAnchor = (anchor: string | null) =>
+  anchor === null
+    ? ({ ...A, anchor: null, verification: 'unverified' } as const)
+    : ({ ...A, anchor, verification: 'verified' } as const);
 const otherProject = { ...A, projectId: 'p2' } as const;
 const otherWorkspace = { ...A, workspaceKey: 'ws-2' } as const;
 
@@ -336,10 +342,16 @@ test('G08 锚相同：放行', () => {
   );
 });
 
-test('G09 原目标没有锚（Provider 无身份能力）：不误伤，继续放行', () => {
+test('G09 原目标没有锚（Provider 明确无身份能力）：不误伤，继续放行', () => {
+  /*
+   * R1.1：'没有锚'本身不足以证明'Provider 没有身份能力'——它也可能是探测失败。
+   * 因此这条用例必须**显式声明** `nodeIdentity: 'unsupported'`（Host 的能力声明），
+   * 才允许按路径身份降级。声明缺失或为 'unverified' 时不放行（见 108 B09）。
+   */
+  const unsupported = { ...fileTarget(), nodeIdentity: 'unsupported' as const };
   assert.equal(
     tc.treeTargetProblemOf({
-      target: fileTarget(),
+      target: unsupported,
       projectExists: true,
       projectReady: true,
       entryPresent: true,
@@ -350,7 +362,7 @@ test('G09 原目标没有锚（Provider 无身份能力）：不误伤，继续�
   // 空串等同于"拿不到锚"，不能当成一个有效身份去比较
   assert.equal(
     tc.treeTargetProblemOf({
-      target: fileTarget(),
+      target: unsupported,
       projectExists: true,
       projectReady: true,
       entryPresent: true,

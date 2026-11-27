@@ -37,6 +37,16 @@ export interface TreeCommandTarget {
   readonly entryKind?: 'file' | 'directory' | 'link';
   readonly nodeHidden?: boolean;
   readonly nodeAnchor?: string | null;
+  /**
+   * 打开菜单那一刻这一行的**身份状态**（UX-02C-05-R1.1）。
+   *
+   * 必须有它才能区分"Provider 明确没有身份能力"（按路径身份降级）与
+   * "身份探测失败 / 对象已消失"（无法确认，必须拒绝）。只靠 `nodeAnchor === undefined`
+   * 会把这两种情况混成一种，于是本地真实项目缺锚时被当成"路径相同"放行。
+   *
+   * 缺省（旧调用者）= 未声明：有锚视为 `verified`，无锚按 `unverified` 处理（fail-closed）。
+   */
+  readonly nodeIdentity?: IdentityVerification;
 }
 
 /** 环境：与目标无关、只与"当前模式和项目状态"有关的信息。 */
@@ -250,6 +260,8 @@ export function treeTargetProblemOf(input: {
   readonly entryPresent: boolean;
   /** 当前层表里这一行的资源锚；拿不到传 null。 */
   readonly currentAnchor: string | null;
+  /** 当前这一行的身份状态；缺省由 `currentAnchor` 推导（有锚 = 已核验）。 */
+  readonly currentIdentity?: IdentityVerification;
 }): string | null {
   const { target } = input;
   if (target.origin === 'blank' || target.origin === 'toolbar' || target.origin === 'link') return null;
@@ -258,15 +270,32 @@ export function treeTargetProblemOf(input: {
   if (!input.projectReady) return '项目当前不可用，命令没有执行';
   if (target.origin === 'project-root') return null;
   if (!input.entryPresent) return '这一行已经被移除或替换，命令没有执行';
+
   /*
-   * 资源锚核验必须 fail-closed（UX-02C-05-R1）：
-   * 目标**带着锚**就等于"我们声称知道它是谁"，此刻却拿不到当前锚，
-   * 只能是"无法确认"，绝不能当成"身份一致"放行——那正好是对象被替换
-   * 且新锚也拿不到时的空档。目标本身没有锚（Provider 无身份能力）时不进入这段。
+   * 身份核验必须 fail-closed（UX-02C-05-R1 / R1.1）：
+   *
+   * 1. 目标声明 `unverified`（探测失败 / 对象消失 / 未声明）→ 拒绝。
+   *    本地真实项目里"缺锚"就是这个状态，绝不能因为路径相同就当成同一行；
+   * 2. 目标声明 `unsupported`（Provider 明确不具备身份能力）→ 这是**唯一**被批准的
+   *    路径身份降级，放行；它绝不会由"锚缺失"自动推导出来；
+   * 3. 目标声明 `verified` → 当前侧必须也是 `verified` 且锚完全一致，否则拒绝。
    */
-  if (target.nodeAnchor) {
-    if (!input.currentAnchor) return '无法确认这一行的身份，命令没有执行';
-    if (target.nodeAnchor !== input.currentAnchor) return '这一行对应的对象已经变化，命令没有执行';
+  const targetIdentity =
+    target.nodeIdentity ?? (target.nodeAnchor ? 'verified' : 'unverified');
+  if (targetIdentity === 'unverified') {
+    return '无法确认这一行的身份，命令没有执行';
+  }
+  if (targetIdentity === 'unsupported') return null;
+  // 声称已验证却拿不到锚：不是"没有锚所以不用比"，而是"我们无法证明还是它"
+  if (targetIdentity !== 'verified' || !target.nodeAnchor) {
+    return '无法确认这一行的身份，命令没有执行';
+  }
+  const currentIdentity = input.currentIdentity ?? (input.currentAnchor ? 'verified' : 'unverified');
+  if (currentIdentity !== 'verified' || !input.currentAnchor) {
+    return '无法确认这一行的身份，命令没有执行';
+  }
+  if (target.nodeAnchor !== input.currentAnchor) {
+    return '这一行对应的对象已经变化，命令没有执行';
   }
   return null;
 }
@@ -357,11 +386,44 @@ export function menuIdentityOf(input: {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Provider 的身份核验能力（由 Host 在页级显式声明，**不**由"锚缺失"推导）。
+ *
+ * - `supported`：能给出对象身份；某一行缺锚就只能是 `unverified`；
+ * - `unsupported`：明确不具备身份能力（Demo / 无身份能力的 Provider）。
+ */
+export type IdentitySupport = 'supported' | 'unsupported';
+
+/**
+ * 一行的身份状态（UX-02C-05-R1.1）。
+ *
+ * 三种状态必须分开，否则 `anchor === null` 会同时表示两件性质完全不同的事：
+ * - `verified`：身份已核验，有效锚存在；
+ * - `unsupported`：Provider **明确**没有身份能力——唯一被批准的降级是按路径身份；
+ * - `unverified`：探测失败 / 对象消失 / 无法确认——必须 fail-closed。
+ *
+ * 不变量：`unsupported` 只能来自 Host 的能力声明，绝不因为一次异常自动出现。
+ */
+export type IdentityVerification = 'verified' | 'unsupported' | 'unverified';
+
+/** 由"锚 + Provider 能力"得到身份状态。缺省能力声明一律按 `unverified`（fail-closed）。 */
+export function identityVerificationOf(input: {
+  readonly anchor?: string | null;
+  readonly support?: IdentitySupport | null;
+}): IdentityVerification {
+  if (typeof input.anchor === 'string' && input.anchor !== '') return 'verified';
+  if (input.support === 'unsupported') return 'unsupported';
+  return 'unverified';
+}
+
+/**
  * 一行的资源身份。
  *
  * 为什么不是 React `key`：同一个路径的文件被替换时，`key` 保持不变、组件实例被复用，
  * 于是"上一次点击"会顺理成章地落到**新对象**上。锚（UX-02C-04-R1）由对象身份派生，
  * 同路径替换必然改变它；工作区 + 项目 + 路径把"别的世界里的同名文件"也排除掉。
+ *
+ * `verification` 是身份的一部分，不是附注：把"无法确认"从等式里拿掉，
+ * 就会退化成"路径相同即同一行"——那正是同路径替换识别不出来的原因。
  */
 export interface ActivationIdentity {
   /** 工作区身份：切换工作区后，旧的在途点击不得执行。 */
@@ -369,8 +431,10 @@ export interface ActivationIdentity {
   readonly projectId: string | null;
   /** 归一化后的相对路径；项目根为 ''。 */
   readonly path: string;
-  /** 资源锚；拿不到为 null（此时不参与"相等"以外的任何推断）。 */
+  /** 资源锚；拿不到为 null（此时只能靠 `verification` 决定能不能动手）。 */
   readonly anchor: string | null;
+  /** 身份状态：`unverified` 时任何延迟意图都不执行。 */
+  readonly verification: IdentityVerification;
 }
 
 export function activationIdentityOf(input: {
@@ -378,12 +442,16 @@ export function activationIdentityOf(input: {
   readonly projectId: string | null;
   readonly path?: string | null;
   readonly anchor?: string | null;
+  /** 这一行所在层声明的 Provider 身份能力。 */
+  readonly support?: IdentitySupport | null;
 }): ActivationIdentity {
+  const anchor = input.anchor ?? null;
   return {
     workspaceKey: input.workspaceKey,
     projectId: input.projectId,
     path: normalizeDir(input.path ?? ''),
-    anchor: input.anchor ?? null,
+    anchor,
+    verification: identityVerificationOf({ anchor, support: input.support }),
   };
 }
 
@@ -393,6 +461,7 @@ function activationKeyOf(identity: ActivationIdentity): string {
     identity.projectId ?? '',
     identity.path,
     identity.anchor ?? '',
+    identity.verification,
   ].join('\u0000');
 }
 
@@ -444,6 +513,12 @@ export const NAME_DOUBLE_CLICK_WINDOW = 500;
  * 每一次点击都带着**发起时的资源身份**：定时器到点与双击落槌之前都要和
  * `currentIdentity()` 再核一次。同路径文件被替换（锚变）、切了项目、切了工作区、
  * 或者身份已经无法确认时，这一下**什么都不做**——绝不把旧点击重新绑定到新对象。
+ *
+ * R1.1 补的两处：
+ * - `detail >= 2` **必须**有本仲裁器自己收到的第一次点击（`armed`）。组件因身份变化
+ *   重建仲裁器后，浏览器仍可能把下一下报成连击（`detail=2`）；旧实现会把它当成
+ *   "新一次双击的起点"，于是旧手势的残响给新对象改了名；
+ * - `unverified` 不参与任何"相等"推断：路径相同、锚都拿不到，只能是"无法确认"。
  */
 export function createActivationArbiter(input: {
   readonly delay: number;
@@ -463,10 +538,18 @@ export function createActivationArbiter(input: {
     input.clearTimer(pending);
     pending = null;
   };
-  /** 身份仍然指向同一个资源（拿不到当前身份一律视为"不是"）。 */
+  /**
+   * 身份仍然指向同一个资源。
+   *
+   * `unverified` 一律视为"不是"：这不是"没变化"，而是"我们无法证明它没变"。
+   * 只有 `unsupported`（Provider 明确无身份能力）才按路径身份降级。
+   */
   const stillSame = (identity: ActivationIdentity): boolean => {
+    if (identity.verification === 'unverified') return false;
     const current = input.currentIdentity();
-    return current !== null && sameActivationResource(identity, current);
+    if (current === null) return false;
+    if (current.verification === 'unverified') return false;
+    return sameActivationResource(identity, current);
   };
 
   return {
@@ -478,15 +561,24 @@ export function createActivationArbiter(input: {
         if (stillSame(identity)) input.onSingle();
         return;
       }
-      // 连击的第二下：必须和第一次属于**同一个资源**，否则整段手势作废
+      // 连击的第二下：必须和**本仲裁器收到的**第一次点击属于同一个资源
       if (detail >= 2) {
-        if (armed !== null && !sameActivationResource(armed, identity)) {
+        /*
+         * 没有第一次点击 = 这段手势不是从这里开始的（典型：身份变化后仲裁器刚重建，
+         * 浏览器还在数上一段的连击）。不能把它当成新一次双击的起点，更不能借它
+         * 把新身份"武装"给随后的 dblclick。
+         */
+        if (armed === null) {
+          clear();
+          return;
+        }
+        if (!sameActivationResource(armed, identity)) {
           clear();
           armed = null;
           return;
         }
+        // 同一个资源：只撤掉在途单击，保留 armed 供 dblclick 落槌（绝不改写成 identity）
         clear();
-        armed = identity;
         return;
       }
       clear();
@@ -586,4 +678,36 @@ export function projectRenameResultEffect(input: {
 }): ProjectRenameResultEffect {
   if (!input.sessionStillCurrent) return 'notice-only';
   return input.applied ? 'close' : 'keep-error';
+}
+
+/** 项目改名会话的归属票据：请求回来时用来核对"这条结果还属于当前界面吗"。 */
+export interface ProjectRenameSessionTicket {
+  readonly sessionId: number;
+  /** 打开会话时所属的世界（模式 + 工作区模式 + 工作区摘要）。 */
+  readonly scope: string;
+  /** 打开会话时**当前活动项目**：活动项目一变，这个会话就不再属于当前界面。 */
+  readonly activeProjectAtStart: string | null;
+}
+
+/**
+ * 在途结果的同步归属核对（UX-02C-05-R1.1）。
+ *
+ * 为什么不能只看 `sessionId`：切换项目/工作区后，会话的清理是 `useEffect`，
+ * 而 fetch 的回调是微任务——它完全可能先于 effect 跑，此时 `renameRef` 里还是旧会话、
+ * `sessionId` 也还对得上。只比票据会把"上次那个世界的结果"写进看起来还当前的界面。
+ *
+ * 所以三条一起核：票据、世界、活动项目。任何一条不成立都只能 `notice-only`：
+ * 已发出的请求不伪装成未发送，不写回编辑会话，也不自动重试。
+ */
+export function projectRenameSessionStillCurrent(input: {
+  readonly session: ProjectRenameSessionTicket | null;
+  readonly sessionId: number;
+  readonly currentScope: string;
+  readonly activeProjectId: string | null;
+}): boolean {
+  const { session } = input;
+  if (session === null) return false;
+  if (session.sessionId !== input.sessionId) return false;
+  if (session.scope !== input.currentScope) return false;
+  return session.activeProjectAtStart === input.activeProjectId;
 }

@@ -191,6 +191,7 @@ export async function refreshProject(
       ...(outcome.projectMeta ? { projectMeta: outcome.projectMeta } : {}),
       ...(outcome.projectAnchor ? { projectAnchor: outcome.projectAnchor } : {}),
       ...(outcome.anchors ? { anchors: outcome.anchors } : {}),
+      ...(outcome.identitySupport ? { identitySupport: outcome.identitySupport } : {}),
     });
     files = outcome.entries.filter((entry) => entry.kind === 'file').length;
   } catch {

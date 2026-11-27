@@ -62,6 +62,8 @@ import {
   projectRenameResultEffect,
   toolbarTargetOf,
   treeCommandMatrix,
+  identityVerificationOf,
+  projectRenameSessionStillCurrent,
   treeKeyIntentOf,
   treeTargetProblemOf,
   menuOrderOf,
@@ -143,6 +145,14 @@ export interface ProjectRenameState {
   readonly sessionId: number;
   /** 打开会话时所属的世界（模式 + 工作区模式 + 工作区摘要）。 */
   readonly scope: string;
+  /**
+   * 打开会话时的**当前活动项目**（UX-02C-05-R1.1）。
+   *
+   * 会话属于"打开它的那个界面状态"，不只是属于项目：活动项目一变，
+   * 请求回来时就不能再写回这个会话（也不能假装它还没被收起）。
+   * 注意它与 `projectId` 不同——右键菜单可以给**非当前项目**改显示名。
+   */
+  readonly activeProjectAtStart: string | null;
   readonly projectId: string;
   readonly draft: string;
   readonly error: string | null;
@@ -296,6 +306,19 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     [state.mode, state.workspaceMode, state.workspaceKey],
   );
 
+  /**
+   * 同步归属快照（R1.1）。
+   *
+   * 为什么不能只看 state：请求回来的回调是微任务，可能在 React 提交后的
+   * effect 之前跑。那时 `projectRename` 还是旧对象、`sessionId` 也还对得上，
+   * 只看票据会把上一个世界的结果写进看起来还当前的界面。ref 在每次渲染时
+   * 立刻更新，读到的就是"这一刻真实的世界"。
+   */
+  const scopeRef = useRef(workspaceScope);
+  scopeRef.current = workspaceScope;
+  const activeProjectRef = useRef(state.activeProjectId);
+  activeProjectRef.current = state.activeProjectId;
+
   /** 两个编排器共用的提示落地：状态栏 + 当前输入行/对话框的行内错误。 */
   const onNotice = useCallback(
     (message: string) => {
@@ -380,17 +403,28 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       const path = normalizeDir(target.nodePath ?? '');
       const root = target.origin === 'project-root';
       const entry = root || path === '' ? undefined : findEntryByPath(levels, path);
+      const level = root ? levels[''] : levels[parentDirOf(path)];
       const anchor = root
         ? (levels['']?.projectAnchor ?? null)
         : entry
           ? (levels[parentDirOf(path)]?.anchors?.[path] ?? null)
           : null;
+      /*
+       * 当前身份状态必须显式给出（R1.1）：只传 `currentAnchor` 会把
+       * "Provider 无能力"和"这次没探到"混成同一个 null。层表带着 Host 声明的
+       * 能力（`identitySupport`），这里用它把两者分开；未声明一律 `unverified`。
+       */
+      const currentIdentity = identityVerificationOf({
+        anchor,
+        support: level?.identitySupport ?? null,
+      });
       return treeTargetProblemOf({
         target,
         projectExists: Boolean(project),
         projectReady: project?.status === 'READY',
         entryPresent: root ? true : Boolean(entry),
         currentAnchor: anchor,
+        currentIdentity,
       });
     },
     [state.projects, state.treeByProject],
@@ -784,13 +818,14 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       setProjectRename({
         sessionId: renameSeq.current,
         scope: workspaceScope,
+        activeProjectAtStart: state.activeProjectId,
         projectId,
         draft: project.name,
         error: null,
         saving: false,
       });
     },
-    [dispatch, isSupported, state.projects, workspaceScope],
+    [dispatch, isSupported, state.activeProjectId, state.projects, workspaceScope],
   );
 
   const setProjectRenameDraft = useCallback((value: string) => {
@@ -846,8 +881,12 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       const applied = outcome.status === 'APPLIED';
       // 成功分支没有 message，这里先窄化，避免把"未应用"的文案用在成功上
       const failureMessage = outcome.status === 'APPLIED' ? null : outcome.message;
-      const current = renameRef.current;
-      const stillCurrent = current !== null && current.sessionId === session.sessionId;
+      const stillCurrent = projectRenameSessionStillCurrent({
+        session: renameRef.current,
+        sessionId: session.sessionId,
+        currentScope: scopeRef.current,
+        activeProjectId: activeProjectRef.current,
+      });
       const effect = projectRenameResultEffect({ applied, sessionStillCurrent: stillCurrent });
       if (effect === 'close') {
         setProjectRename(null);
@@ -856,7 +895,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       if (effect === 'keep-error') {
         // 失败：界面保持原名（未派发任何改名），输入保留供修正
         setProjectRename((latest) =>
-          latest && latest.sessionId === session.sessionId
+          latest && latest.sessionId === session.sessionId && latest.scope === session.scope
             ? { ...latest, saving: false, error: failureMessage ?? '重命名失败' }
             : latest,
         );
@@ -870,8 +909,12 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
           : `重命名没有完成：${failureMessage ?? '未知原因'}`,
       });
     } catch {
-      const current = renameRef.current;
-      const stillCurrent = current !== null && current.sessionId === session.sessionId;
+      const stillCurrent = projectRenameSessionStillCurrent({
+        session: renameRef.current,
+        sessionId: session.sessionId,
+        currentScope: scopeRef.current,
+        activeProjectId: activeProjectRef.current,
+      });
       if (stillCurrent) {
         setProjectRename((latest) =>
           latest && latest.sessionId === session.sessionId

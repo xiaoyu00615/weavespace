@@ -549,6 +549,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           ...(action.projectMeta !== undefined ? { projectMeta: action.projectMeta } : {}),
           ...(action.projectAnchor !== undefined ? { projectAnchor: action.projectAnchor } : {}),
           ...(action.anchors !== undefined ? { anchors: action.anchors } : {}),
+          ...(action.identitySupport !== undefined ? { identitySupport: action.identitySupport } : {}),
         }),
       );
       // 只在"首次拿到根层的第一页"时补默认展开；续页与刷新都不重置展开状态

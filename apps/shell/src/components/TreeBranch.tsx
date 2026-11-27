@@ -16,6 +16,7 @@ import type { ResourceNodeState } from '../state/types.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useQuickFile } from '../state/QuickFileContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
+import { parentDirOf } from '../state/create-entry.ts';
 import { makeDocId } from '../state/doc-identity.ts';
 import { activationIdentityOf } from '../state/tree-commands.ts';
 import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
@@ -172,6 +173,23 @@ function TreeItem({
       // UX-02C-04-R1：打开菜单那一刻的身份预期，执行前用来判断"还是不是这一行"
       ...(node.anchor ? { nodeAnchor: node.anchor } : {}),
     };
+    /**
+     * 这一行的资源身份（UX-02C-05-R1 / R1.1）。
+     *
+     * `support` 来自**这一行所在层**的能力声明：`supported` + 无锚 = 身份未知
+     * （fail-closed）；只有 `unsupported` 才允许按路径身份降级。两者都不靠
+     * "有没有锚"反推，否则一次探测失败就会被当成"Provider 不支持"。
+     */
+    const identity = projectId
+      ? activationIdentityOf({
+          workspaceKey: state.workspaceKey,
+          projectId,
+          path: dir,
+          anchor: node.anchor ?? null,
+          support: levels[parentDirOf(dir)]?.identitySupport ?? null,
+        })
+      : undefined;
+    const identifiedTarget = identity ? { ...target, nodeIdentity: identity.verification } : target;
     return (
       <TreeRow
         node={node}
@@ -179,21 +197,12 @@ function TreeItem({
         last={last}
         trails={trails}
         expanded={expanded}
-        onContextMenu={(event) => commands.openContextMenu(event, target)}
-        onFocus={(event) => commands.noteFocus(target, event.currentTarget)}
+        onContextMenu={(event) => commands.openContextMenu(event, identifiedTarget)}
+        onFocus={(event) => commands.noteFocus(identifiedTarget, event.currentTarget)}
         // 双击名称改名只在有真实项目身份时提供（Demo / Legacy 没有可写的项目配置）
-        {...(projectId ? { onRenameRequest: () => commands.beginRename(target) } : {})}
+        {...(projectId ? { onRenameRequest: () => commands.beginRename(identifiedTarget) } : {})}
         // 身份的锚必须跟着这一行走（UX-02C-05-R1）：同路径目录被替换时不许"接着改名"
-        {...(projectId
-          ? {
-              activationIdentity: activationIdentityOf({
-                workspaceKey: state.workspaceKey,
-                projectId,
-                path: dir,
-                anchor: node.anchor ?? null,
-              }),
-            }
-          : {})}
+        {...(identity ? { activationIdentity: identity } : {})}
         onActivate={() => {
           const willExpand = !expanded;
           toggle();
@@ -270,6 +279,19 @@ function TreeItem({
     ...(node.anchor ? { nodeAnchor: node.anchor } : {}),
   };
 
+  const filePath = node.path ?? node.name;
+  /** 同文件夹：身份 = 工作区 + 项目 + 路径 + 锚 + 身份状态（R1.1 补最后一项）。 */
+  const identity = projectId
+    ? activationIdentityOf({
+        workspaceKey: state.workspaceKey,
+        projectId,
+        path: filePath,
+        anchor: node.anchor ?? null,
+        support: levels[parentDirOf(filePath)]?.identitySupport ?? null,
+      })
+    : undefined;
+  const identifiedTarget = identity ? { ...fileTarget, nodeIdentity: identity.verification } : fileTarget;
+
   return (
     <TreeRow
       node={node}
@@ -279,20 +301,11 @@ function TreeItem({
       selected={selected}
       opened={Boolean(tab)}
       dirty={tab?.dirty ?? false}
-      onContextMenu={(event) => commands.openContextMenu(event, fileTarget)}
-      onFocus={(event) => commands.noteFocus(fileTarget, event.currentTarget)}
-      {...(projectId ? { onRenameRequest: () => commands.beginRename(fileTarget) } : {})}
+      onContextMenu={(event) => commands.openContextMenu(event, identifiedTarget)}
+      onFocus={(event) => commands.noteFocus(identifiedTarget, event.currentTarget)}
+      {...(projectId ? { onRenameRequest: () => commands.beginRename(identifiedTarget) } : {})}
       // 同路径文件被替换（锚变）时，在途点击必须作废，不得给新文件改名
-      {...(projectId
-        ? {
-            activationIdentity: activationIdentityOf({
-              workspaceKey: state.workspaceKey,
-              projectId,
-              path: node.path ?? node.name,
-              anchor: node.anchor ?? null,
-            }),
-          }
-        : {})}
+      {...(identity ? { activationIdentity: identity } : {})}
       onActivate={() => {
         // 契约 B.1：不支持预览的文件仍是普通文件节点，但点击**不得**进入文本编辑器。
         // 能力注册表就绪时先问一次；未就绪时沿用既有打开链路，避免启动瞬间全部被挡。

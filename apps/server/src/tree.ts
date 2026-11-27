@@ -210,6 +210,17 @@ export interface TreePageDto {
    * 与"借元数据获得根目录操作权限"无关（元数据端点完全不碰磁盘）。
    */
   projectAnchor?: string;
+  /**
+   * 本页 Provider 的**身份核验能力**（UX-02C-05-R1.1）。
+   *
+   * 为什么需要它：`anchors` 里没有某一行，可能因为"Provider 没有身份能力"，
+   * 也可能因为"这一行的身份这次没探到（对象消失 / lstat 失败）"。前者可以按
+   * 路径身份降级，后者必须 fail-closed。只在页级声明能力，缺锚的原因就仍然
+   * 由"有锚 / 无锚"表达——不引入任何客户端自述的身份或授权凭据。
+   *
+   * 缺省（旧版服务端）表示"未声明"，客户端按 `unverified` 处理（fail-closed）。
+   */
+  identitySupport?: 'supported' | 'unsupported';
 }
 
 export const TREE_PAGE_DEFAULT_LIMIT = 200;
@@ -298,6 +309,13 @@ export interface BuildTreePageOptions {
   projectMeta?: TreePageDto['projectMeta'];
   /** 项目根的资源锚（只在 `level === ''` 时有意义）。 */
   projectAnchor?: string;
+  /**
+   * 本页 Provider 的身份核验能力（UX-02C-05-R1.1）。
+   *
+   * 由调用方按 Provider **实际实现**给出（有没有 `identityOf`），绝不由
+   * "这一页没有锚"反推：那样一次探测异常就会被伪装成"Provider 不支持身份"。
+   */
+  identitySupport?: TreePageDto['identitySupport'];
 }
 
 /**
@@ -413,6 +431,8 @@ export function buildTreePage(
     ...(options.projectMeta ? { projectMeta: options.projectMeta } : {}),
     // 根的资源锚同理：每页都带同一个值，续页丢失不会影响已加载的行。
     ...(options.projectAnchor ? { projectAnchor: options.projectAnchor } : {}),
+    // 身份能力是页级声明：缺锚的语义由它区分"Provider 不支持"与"这次没探到"。
+    ...(options.identitySupport ? { identitySupport: options.identitySupport } : {}),
     ...(Object.keys(pageAnchors).length > 0 ? { anchors: pageAnchors } : {}),
   };
 }

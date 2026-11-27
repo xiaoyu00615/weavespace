@@ -14,6 +14,7 @@
  * 这里不碰磁盘、不碰网络、不碰 React，所有函数都是纯函数。
  */
 import type { TreeEntry } from '../client/client-api.ts';
+import type { IdentitySupport } from '../state/tree-commands.ts';
 import type { ResourceNodeState } from '../state/types.ts';
 
 /** 项目根这一层的键。 */
@@ -73,6 +74,14 @@ export interface TreeLevelState {
    * 属于"这个项目根"，续页不带时沿用。
    */
   readonly projectAnchor?: string;
+  /**
+   * 本层的 Provider 身份核验能力（UX-02C-05-R1.1）。
+   *
+   * 它是"缺锚"这件事的分母：`supported` + 某行无锚 = 这一行**身份未知**
+   * （fail-closed）；`unsupported` = Provider 明确没有身份能力，才允许按路径身份降级。
+   * 缺省（旧版响应 / 手工夹具）= 未声明，按 `unverified` 处理。
+   */
+  readonly identitySupport?: IdentitySupport;
 }
 
 export type TreeLevels = Readonly<Record<string, TreeLevelState>>;
@@ -164,6 +173,8 @@ export interface AppliedPage {
   readonly projectAnchor?: string;
   /** 本页条目的资源锚表（`relPath → 锚`）；旧版响应没有。 */
   readonly anchors?: Readonly<Record<string, string>>;
+  /** 本层 Provider 的身份核验能力；旧版响应没有（按 `unverified` 处理）。 */
+  readonly identitySupport?: IdentitySupport;
 }
 
 /**
@@ -224,6 +235,12 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
           ? { projectAnchor: previous.projectAnchor }
           : {}),
       anchors: Object.freeze(anchors),
+      // 能力是"这个 Provider"的属性：给过一次就沿用，缺省保持"未声明"
+      ...(page.identitySupport !== undefined
+        ? { identitySupport: page.identitySupport }
+        : previous.identitySupport
+          ? { identitySupport: previous.identitySupport }
+          : {}),
     },
   };
 }

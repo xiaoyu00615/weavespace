@@ -196,6 +196,7 @@ export async function loadWorkspace(deps: WorkspaceLoadDeps): Promise<LoadedWork
         ...(outcome.projectMeta ? { projectMeta: outcome.projectMeta } : {}),
         ...(outcome.projectAnchor ? { projectAnchor: outcome.projectAnchor } : {}),
         ...(outcome.anchors ? { anchors: outcome.anchors } : {}),
+        ...(outcome.identitySupport ? { identitySupport: outcome.identitySupport } : {}),
       });
       const files = outcome.entries.filter((entry) => entry.kind === 'file').length;
       dispatch({
@@ -328,6 +329,7 @@ export async function loadProjectResources(
       ...(outcome.projectMeta ? { projectMeta: outcome.projectMeta } : {}),
       ...(outcome.projectAnchor ? { projectAnchor: outcome.projectAnchor } : {}),
       ...(outcome.anchors ? { anchors: outcome.anchors } : {}),
+      ...(outcome.identitySupport ? { identitySupport: outcome.identitySupport } : {}),
     });
     const projects = await refreshProjectStatuses(scopedDeps);
     if (cancelled()) return false;

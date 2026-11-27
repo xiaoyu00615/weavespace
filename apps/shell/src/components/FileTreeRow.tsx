@@ -244,24 +244,37 @@ export function TreeRow({
   latest.current = { onActivate, onRenameRequest, identity: activationIdentity };
   const renameable = typeof onRenameRequest === 'function' && activationIdentity !== undefined;
   const identityKey = activationIdentityKey(activationIdentity);
-  const arbiter = useMemo(
-    () =>
-      renameable
-        ? createActivationArbiter({
-            delay: NAME_DOUBLE_CLICK_WINDOW,
-            setTimer: (fn, delay) => window.setTimeout(fn, delay),
-            clearTimer: (handle) => window.clearTimeout(handle as number),
-            currentIdentity: () => latest.current.identity ?? null,
-            onSingle: () => latest.current.onActivate(),
-            onDouble: () => latest.current.onRenameRequest?.(),
-          })
-        : null,
-    // 身份变化 = 这一行已经不是刚才那个对象：重建仲裁器，旧实例的在途单击由
-    // 下面的清理函数取消（结构上的作废 + 运行时的身份核对，两道都在）
-    [renameable, identityKey],
-  );
-  // 卸载 / 身份变化时撤掉在途的单击：绝不能再触发一次"打开"
-  useEffect(() => () => arbiter?.cancel(), [arbiter]);
+  /** 上一次装配的仲裁器：身份一变，必须**先**把它取消，再建新的。 */
+  const previousArbiter = useRef<ReturnType<typeof createActivationArbiter> | null>(null);
+  const arbiter = useMemo(() => {
+    /*
+     * 身份变化 = 这一行已经不是刚才那个对象。
+     *
+     * 这里在**渲染期**同步撤掉旧实例的在途单击（只清一个定时器，不碰 React 状态）。
+     * 只靠 effect 的清理函数不够：cleanup 在提交之后才跑，中间那一下如果浏览器
+     * 仍按连击计数报 `detail=2`，新实例会把它当成"新一次双击的起点"（R1.1 任务 A）。
+     */
+    previousArbiter.current?.cancel();
+    previousArbiter.current = null;
+    const next = renameable
+      ? createActivationArbiter({
+          delay: NAME_DOUBLE_CLICK_WINDOW,
+          setTimer: (fn, delay) => window.setTimeout(fn, delay),
+          clearTimer: (handle) => window.clearTimeout(handle as number),
+          currentIdentity: () => latest.current.identity ?? null,
+          onSingle: () => latest.current.onActivate(),
+          onDouble: () => latest.current.onRenameRequest?.(),
+        })
+      : null;
+    previousArbiter.current = next;
+    return next;
+    // 身份变化 = 这一行已经不是刚才那个对象：重建仲裁器，旧实例的在途单击被取消
+    // （结构上的作废 + 运行时的身份核对，两道都在）
+  }, [renameable, identityKey]);
+  // 卸载时撤掉在途的单击：组件已经不在，绝不能再触发一次"打开"
+  // （这里**不**清空 ref：StrictMode 的"卸载→重挂"之后，ref 仍要指向当前实例，
+  //   否则下一次身份变化就取消不到真正在途的那一个）
+  useEffect(() => () => previousArbiter.current?.cancel(), []);
 
   /** 只有名称（含标注名）区域参与双击改名；图标与行内空白保持"点了就动"。 */
   const onNameArea = (target: EventTarget | null): boolean =>
