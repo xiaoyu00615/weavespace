@@ -188,6 +188,9 @@ export async function refreshProject(
       total: outcome.page.total,
       snapshot: outcome.page.snapshot ?? null,
       hiddenCount: outcome.page.hiddenCount,
+      ...(outcome.projectMeta ? { projectMeta: outcome.projectMeta } : {}),
+      ...(outcome.projectAnchor ? { projectAnchor: outcome.projectAnchor } : {}),
+      ...(outcome.anchors ? { anchors: outcome.anchors } : {}),
     });
     files = outcome.entries.filter((entry) => entry.kind === 'file').length;
   } catch {

@@ -283,24 +283,27 @@ function canonicalTrash(trash: readonly ConfigTrashEntry[]): unknown[] {
 }
 
 /**
- * 元数据记录按 `projectId`（空路径排前）排序后再哈希：写入顺序不是语义。
+ * 元数据记录按 `projectId` → `path` → `identity` → `rootToken` 排序后再哈希：
+ * 写入顺序不是语义。
+ *
+ * R1-01：记录的唯一性从"项目 + 路径"改成**身份四元组**（项目 + 路径 + 根令牌 + 对象身份），
+ * 因此同一路径可能同时存在多条记录（对象换过、历史未清）。排序必须补上后两维，
+ * 否则同一份配置会因为两条同路径记录的顺序不同而算出两个校验和。
+ *
+ * 对**既有 v5 配置**（一条路径最多一条记录）这个改动是零影响的：`path` 已经全序，
+ * 新加的维度只在"同一路径的多条记录之间"起作用，历史配置的校验和逐字节不变。
  *
  * `alias` / `color` 用 `?? null` 归一：缺省与显式 null 必须得到同一个校验和，
  * 否则一次"只改标签"的写入会被算成两次不同的配置（历史 diff 全是噪音）。
  */
 function canonicalMetadata(metadata: readonly ConfigMetadataEntry[]): unknown[] {
   return [...metadata]
-    .sort((a, b) =>
-      a.projectId === b.projectId
-        ? a.path === b.path
-          ? 0
-          : a.path < b.path
-            ? -1
-            : 1
-        : a.projectId < b.projectId
-          ? -1
-          : 1,
-    )
+    .sort((a, b) => {
+      if (a.projectId !== b.projectId) return a.projectId < b.projectId ? -1 : 1;
+      if (a.path !== b.path) return a.path < b.path ? -1 : 1;
+      if (a.identity !== b.identity) return a.identity < b.identity ? -1 : 1;
+      return a.rootToken < b.rootToken ? -1 : a.rootToken > b.rootToken ? 1 : 0;
+    })
     .map((entry) => ({
       projectId: entry.projectId,
       path: entry.path,
@@ -646,10 +649,22 @@ export function parseConfig(text: string): ParsedConfig | undefined {
     for (const item of raw.metadata as unknown[]) {
       const entry = parseMetadata(item);
       if (!entry) return undefined;
-      // 同一项目里同一条路径只能有一条记录（Windows 下按大小写不敏感比较；
-      // 空路径只在记录为项目根时出现，`sameEntryPath('', '')` 为真）
+      /*
+       * 唯一性是**身份四元组**（项目 + 路径 + 根令牌 + 对象身份），不是"项目 + 路径"。
+       *
+       * 同一路径完全可能先后住过两个对象：旧对象被回收/替换，新对象拿到自己的记录，
+       * 而旧记录要留着（用户可能还要恢复那个文件）。若仍按路径判重，这种配置会被判成
+       * 损坏——那等于强迫 Host 在写入时销毁历史。
+       *
+       * 但"同一对象的两条记录"没有任何意义（同一个身份不可能同时有两个标注），
+       * 出现即视为损坏：它会让"到底显示哪一条"变成未定义。
+       */
       const duplicate = metadata.some(
-        (existing) => existing.projectId === entry.projectId && sameEntryPath(existing.path, entry.path),
+        (existing) =>
+          existing.projectId === entry.projectId &&
+          sameEntryPath(existing.path, entry.path) &&
+          existing.rootToken === entry.rootToken &&
+          existing.identity === entry.identity,
       );
       if (duplicate) return undefined;
       // 已签发过的项目才可能有元数据（撤销后 id 仍永久保留，记录因此不会被判损坏）

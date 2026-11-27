@@ -35,6 +35,23 @@ export function isResourceColor(value: unknown): value is ResourceColor {
   return typeof value === 'string' && (RESOURCE_COLORS as readonly string[]).includes(value);
 }
 
+/**
+ * 资源锚（R1-03）：`projectId + path + rootToken + identity` 的不可逆摘要（32 位十六进制）。
+ *
+ * 它解决的是"编辑会话打开之后，那个位置上还是不是同一个对象"：
+ * - Shell 只把它当成**不透明字符串**原样回传，不解析、不推导、不据此做授权；
+ * - Host 收到后用它和**自己核验出的身份**重新算一遍做比对，不一致即拒绝写入；
+ * - 因此它既不是身份自述（客户端无法从锚反推出 `dev:ino`），
+ *   也不是权限凭据（写授权仍然只看项目级授权判定）。
+ *
+ * 形状规则放在共享契约里，两端对"什么算一个锚"只有一个答案。
+ */
+export const METADATA_ANCHOR_RE = /^[0-9a-f]{32}$/;
+
+export function isMetadataAnchor(value: unknown): value is string {
+  return typeof value === 'string' && METADATA_ANCHOR_RE.test(value);
+}
+
 /** 规范化结果：`value` 为空表示"清除这一项"。 */
 export type NormalizedText =
   | { ok: true; value: string | null }

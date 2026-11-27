@@ -54,6 +54,13 @@ export interface ResourceNodeState {
     tags: string[];
     color?: string;
   };
+  /**
+   * 资源锚（UX-02C-04-R1）：这一行**此刻**是哪个对象的不透明凭据。
+   *
+   * 标注对话框打开时记下它，提交时随请求带回；Host 与自己核验的身份比对不一致
+   * 就拒绝写入。客户端不解析它，也不据此做任何授权或身份判断。
+   */
+  anchor?: string;
 }
 
 export type SaveUiStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN' | 'DEMO' | null;
@@ -295,6 +302,25 @@ export type WorkspaceAction =
        * 服务端），与真实的 `0` 必须区别处理：缺失时保留上一次已知值。
        */
       hiddenCount?: number;
+      /**
+       * 项目根展示项的元数据（UX-02C-04）：只有根层会带。
+       *
+       * 根不是磁盘条目，因此它不在 `entries` 里；根行从这里取标注。
+       */
+      projectMeta?: {
+        alias?: string;
+        tags: string[];
+        color?: string;
+      };
+      /** 项目根的资源锚（UX-02C-04-R1）：只有根层会带。 */
+      projectAnchor?: string;
+      /**
+       * 本页条目的资源锚表（UX-02C-04-R1）：`relPath → 锚`。
+       *
+       * 单独一张表而不是条目字段：锚由对象身份派生，普通保存就会换 inode，
+       * 放进条目会让"条目集合"随每次保存变化（契约 §4.4）。
+       */
+      anchors?: Readonly<Record<string, string>>;
     }
   /** 该层加载失败：保留已加载条目，UI 显示"重试"。 */
   | { type: 'TREE_LEVEL_ERROR'; projectId: string; dir: string; errorCode: string | null }

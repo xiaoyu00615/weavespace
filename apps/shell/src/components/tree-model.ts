@@ -56,6 +56,23 @@ export interface TreeLevelState {
     tags: string[];
     color?: string;
   };
+  /**
+   * 资源锚表（UX-02C-04-R1）：`relPath → 32 位十六进制摘要`。
+   *
+   * 只覆盖**本层已加载**的条目。锚不放进条目本身——理由见
+   * `TreePageDto.anchors`：它由对象身份派生，而普通保存会换 inode，
+   * 放进条目会让"条目集合"随保存变化。
+   *
+   * 可选是为了兼容既有夹具（手工构造的层状态）；缺省与空表语义相同。
+   */
+  readonly anchors?: Readonly<Record<string, string>>;
+  /**
+   * 项目根的资源锚（UX-02C-04-R1）：只有根层有。
+   *
+   * 根不是一个磁盘条目，它的"身份"就是根令牌；这个值与 `projectMeta` 一样
+   * 属于"这个项目根"，续页不带时沿用。
+   */
+  readonly projectAnchor?: string;
 }
 
 export type TreeLevels = Readonly<Record<string, TreeLevelState>>;
@@ -85,11 +102,16 @@ function blankLevel(dir: string): TreeLevelState {
     loadingMore: false,
     snapshot: null,
     hiddenCount: 0,
+    anchors: Object.freeze({}),
   };
 }
 
-/** 服务端条目 → 前端节点。路径只用 `relPath`，绝不接收或推导绝对路径。 */
-export function entryToNode(entry: TreeEntry): ResourceNodeState {
+/**
+ * 服务端条目 → 前端节点。路径只用 `relPath`，绝不接收或推导绝对路径。
+ *
+ * `anchor` 由层表的锚表按 `relPath` 提供（不在条目里，见 `TreeLevelState.anchors`）。
+ */
+export function entryToNode(entry: TreeEntry, anchor?: string): ResourceNodeState {
   return {
     id: entry.id,
     name: entry.name,
@@ -101,6 +123,8 @@ export function entryToNode(entry: TreeEntry): ResourceNodeState {
     ...(entry.hiddenBy ? { hiddenBy: entry.hiddenBy } : {}),
     // 展示元数据同样要穿过去：否则"设置标注名"保存成功、刷新后行上什么都没有
     ...(entry.meta ? { meta: entry.meta } : {}),
+    // 资源锚：编辑会话的身份预期，丢了它就只能拒绝提交（宁可不写，也不写错对象）
+    ...(anchor ? { anchor } : {}),
   };
 }
 
@@ -136,6 +160,10 @@ export interface AppliedPage {
   readonly hiddenCount?: number;
   /** 项目根展示项的元数据（只有根层会带）。 */
   readonly projectMeta?: TreeLevelState['projectMeta'];
+  /** 项目根的资源锚（只有根层会带）。 */
+  readonly projectAnchor?: string;
+  /** 本页条目的资源锚表（`relPath → 锚`）；旧版响应没有。 */
+  readonly anchors?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -148,7 +176,13 @@ export interface AppliedPage {
 export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): TreeLevels {
   const key = normalizeDir(dir);
   const previous = levels[key] ?? blankLevel(key);
-  const incoming = page.entries.map(entryToNode);
+  /*
+   * 锚表按页合并：第一页替换、续页叠加。这样"续页没有某条目的锚"不会把它
+   * 上一页拿到的锚抹掉（否则翻页后早先那些行的标注对话框会全部变成"无法确认身份"）。
+   */
+  const anchors: Record<string, string> = page.cursor === null ? {} : { ...previous.anchors };
+  for (const [relPath, anchor] of Object.entries(page.anchors ?? {})) anchors[relPath] = anchor;
+  const incoming = page.entries.map((entry) => entryToNode(entry, anchors[entry.relPath]));
   const first = page.cursor === null;
   // Shell 侧第二道闸：即便服务端漏判，也不能把"另一份目录"的续页追加到本轮结果上。
   // 失败必须显式作废整层，绝不能让 `nextCursor: null` 伪装成"已经全部加载完成"。
@@ -183,6 +217,13 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
         : previous.projectMeta
           ? { projectMeta: previous.projectMeta }
           : {}),
+      // 资源锚同理：续页丢失不能让它消失，否则根行的编辑会话会全部变成"无法确认身份"
+      ...(page.projectAnchor !== undefined
+        ? { projectAnchor: page.projectAnchor }
+        : previous.projectAnchor
+          ? { projectAnchor: previous.projectAnchor }
+          : {}),
+      anchors: Object.freeze(anchors),
     },
   };
 }
@@ -223,6 +264,8 @@ export function invalidateLevel(levels: TreeLevels, dir: string, errorCode: stri
       loadingMore: false,
       snapshot: null,
       hiddenCount: 0,
+      // 整层作废后锚表也必须清空：留着会让"已经不在这一层的条目"仍可被打开编辑会话
+      anchors: Object.freeze({}),
     },
   };
 }

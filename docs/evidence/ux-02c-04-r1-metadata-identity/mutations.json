@@ -1,0 +1,125 @@
+{
+  "at": "2026-11-27T02:37:09.067Z",
+  "results": [
+    {
+      "id": "R1-A",
+      "desc": "R1-01：增量合并退回\"只按项目 + 路径\"匹配（同名新对象会继承旧标注）",
+      "file": "apps/server/src/store/file-store.ts",
+      "baselineSha256": "be206e0a7830a20a97138aa7d0226d0aace0f36af55ee2fd5ffed3e8f414a716",
+      "mutatedSha256": "bee235ad9dd546dbb9570e0d0744d437c4f39b3fddbfb4f0b665d6f8fbf98f37",
+      "restoredSha256": "be206e0a7830a20a97138aa7d0226d0aace0f36af55ee2fd5ffed3e8f414a716",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R1-A01 同名不同身份：B 只设颜色，不继承 A 的标注名与标签，A 的记录仍在",
+        "R1-A02 移走 B → 恢复 A：A 拿回原标注，B 在新位置仍是自己的标注",
+        "R1-A03 多身份记录重启后仍按身份生效",
+        "R1-C03 清除当前对象不影响同路径其它身份的历史记录",
+        "R1-C04 scope=stale：显式清理失效记录，当前对象的记录保留"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "R1-B",
+      "desc": "R1-02：迁移不再核验目标位置的对象身份（按路径前缀无条件迁移）",
+      "file": "apps/server/src/server.ts",
+      "baselineSha256": "8f9bff3f264dc73df2de572c0d0b5af9d52d832f4ba7137cc74fd9e8ee91f4f2",
+      "mutatedSha256": "860bd0ccdc36c9d9802df50147a235a94258e7d490d25b77aeddb5fafa74aee3",
+      "restoredSha256": "8f9bff3f264dc73df2de572c0d0b5af9d52d832f4ba7137cc74fd9e8ee91f4f2",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R1-A02 移走 B → 恢复 A：A 拿回原标注，B 在新位置仍是自己的标注",
+        "R1-B01 旧对象已回收：同名新对象改名，旧记录不跟随",
+        "R1-B02 目录移动：失效的子记录不迁移，只迁移真实对象"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "R1-C",
+      "desc": "R1-03：设置端点忽略资源锚（过期会话仍能写到新对象上）",
+      "file": "apps/server/src/server.ts",
+      "baselineSha256": "8f9bff3f264dc73df2de572c0d0b5af9d52d832f4ba7137cc74fd9e8ee91f4f2",
+      "mutatedSha256": "73f3511c7a0de223c3a43505dbed47061ff484b8d4671b79b28583be38b4be25",
+      "restoredSha256": "8f9bff3f264dc73df2de572c0d0b5af9d52d832f4ba7137cc74fd9e8ee91f4f2",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R1-C01 过期的资源锚：设置被拒绝且零写入",
+        "R1-C02 过期的资源锚：清除被拒绝，不删任何记录"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "R1-D",
+      "desc": "R1-03：清除一律按\"清理失效记录\"执行（会删掉同路径别的身份）",
+      "file": "apps/server/src/server.ts",
+      "baselineSha256": "8f9bff3f264dc73df2de572c0d0b5af9d52d832f4ba7137cc74fd9e8ee91f4f2",
+      "mutatedSha256": "6bee726c3bfd4f5f5b1cb1da1e7ca10d3aee5b7ab2ec48770f0b071c5c0dda48",
+      "restoredSha256": "8f9bff3f264dc73df2de572c0d0b5af9d52d832f4ba7137cc74fd9e8ee91f4f2",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R1-C03 清除当前对象不影响同路径其它身份的历史记录"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "R1-E",
+      "desc": "R1-03：请求返回后不再核对工作区归属（旧结果会刷新新工作区）",
+      "file": "apps/shell/src/state/metadata-session.ts",
+      "baselineSha256": "b3b76ba0434c65b1060c4344ab278503c726fe4488738e2f0486c3c7dd799918",
+      "mutatedSha256": "86cf81be54c1843af5f66f536e7b3792176fca12c0494980057b0eff55e6d361",
+      "restoredSha256": "b3b76ba0434c65b1060c4344ab278503c726fe4488738e2f0486c3c7dd799918",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R1-C14 请求在途时切换工作区：结果被丢弃（零刷新、零提示）"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "R1-F",
+      "desc": "R1-04：client 丢弃真实的 metadataMigration（一律当 none）",
+      "file": "apps/shell/src/client/client-api.ts",
+      "baselineSha256": "f3239abaa56bc93e9abe88a94967b6c5cadecb5b161c3011698c13ab1b5115ef",
+      "mutatedSha256": "528ba2b7cfbdebb5400a7f8f92c05b0e1a8194c8af605fd4192e99248715b093",
+      "restoredSha256": "f3239abaa56bc93e9abe88a94967b6c5cadecb5b161c3011698c13ab1b5115ef",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R1-D05 结构变更响应：moved / metadataMoved 正确传递",
+        "R1-D06 结构变更响应：failed 不改磁盘成功语义；非法字段不被信任"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "R1-G",
+      "desc": "R1-01：内容保存后不再把标注绑到新身份（标注会在编辑一次后消失）",
+      "file": "apps/server/src/server.ts",
+      "baselineSha256": "8f9bff3f264dc73df2de572c0d0b5af9d52d832f4ba7137cc74fd9e8ee91f4f2",
+      "mutatedSha256": "1aa0730cedefb7b21247258512d9eeff20351480ac9591e6be88c8ac6b1a79f3",
+      "restoredSha256": "8f9bff3f264dc73df2de572c0d0b5af9d52d832f4ba7137cc74fd9e8ee91f4f2",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R1-A04 内容保存换了 inode：标注仍然成立（身份再绑定），且不是无条件跟随"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "R1-H",
+      "desc": "R1-01：校验和的 canonical 投影多带一个字段（既有 v5 配置的校验和失效）",
+      "file": "apps/server/src/store/config.ts",
+      "baselineSha256": "6bddb6694d5d440f829cdaf09ad60c920df65aecdd2c45fee642cc7068f238c8",
+      "mutatedSha256": "66f9dbc46069379a9c3b0f2ff6b687d0f710c5a52a6c032d2d92b414614b31d3",
+      "restoredSha256": "6bddb6694d5d440f829cdaf09ad60c920df65aecdd2c45fee642cc7068f238c8",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R1-A06 既有 v5 配置（每路径一条记录）的校验和仍可复算，不触发迁移或重写"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

@@ -1,0 +1,691 @@
+{
+  "run": "ux-02c-04-r1-identity",
+  "at": "2026-11-27T02:55:26.513Z",
+  "checks": {
+    "E-00 fixture 就绪：v5 配置、零元数据记录": true,
+    "E-01 初始：same.md 存在且没有任何标注": true,
+    "E-02 右键 → 「设置标注名…」打开标注对话框": true,
+    "E-03 保存后行上显示「原文件A」": true,
+    "E-04 真实名称仍是 same.md，标注名在括号里": true,
+    "E-05 右键 → 「编辑标签…」": true,
+    "E-06 标签「原件」已就位（有标注名时折成 +1）": true,
+    "E-07 右键 → 「设置颜色…」": true,
+    "E-08 行带上 red 颜色类名": true,
+    "E-09 配置里恰好一条记录，且身份 = 磁盘上 A 的 dev:ino": true,
+    "E-10 记录带完整身份（项目 + 路径 + 根令牌 + 对象身份），且根令牌与项目一致": true,
+    "E-11 通过右键「移入回收区」回收 A": true,
+    "E-12 A 已不在原路径上（磁盘事实）": true,
+    "E-13 回收不删元数据：A 的记录还在配置里": true,
+    "E-14 新文件确实是另一个对象（身份与 A 不同）": true,
+    "E-15 B 不继承 A 的标注名 / 标签 / 颜色": true,
+    "E-16 右键 → 「设置标注名…」": true,
+    "E-17 右键 → 「编辑标签…」": true,
+    "E-18 右键 → 「设置颜色…」": true,
+    "E-19 行上是 B 自己的标注": true,
+    "E-20 同一路径上两条记录共存（身份不同）": true,
+    "E-21 两条记录各归各的身份：A 的仍是「原文件A/red/原件」，B 的是「新文件B/blue/新件」": true,
+    "E-22 接口只把 active 那条（B）标成生效，A 的那条如实报失效（rebound）": true,
+    "E-23 右键 → 「移动到…」": true,
+    "E-24 磁盘上 B 已在 dir/same.md，且身份不变（还是同一个对象）": true,
+    "E-25 移动后标注跟着走": true,
+    "E-26 迁移只改路径、不改身份：B 的记录指向 dir/same.md": true,
+    "E-27 A 的记录仍留在原路径（失效记录不随别人的移动一起搬走）": true,
+    "E-28 迁移没有伪造出第三条记录": true,
+    "E-29 回收区里能看到 A 那一条": true,
+    "E-30 点「恢复」并完成确认": true,
+    "E-31 回到原路径的是同一个对象（身份与最初一致）": true,
+    "E-32 恢复的是同一份内容（SHA-256 一致）": true,
+    "E-33 恢复后 A 的标注重新生效": true,
+    "E-34 同时 B 在自己的新位置保留自己的标注": true,
+    "E-35 配置里两条记录、两个身份、两个路径，各自标注正确": true,
+    "E-36 磁盘上两个文件内容互不相同（不是同一个文件被挪来挪去）": true,
+    "E-37 重启后配置里的记录集合没有变化（两条、身份不变、路径不变）": true,
+    "E-38 重启后 A 仍显示自己的标注": true,
+    "E-39 重启后 B 仍显示自己的标注": true,
+    "E-40 重启后接口结论一致：A 与 B 都是 active": true
+  },
+  "detail": {
+    "E-01 初始：same.md 存在且没有任何标注": {
+      "name": "same.md",
+      "alias": null,
+      "tags": [],
+      "color": null,
+      "title": "same.md"
+    },
+    "E-04 真实名称仍是 same.md，标注名在括号里": {
+      "name": "same.md",
+      "alias": "（原文件A）",
+      "tags": [],
+      "color": null,
+      "title": "same.md\n标注名：原文件A"
+    },
+    "E-06 标签「原件」已就位（有标注名时折成 +1）": {
+      "name": "same.md",
+      "alias": "（原文件A）",
+      "tags": [
+        "+1"
+      ],
+      "color": null,
+      "title": "same.md\n标注名：原文件A\n标签：原件"
+    },
+    "E-08 行带上 red 颜色类名": {
+      "name": "same.md",
+      "alias": "（原文件A）",
+      "tags": [
+        "+1"
+      ],
+      "color": "tree__row--color-red",
+      "title": "same.md\n标注名：原文件A\n标签：原件"
+    },
+    "E-09 配置里恰好一条记录，且身份 = 磁盘上 A 的 dev:ino": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      }
+    ],
+    "E-10 记录带完整身份（项目 + 路径 + 根令牌 + 对象身份），且根令牌与项目一致": {
+      "projectId": "proj-a",
+      "path": "same.md",
+      "rootToken": "1754858869:1125899907480254:1795748127149694700",
+      "identity": "1754858869:1125899907480258",
+      "alias": "原文件A",
+      "tags": [
+        "原件"
+      ],
+      "color": "red",
+      "updatedAt": "2026-11-27T02:55:39.480Z"
+    },
+    "E-11 通过右键「移入回收区」回收 A": {
+      "stage": "confirmed",
+      "text": "移入回收区「same.md」\n\n「same.md」已移入回收区，可在回收区恢复。\n\n好的"
+    },
+    "E-13 回收不删元数据：A 的记录还在配置里": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      }
+    ],
+    "E-14 新文件确实是另一个对象（身份与 A 不同）": {
+      "a": "1754858869:1125899907480258",
+      "b": "1754858869:1688849860902422"
+    },
+    "E-15 B 不继承 A 的标注名 / 标签 / 颜色": {
+      "name": "same.md",
+      "alias": null,
+      "tags": [],
+      "color": null,
+      "title": "same.md"
+    },
+    "E-19 行上是 B 自己的标注": {
+      "name": "same.md",
+      "alias": "（新文件B）",
+      "tags": [
+        "+1"
+      ],
+      "color": "tree__row--color-blue",
+      "title": "same.md\n标注名：新文件B\n标签：新件"
+    },
+    "E-20 同一路径上两条记录共存（身份不同）": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      },
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1688849860902422",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue",
+        "updatedAt": "2026-11-27T02:55:51.004Z"
+      }
+    ],
+    "E-21 两条记录各归各的身份：A 的仍是「原文件A/red/原件」，B 的是「新文件B/blue/新件」": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      },
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1688849860902422",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue",
+        "updatedAt": "2026-11-27T02:55:51.004Z"
+      }
+    ],
+    "E-22 接口只把 active 那条（B）标成生效，A 的那条如实报失效（rebound）": [
+      {
+        "path": "same.md",
+        "state": "rebound",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red"
+      },
+      {
+        "path": "same.md",
+        "state": "active",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue"
+      }
+    ],
+    "E-24 磁盘上 B 已在 dir/same.md，且身份不变（还是同一个对象）": {
+      "before": {
+        "path": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA\\same.md",
+        "exists": true,
+        "identity": "1754858869:1688849860902422",
+        "sha256": "7b699e47cc22f25c19d541879cfd98000f38e0c6fab199fc60471fddbd771f64"
+      },
+      "after": {
+        "path": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA\\dir\\same.md",
+        "exists": true,
+        "identity": "1754858869:1688849860902422",
+        "sha256": "7b699e47cc22f25c19d541879cfd98000f38e0c6fab199fc60471fddbd771f64"
+      }
+    },
+    "E-25 移动后标注跟着走": {
+      "name": "same.md",
+      "alias": "（新文件B）",
+      "tags": [
+        "+1"
+      ],
+      "color": "tree__row--color-blue",
+      "title": "same.md\n标注名：新文件B\n标签：新件"
+    },
+    "E-26 迁移只改路径、不改身份：B 的记录指向 dir/same.md": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      },
+      {
+        "projectId": "proj-a",
+        "path": "dir/same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1688849860902422",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue",
+        "updatedAt": "2026-11-27T02:55:51.004Z"
+      }
+    ],
+    "E-27 A 的记录仍留在原路径（失效记录不随别人的移动一起搬走）": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      },
+      {
+        "projectId": "proj-a",
+        "path": "dir/same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1688849860902422",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue",
+        "updatedAt": "2026-11-27T02:55:51.004Z"
+      }
+    ],
+    "E-28 迁移没有伪造出第三条记录": 2,
+    "E-29 回收区里能看到 A 那一条": [
+      {
+        "name": "same.md",
+        "action": "恢复"
+      }
+    ],
+    "E-30 点「恢复」并完成确认": {
+      "clicked": "clicked",
+      "hasConfirm": false
+    },
+    "E-31 回到原路径的是同一个对象（身份与最初一致）": {
+      "original": {
+        "path": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA\\same.md",
+        "exists": true,
+        "identity": "1754858869:1125899907480258",
+        "sha256": "4afcdf10d6c5f58703ccca2469bc51ec63f6ff8119b58c407d1fe111c7243a24"
+      },
+      "restored": {
+        "path": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA\\same.md",
+        "exists": true,
+        "identity": "1754858869:1125899907480258",
+        "sha256": "4afcdf10d6c5f58703ccca2469bc51ec63f6ff8119b58c407d1fe111c7243a24"
+      }
+    },
+    "E-32 恢复的是同一份内容（SHA-256 一致）": {
+      "before": "4afcdf10d6c5f58703ccca2469bc51ec63f6ff8119b58c407d1fe111c7243a24",
+      "after": "4afcdf10d6c5f58703ccca2469bc51ec63f6ff8119b58c407d1fe111c7243a24"
+    },
+    "E-33 恢复后 A 的标注重新生效": {
+      "name": "same.md",
+      "alias": "（原文件A）",
+      "tags": [
+        "+1"
+      ],
+      "color": "tree__row--color-red",
+      "title": "same.md\n标注名：原文件A\n标签：原件"
+    },
+    "E-34 同时 B 在自己的新位置保留自己的标注": {
+      "name": "same.md",
+      "alias": "（新文件B）",
+      "tags": [
+        "+1"
+      ],
+      "color": "tree__row--color-blue",
+      "title": "same.md\n标注名：新文件B\n标签：新件"
+    },
+    "E-35 配置里两条记录、两个身份、两个路径，各自标注正确": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      },
+      {
+        "projectId": "proj-a",
+        "path": "dir/same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1688849860902422",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue",
+        "updatedAt": "2026-11-27T02:55:51.004Z"
+      }
+    ],
+    "E-36 磁盘上两个文件内容互不相同（不是同一个文件被挪来挪去）": {
+      "a": "4afcdf10d6c5f58703ccca2469bc51ec63f6ff8119b58c407d1fe111c7243a24",
+      "b": "7b699e47cc22f25c19d541879cfd98000f38e0c6fab199fc60471fddbd771f64"
+    },
+    "E-37 重启后配置里的记录集合没有变化（两条、身份不变、路径不变）": {
+      "before": [
+        {
+          "projectId": "proj-a",
+          "path": "same.md",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "identity": "1754858869:1125899907480258",
+          "alias": "原文件A",
+          "tags": [
+            "原件"
+          ],
+          "color": "red",
+          "updatedAt": "2026-11-27T02:55:39.480Z"
+        },
+        {
+          "projectId": "proj-a",
+          "path": "dir/same.md",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "identity": "1754858869:1688849860902422",
+          "alias": "新文件B",
+          "tags": [
+            "新件"
+          ],
+          "color": "blue",
+          "updatedAt": "2026-11-27T02:55:51.004Z"
+        }
+      ],
+      "after": [
+        {
+          "projectId": "proj-a",
+          "path": "same.md",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "identity": "1754858869:1125899907480258",
+          "alias": "原文件A",
+          "tags": [
+            "原件"
+          ],
+          "color": "red",
+          "updatedAt": "2026-11-27T02:55:39.480Z"
+        },
+        {
+          "projectId": "proj-a",
+          "path": "dir/same.md",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "identity": "1754858869:1688849860902422",
+          "alias": "新文件B",
+          "tags": [
+            "新件"
+          ],
+          "color": "blue",
+          "updatedAt": "2026-11-27T02:55:51.004Z"
+        }
+      ]
+    },
+    "E-38 重启后 A 仍显示自己的标注": {
+      "name": "same.md",
+      "alias": "（原文件A）",
+      "tags": [
+        "+1"
+      ],
+      "color": "tree__row--color-red",
+      "title": "same.md\n标注名：原文件A\n标签：原件"
+    },
+    "E-39 重启后 B 仍显示自己的标注": {
+      "name": "same.md",
+      "alias": "（新文件B）",
+      "tags": [
+        "+1"
+      ],
+      "color": "tree__row--color-blue",
+      "title": "same.md\n标注名：新文件B\n标签：新件"
+    },
+    "E-40 重启后接口结论一致：A 与 B 都是 active": [
+      {
+        "path": "dir/same.md",
+        "state": "active",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue"
+      },
+      {
+        "path": "same.md",
+        "state": "active",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red"
+      }
+    ]
+  },
+  "facts": {
+    "configBefore": {
+      "version": 5,
+      "commitSeq": 19,
+      "issuedIds": [
+        "proj-a"
+      ],
+      "revoked": [],
+      "projects": [
+        {
+          "projectId": "proj-a",
+          "name": "项目A",
+          "rootDir": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA",
+          "canonicalRoot": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "grantedAt": "2026-11-27T00:00:00.000Z",
+          "grantSource": "os-dialog"
+        }
+      ],
+      "hidden": [],
+      "trash": [],
+      "metadata": [],
+      "checksum": "48e9b0440e94bd0f2b95574463515100e70ed91bacde47c095fd5c08bf924f47"
+    },
+    "objectA": {
+      "path": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA\\same.md",
+      "exists": true,
+      "identity": "1754858869:1125899907480258",
+      "sha256": "4afcdf10d6c5f58703ccca2469bc51ec63f6ff8119b58c407d1fe111c7243a24"
+    },
+    "objectB": {
+      "path": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA\\same.md",
+      "exists": true,
+      "identity": "1754858869:1688849860902422",
+      "sha256": "7b699e47cc22f25c19d541879cfd98000f38e0c6fab199fc60471fddbd771f64"
+    },
+    "recordsAtSamePath": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      },
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1688849860902422",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue",
+        "updatedAt": "2026-11-27T02:55:51.004Z"
+      }
+    ],
+    "objectBAfterMove": {
+      "path": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA\\dir\\same.md",
+      "exists": true,
+      "identity": "1754858869:1688849860902422",
+      "sha256": "7b699e47cc22f25c19d541879cfd98000f38e0c6fab199fc60471fddbd771f64"
+    },
+    "recordsAfterMove": [
+      {
+        "projectId": "proj-a",
+        "path": "same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1125899907480258",
+        "alias": "原文件A",
+        "tags": [
+          "原件"
+        ],
+        "color": "red",
+        "updatedAt": "2026-11-27T02:55:39.480Z"
+      },
+      {
+        "projectId": "proj-a",
+        "path": "dir/same.md",
+        "rootToken": "1754858869:1125899907480254:1795748127149694700",
+        "identity": "1754858869:1688849860902422",
+        "alias": "新文件B",
+        "tags": [
+          "新件"
+        ],
+        "color": "blue",
+        "updatedAt": "2026-11-27T02:55:51.004Z"
+      }
+    ],
+    "objectAAfterRestore": {
+      "path": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA\\same.md",
+      "exists": true,
+      "identity": "1754858869:1125899907480258",
+      "sha256": "4afcdf10d6c5f58703ccca2469bc51ec63f6ff8119b58c407d1fe111c7243a24"
+    },
+    "configBothKept": {
+      "version": 5,
+      "commitSeq": 30,
+      "issuedIds": [
+        "proj-a"
+      ],
+      "revoked": [],
+      "projects": [
+        {
+          "projectId": "proj-a",
+          "name": "项目A",
+          "rootDir": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA",
+          "canonicalRoot": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "grantedAt": "2026-11-27T00:00:00.000Z",
+          "grantSource": "os-dialog"
+        }
+      ],
+      "hidden": [],
+      "trash": [
+        {
+          "opId": "op-ad918de4-226b-4350-9aa2-e7fb7c1c4267",
+          "projectId": "proj-a",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "originalPath": "same.md",
+          "entryKind": "file",
+          "identity": "1754858869:1125899907480258",
+          "size": 53,
+          "deletedAt": "2026-11-27T02:55:42.539Z",
+          "state": "restored",
+          "restoredAt": "2026-11-27T02:55:58.908Z",
+          "restoredTo": "same.md"
+        }
+      ],
+      "metadata": [
+        {
+          "projectId": "proj-a",
+          "path": "same.md",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "identity": "1754858869:1125899907480258",
+          "alias": "原文件A",
+          "tags": [
+            "原件"
+          ],
+          "color": "red",
+          "updatedAt": "2026-11-27T02:55:39.480Z"
+        },
+        {
+          "projectId": "proj-a",
+          "path": "dir/same.md",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "identity": "1754858869:1688849860902422",
+          "alias": "新文件B",
+          "tags": [
+            "新件"
+          ],
+          "color": "blue",
+          "updatedAt": "2026-11-27T02:55:51.004Z"
+        }
+      ],
+      "checksum": "d3f7d02f2fac76f62da30fa90c320be42a88c639af1382338babb1a593d5f610"
+    },
+    "configAfterRestart": {
+      "version": 5,
+      "commitSeq": 30,
+      "issuedIds": [
+        "proj-a"
+      ],
+      "revoked": [],
+      "projects": [
+        {
+          "projectId": "proj-a",
+          "name": "项目A",
+          "rootDir": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA",
+          "canonicalRoot": "D:\\Workspace\\projects\\weavespace-test\\c04r1\\projA",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "grantedAt": "2026-11-27T00:00:00.000Z",
+          "grantSource": "os-dialog"
+        }
+      ],
+      "hidden": [],
+      "trash": [
+        {
+          "opId": "op-ad918de4-226b-4350-9aa2-e7fb7c1c4267",
+          "projectId": "proj-a",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "originalPath": "same.md",
+          "entryKind": "file",
+          "identity": "1754858869:1125899907480258",
+          "size": 53,
+          "deletedAt": "2026-11-27T02:55:42.539Z",
+          "state": "restored",
+          "restoredAt": "2026-11-27T02:55:58.908Z",
+          "restoredTo": "same.md"
+        }
+      ],
+      "metadata": [
+        {
+          "projectId": "proj-a",
+          "path": "same.md",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "identity": "1754858869:1125899907480258",
+          "alias": "原文件A",
+          "tags": [
+            "原件"
+          ],
+          "color": "red",
+          "updatedAt": "2026-11-27T02:55:39.480Z"
+        },
+        {
+          "projectId": "proj-a",
+          "path": "dir/same.md",
+          "rootToken": "1754858869:1125899907480254:1795748127149694700",
+          "identity": "1754858869:1688849860902422",
+          "alias": "新文件B",
+          "tags": [
+            "新件"
+          ],
+          "color": "blue",
+          "updatedAt": "2026-11-27T02:55:51.004Z"
+        }
+      ],
+      "checksum": "d3f7d02f2fac76f62da30fa90c320be42a88c639af1382338babb1a593d5f610"
+    }
+  },
+  "summary": {
+    "total": 41,
+    "passed": 41,
+    "failed": []
+  }
+}

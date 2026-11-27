@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ERROR_CODES } from '../../../../packages/contracts/index.ts';
-import { isEntryUnder, sameEntryPath } from '../../../../packages/storage/entry-name.ts';
+import { sameEntryPath } from '../../../../packages/storage/entry-name.ts';
 import {
   BACKUP_FILE,
   CONFIG_FILE,
@@ -140,10 +140,14 @@ export interface FileProjectStore {
    */
   metadataOf(projectId: string): readonly ConfigMetadataEntry[];
   /**
-   * 写入一条资源元数据（UX-02C-04）。**三态**语义，每个字段独立：
+   * 写入一条资源元数据（UX-02C-04 / R1-01）。**三态**语义，每个字段独立：
    * - `undefined` → 保持原值（本次不改这一项）；
    * - `null`（`tags` 为 `[]`）→ 清除这一项；
    * - 其它值 → 设置为该值（调用方已做过规范化与校验）。
+   *
+   * 增量合并的**前置条件**是身份四元组完全一致（项目 + 路径 + 根令牌 + 对象身份）：
+   * 路径相同但对象换了，旧记录与本次写入**毫无关系**——既不能拿它的字段补齐，
+   * 也不能因为它存在而覆盖它。这正是"同名新文件不继承旧标注"的写入口保障。
    *
    * 写入后三个字段全空的记录会被**删除**，不保留空壳：
    * "没有标注"只有一种表示，否则界面与配置会出现两种等价的空状态。
@@ -165,31 +169,73 @@ export interface FileProjectStore {
     at?: string;
   }): Promise<{ changed: boolean; entry: ConfigMetadataEntry | null }>;
   /**
-   * 删除一条元数据记录（幂等）。
+   * 删除**某一个对象**的元数据记录（幂等）。
    *
    * 与 `commitMetadata` 的"清除某一项"不同：它把整条记录删掉，
    * 因此**不要求对象仍然存在**（外部删掉文件后仍要能把标注清干净）。
-   */
-  commitMetadataClear(input: { projectId: string; path: string }): Promise<{ changed: boolean }>;
-  /**
-   * 真实改名 / 移动成功后迁移元数据路径（UX-02C-04 / 契约 C3）。
    *
-   * 只在这三种情况下被调用：Host 明确 `APPLIED`、目标路径已知、源与目标都属于
-   * 同一个项目。`UNKNOWN` / 失败一律不调用——那时连"文件到底在哪"都不知道，
-   * 迁移就是把标注名绑到一个猜测的位置上。
+   * R1-01：必须给 `rootToken` 与 `identity`——同一条路径上可能还有别的对象的记录
+   * （历史身份），只按路径删除会把别人的历史一并抹掉。
+   */
+  commitMetadataClear(input: {
+    projectId: string;
+    path: string;
+    rootToken: string;
+    identity: string;
+  }): Promise<{ changed: boolean }>;
+  /**
+   * 清理一条路径上**已失效**的记录（幂等）。
+   *
+   * `currentIdentity` 是 Host 刚刚核验出的当前对象身份（不存在时为 `null`）。
+   * 只删 `identity !== currentIdentity` 的记载：当前对象的记录不受影响，
+   * 其它路径完全不动。这是"显式清理失效记录"与"清除当前对象标注"分开的那一半。
+   */
+  commitMetadataClearStale(input: {
+    projectId: string;
+    path: string;
+    rootToken: string;
+    currentIdentity: string | null;
+  }): Promise<{ changed: boolean; removed: number }>;
+  /**
+   * 真实改名 / 移动成功后迁移元数据路径（UX-02C-04 / 契约 C3，R1-02 重写）。
+   *
+   * 调用方**必须**已经逐条核验过目标位置的对象身份：`moves` 里每一项都是
+   * "这个身份的记录从 `from` 搬到 `to`"。因此这里不再按路径前缀猜任何东西。
    *
    * 语义：
-   * - `path === sourcePath` 或 `path` 在 `sourcePath/` 之下 → 前缀替换成 `targetPath`；
-   * - 目标路径上已有的记录若属于**另一个对象**（`identity` 不同），它是失效记录，
-   *   直接丢弃（它匹配不到任何现存对象，留着只会在下次移动时继续抢占路径）；
-   * - 属于**同一个对象**的重复记录只保留一条；
+   * - 只改 `path`，`rootToken` / `identity` 原样保留（对象没变，只是换了位置）；
+   * - 不碰 `moves` 之外的任何记录——包括目标路径上另一身份的历史记录；
+   * - 同一对象在目标路径已有记录（重复）时只保留一条；
    * - 没有任何记录受影响时 `changed: false`（不写盘）。
    */
-  commitMetadataMove(input: {
+  commitMetadataRelocate(input: {
     projectId: string;
-    sourcePath: string;
-    targetPath: string;
+    rootToken: string;
+    moves: readonly { readonly from: string; readonly to: string; readonly identity: string }[];
   }): Promise<{ changed: boolean; moved: number }>;
+  /**
+   * 内容保存成功后把一条记录的对象身份换成**本次提交写入的那个对象**（R1-01）。
+   *
+   * 为什么必须有：工作区的保存是"临时文件 + rename"，**必然换 inode**。
+   * 不刷新的话，用户标注一个文件、编辑并保存，记录立刻被判成 `rebound`，
+   * 标注就从界面上消失了——而文件其实还是同一个文件。
+   *
+   * 与 `commitHiddenUpdate` 完全同构的 **update-only CAS**：
+   * - 只更新已存在的记录，绝不创建；
+   * - `expectIdentity` 是调用方读到的旧身份，用来拒绝"针对旧记录的迟到刷新"；
+   * - 项目已撤销 / 记录已不存在 / 根不同 / 身份不同 → 一律 `skipped-*`，零写入。
+   */
+  commitMetadataUpdateIdentity(input: {
+    projectId: string;
+    path: string;
+    rootToken: string;
+    identity: string;
+    /** 调用方判定时看到的身份；用于拒绝迟到或被别人改过的刷新。 */
+    expectIdentity: string;
+  }): Promise<{
+    changed: boolean;
+    outcome: 'updated' | 'unchanged' | 'skipped-missing' | 'skipped-conflict';
+  }>;
   /**
    * 该项目的回收记录（只读内存投影，按 `deletedAt` 倒序）。
    *
@@ -1131,15 +1177,34 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       return current.metadata
         .filter((entry) => entry.projectId === projectId)
         .slice()
-        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+        .sort((a, b) =>
+          a.path === b.path
+            ? a.identity === b.identity
+              ? a.rootToken < b.rootToken
+                ? -1
+                : a.rootToken > b.rootToken
+                  ? 1
+                  : 0
+              : a.identity < b.identity
+                ? -1
+                : 1
+            : a.path < b.path
+              ? -1
+              : 1,
+        );
     },
 
     /**
-     * 写入一条资源元数据（UX-02C-04）。
+     * 写入一条资源元数据（UX-02C-04 / R1-01）。
      *
      * 三个字段各自三态（`undefined` 不改 / `null` 清除 / 值 设置），合并后的**整条**
      * 记录才是这次提交的结果。这样"只改颜色"不会把别的窗口刚写的标签覆盖回旧值——
      * 因为没传的字段根本不参与写入。
+     *
+     * R1-01：参与合并的"已有记录"必须**身份四元组完全一致**。路径相同但对象换了时，
+     * 那条旧记录与本次写入无关：
+     * - 不能拿它的 `alias` / `tags` 补齐（否则新文件继承了旧标注）；
+     * - 也不能因为它存在而覆盖它（否则旧对象的历史被静默销毁，恢复后标注就没了）。
      *
      * 全程同步：`writeConfigAtomic` 内部无 await，因此与其它配置提交之间不存在
      * "读旧值—写新值"的交错。
@@ -1157,14 +1222,14 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       }
 
       const existing = current.metadata.find(
-        (entry) => entry.projectId === input.projectId && sameEntryPath(entry.path, input.path),
+        (entry) =>
+          entry.projectId === input.projectId &&
+          sameEntryPath(entry.path, input.path) &&
+          entry.rootToken === input.rootToken &&
+          entry.identity === input.identity,
       );
 
-      /*
-       * 身份变了（同一路径换了对象）→ 旧记录作废，本次写入以新身份为准。
-       * 这是"新文件不继承旧标注"的写入口保障：读取侧还有一道 `rebound` 判定，
-       * 但那道判定只在记录还带着旧身份时才会命中。
-       */
+      // 只有当记录真的属于**同一个对象**时才做增量合并；否则本次是一条新记录
       const alias = input.alias === undefined ? existing?.alias : input.alias === null ? undefined : input.alias;
       const tags = input.tags === undefined ? (existing?.tags ?? []) : input.tags;
       const color =
@@ -1256,11 +1321,21 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       return { changed: true, entry: record };
     },
 
+    /**
+     * 删除**某一个对象**的元数据记录（R1-01）。
+     *
+     * 只按路径找记录是不够的：同一路径可能还留着别的对象的历史记录，
+     * 按路径删除会把它们一起抹掉——那正是"清除当前对象"最不该发生的事。
+     */
     async commitMetadataClear(input) {
       assertOpen();
       assertMutationsAllowed();
       const existing = current.metadata.find(
-        (entry) => entry.projectId === input.projectId && sameEntryPath(entry.path, input.path),
+        (entry) =>
+          entry.projectId === input.projectId &&
+          sameEntryPath(entry.path, input.path) &&
+          entry.rootToken === input.rootToken &&
+          entry.identity === input.identity,
       );
       if (!existing) return { changed: false };
       const next: ConfigState = {
@@ -1287,52 +1362,23 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
     },
 
     /**
-     * 结构变更成功后的路径迁移（UX-02C-04 / 契约 C3）。
+     * 清理一条路径上的**失效记录**（R1-01 / R1-03）。
      *
-     * 只改 `path`：`rootToken` / `identity` 原样保留——对象没有变，只是换了位置。
-     * 目录改名/移动时按前缀覆盖全部后代（`docs` → `doc`，`docs/a.md` → `doc/a.md`）。
+     * 与 `commitMetadataClear` 的分工：那里删的是"当前对象那一条"，
+     * 这里删的是"不再是当前对象的那些"。两者都只动给定路径，互不代劳。
      */
-    async commitMetadataMove(input) {
+    async commitMetadataClearStale(input) {
       assertOpen();
       assertMutationsAllowed();
-      const source = input.sourcePath;
-      const target = input.targetPath;
-      if (source === '' || target === '' || sameEntryPath(source, target)) return { changed: false, moved: 0 };
-
-      const isUnder = (path: string): boolean => isEntryUnder(path, source);
-      const pathKey = (path: string): string => (process.platform === 'win32' ? path.toLowerCase() : path);
-
-      const affected = current.metadata.filter((entry) => entry.projectId === input.projectId && isUnder(entry.path));
-      if (affected.length === 0) return { changed: false, moved: 0 };
-
-      const moving = new Set(affected);
-      const rewritten = affected.map((entry) => ({
-        ...entry,
-        path: sameEntryPath(entry.path, source) ? target : `${target}${entry.path.slice(source.length)}`,
-      }));
-
-      /*
-       * 目标位置可能已经有记录：
-       * - 与移动过来的是**同一个对象**（identity 相同）→ 只保留一条；
-       * - 是另一个对象（identity 不同）→ 它是失效记录（那个对象早就不在目标位置了），
-       *   丢弃它，让移动过来的记录接管这个路径。绝不能反过来把移动过来的丢掉：
-       *   那等于用户刚给文件起的标注名在一次移动后就消失了。
-       */
-      const byPath = new Map<string, ConfigMetadataEntry>();
-      for (const entry of current.metadata) {
-        if (moving.has(entry) || entry.projectId !== input.projectId) continue;
-        byPath.set(pathKey(entry.path), entry);
-      }
-      let moved = 0;
-      for (const entry of rewritten) {
-        const key = pathKey(entry.path);
-        const occupant = byPath.get(key);
-        if (occupant && occupant.identity === entry.identity) continue;
-        byPath.set(key, entry);
-        moved += 1;
-      }
-
-      const untouched = current.metadata.filter((entry) => !moving.has(entry) && entry.projectId !== input.projectId);
+      const doomed = current.metadata.filter(
+        (entry) =>
+          entry.projectId === input.projectId &&
+          entry.rootToken === input.rootToken &&
+          sameEntryPath(entry.path, input.path) &&
+          entry.identity !== input.currentIdentity,
+      );
+      if (doomed.length === 0) return { changed: false, removed: 0 };
+      const drop = new Set(doomed);
       const next: ConfigState = {
         version: 5,
         commitSeq: current.commitSeq + 1,
@@ -1341,7 +1387,82 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
         projects: current.projects,
         hidden: current.hidden,
         trash: current.trash,
-        metadata: [...untouched, ...byPath.values()],
+        metadata: current.metadata.filter((entry) => !drop.has(entry)),
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        throw Object.assign(new Error('失效的资源元数据未能从工作区配置中删除'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true, removed: doomed.length };
+    },
+
+    /**
+     * 结构变更成功后的路径迁移（UX-02C-04 / 契约 C3，R1-02 重写）。
+     *
+     * 这里**不再按路径前缀推断任何东西**：`moves` 是调用方逐条核验对象身份之后
+     * 给出的"这个身份从哪搬到哪"。因此"旧对象的记录跟着新对象走"这类错误
+     * 在类型上就表达不出来。
+     *
+     * 只改 `path`，`rootToken` / `identity` 原样保留——对象没变，只是换了位置。
+     */
+    async commitMetadataRelocate(input) {
+      assertOpen();
+      assertMutationsAllowed();
+      const keyOf = (path: string, identity: string): string =>
+        `${process.platform === 'win32' ? path.toLowerCase() : path}\u0000${identity}`;
+      const moveByKey = new Map(
+        input.moves
+          .filter((move) => move.from !== '' && move.to !== '' && !sameEntryPath(move.from, move.to))
+          .map((move) => [keyOf(move.from, move.identity), move] as const),
+      );
+      if (moveByKey.size === 0) return { changed: false, moved: 0 };
+
+      const relocated: ConfigMetadataEntry[] = [];
+      const kept: ConfigMetadataEntry[] = [];
+      let moved = 0;
+      for (const entry of current.metadata) {
+        const move =
+          entry.projectId === input.projectId && entry.rootToken === input.rootToken
+            ? moveByKey.get(keyOf(entry.path, entry.identity))
+            : undefined;
+        if (!move) {
+          kept.push(entry);
+          continue;
+        }
+        relocated.push({ ...entry, path: move.to });
+        moved += 1;
+      }
+      if (moved === 0) return { changed: false, moved: 0 };
+
+      /*
+       * 同一对象在目标路径已有记录（同项目 + 同根令牌 + 同身份 + 同路径）时只保留一条：
+       * 那说明之前的迁移没写全或者同一路径被访问了两次，重复记录会让"显示哪一条"
+       * 变成未定义。**只按四元组判重**——目标路径上别的身份的历史记录一律保留。
+       */
+      const seen = new Set(kept.map((entry) => keyOf(entry.path, entry.identity)));
+      const deduped: ConfigMetadataEntry[] = [];
+      for (const entry of relocated) {
+        const key = keyOf(entry.path, entry.identity);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(entry);
+      }
+
+      const next: ConfigState = {
+        version: 5,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: current.hidden,
+        trash: current.trash,
+        metadata: [...kept, ...deduped],
       };
       try {
         writeConfigAtomic(next);
@@ -1353,7 +1474,59 @@ export function createFileProjectStore(options: FileStoreOptions): FileProjectSt
       }
       applyConfig(next);
       state = { ...state, commitSeq: next.commitSeq };
-      return { changed: true, moved };
+      return { changed: true, moved: deduped.length };
+    },
+
+    /**
+     * 内容保存后的身份再绑定（R1-01）。与 `commitHiddenUpdate` 同一套 CAS 语义：
+     * 只更新、不创建，任何一项对不上就如实回报 `skipped-*`。
+     */
+    async commitMetadataUpdateIdentity(input) {
+      assertOpen();
+      assertMutationsAllowed();
+      if (input.identity === '' || input.expectIdentity === '') {
+        throw domainError(ERROR_CODES.ERR_COMMAND_INVALID, '缺少对象身份，不能刷新资源标注');
+      }
+      // 项目已不在（撤销/移除）：记录随撤销被清理，这里同样是"没有可更新的记录"
+      if (!current.projects.some((project) => project.projectId === input.projectId)) {
+        return { changed: false, outcome: 'skipped-missing' as const };
+      }
+
+      const existing = current.metadata.find(
+        (entry) =>
+          entry.projectId === input.projectId &&
+          sameEntryPath(entry.path, input.path) &&
+          entry.rootToken === input.rootToken &&
+          entry.identity === input.expectIdentity,
+      );
+      if (!existing) {
+        // 没有"这一身份"的记录：可能是别人正在清理、或是另一条历史记录，一律不动
+        return { changed: false, outcome: 'skipped-missing' as const };
+      }
+      if (existing.identity === input.identity) return { changed: false, outcome: 'unchanged' as const };
+
+      const record: ConfigMetadataEntry = { ...existing, identity: input.identity };
+      const next: ConfigState = {
+        version: 5,
+        commitSeq: current.commitSeq + 1,
+        issuedIds: current.issuedIds,
+        revoked: current.revoked,
+        projects: current.projects,
+        hidden: current.hidden,
+        trash: current.trash,
+        metadata: current.metadata.map((entry) => (entry === existing ? record : entry)),
+      };
+      try {
+        writeConfigAtomic(next);
+      } catch (err) {
+        throw Object.assign(new Error('资源标注的对象身份未能写入工作区配置'), {
+          errorCode: ERROR_CODES.ERR_PERSIST_FAILED,
+          cause: err,
+        });
+      }
+      applyConfig(next);
+      state = { ...state, commitSeq: next.commitSeq };
+      return { changed: true, outcome: 'updated' as const };
     },
 
     trashOf(projectId) {

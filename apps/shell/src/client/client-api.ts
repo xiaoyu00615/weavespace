@@ -16,6 +16,7 @@ import {
   type InstanceLockPort,
   type InstanceStoragePort,
 } from './page-instance.ts';
+import { METADATA_ANCHOR_RE } from '../../../../packages/contracts/metadata.ts';
 
 export type ClientMode = 'demo' | 'live';
 
@@ -249,6 +250,11 @@ export type MetadataOutcome =
       projectId: string;
       path: string;
       changed: boolean;
+      /**
+       * 清除范围（只有清除会返回）：`object` = 当前对象那一条；
+       * `stale` = 该路径上的失效记录。两者必须可区分，界面文案不能混。
+       */
+      scope?: 'object' | 'stale';
       /** 写入后的完整展示状态；全空时为 `{ tags: [] }`。 */
       metadata: ResourceMetadataDto;
     }
@@ -265,6 +271,17 @@ export interface ResourceMetadataPatch {
   alias?: string | null;
   tags?: string[];
   color?: string | null;
+}
+
+/**
+ * 编辑会话的身份预期（UX-02C-04-R1）。
+ *
+ * 只是**前置条件**：Host 用它和"自己核验出的身份"比对，对不上就拒绝。
+ * 它不是身份，也不是授权——客户端既推不出真实身份，也不能靠它获得任何权限。
+ */
+export interface ResourceMetadataExpectation {
+  /** 打开对话框那一刻从树行上捕获的资源锚。 */
+  anchor?: string;
 }
 
 /** 元数据记录当前是否仍然成立（与隐藏同一套四态）。 */
@@ -398,6 +415,15 @@ export type TreeQueryOutcome =
       page: TreePageMeta;
       /** 项目根展示项的元数据（只在 `level === ''` 且项目有标注时出现）。 */
       projectMeta?: ResourceMetadataDto;
+      /** 项目根的资源锚（只在 `level === ''` 时出现）：编辑会话的身份预期。 */
+      projectAnchor?: string;
+      /**
+       * 本页条目的资源锚（`relPath → 32 位十六进制`）。
+       *
+       * 刻意不放进 `TreeEntry`：它由对象身份派生，而"保存文件"会换 inode，
+       * 放进条目会让任何一次普通保存都改变"条目集合"（见 `TreePageDto.anchors`）。
+       */
+      anchors?: Readonly<Record<string, string>>;
     }
   | {
       status: 'REJECTED';
@@ -851,14 +877,28 @@ export interface WeaveSpaceClient {
    *
    * 只提交用户改过的字段：没传的字段保持原值——两个窗口同时改同一个文件时，
    * "只改颜色"不会把对方刚写的标签覆盖回旧值。
+   *
+   * `expect` 携带打开对话框时的资源锚：Host 比对不上就拒绝（目标对象已被替换），
+   * 绝不让这次草稿落到新对象上。省略它表示"不声明身份预期"（旧调用方）。
    */
   setResourceMetadata(
     projectId: string,
     path: string,
     patch: ResourceMetadataPatch,
+    expect?: ResourceMetadataExpectation,
   ): Promise<MetadataOutcome>;
-  /** 清除整条元数据记录（不要求对象仍存在）。 */
-  clearResourceMetadata(projectId: string, path: string): Promise<MetadataOutcome>;
+  /**
+   * 清除元数据记录。
+   *
+   * `scope` 缺省 `object`：只清**当前对象**那一条（带 `expect` 时对象缺失即拒绝）；
+   * `stale` 是显式的失效清理：只删身份对不上的历史记录。
+   */
+  clearResourceMetadata(
+    projectId: string,
+    path: string,
+    expect?: ResourceMetadataExpectation,
+    scope?: 'object' | 'stale',
+  ): Promise<MetadataOutcome>;
   /** 查询元数据记录及其当前状态（只读；含 missing / rebound 这类失效态）。 */
   resourceMetadata(projectId: string): Promise<MetadataListOutcome>;
 
@@ -1134,9 +1174,26 @@ function metadataFieldsOrUndefined(raw: unknown): ResourceMetadataDto | undefine
  */
 function normalizeTreeEntry(entry: TreeEntry): TreeEntry {
   if (typeof entry !== 'object' || entry === null) return entry;
-  const meta = metadataFieldsOrUndefined((entry as { meta?: unknown }).meta);
-  const { meta: _ignored, ...rest } = entry as TreeEntry & { meta?: unknown };
+  const raw = entry as TreeEntry & { meta?: unknown };
+  const meta = metadataFieldsOrUndefined(raw.meta);
+  const { meta: _ignored, ...rest } = raw;
   return (meta ? { ...rest, meta } : rest) as TreeEntry;
+}
+
+/**
+ * 资源锚表窄化（UX-02C-04-R1）：只保留形状合法的项。
+ *
+ * 形状不对就**当没有**——绝不用一个来路不明的字符串去做身份比对（那样只会
+ * 把"无法确认"伪装成"确认过"）。
+ */
+function normalizeAnchors(raw: unknown): Readonly<Record<string, string>> | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === '') continue;
+    if (typeof value === 'string' && METADATA_ANCHOR_RE.test(value)) out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
@@ -1214,6 +1271,8 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         entries?: TreeEntry[];
         page?: Partial<TreePageMeta>;
         projectMeta?: unknown;
+        projectAnchor?: unknown;
+        anchors?: unknown;
       };
       // 响应形状不完整时按"拒绝"处理，绝不把半截数据渲染成一棵不完整的树
       const entries = Array.isArray(asTree.entries) ? asTree.entries.map(normalizeTreeEntry) : null;
@@ -1222,11 +1281,19 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_INTERNAL', message: '目录响应不完整' };
       }
       const projectMeta = metadataFieldsOrUndefined(asTree.projectMeta);
+      // 资源锚只接受契约形状；形状不对就当"没有"（绝不用它做任何比对）
+      const projectAnchor =
+        typeof asTree.projectAnchor === 'string' && METADATA_ANCHOR_RE.test(asTree.projectAnchor)
+          ? asTree.projectAnchor
+          : undefined;
+      const anchors = normalizeAnchors(asTree.anchors);
       return {
         status: 'APPLIED' as const,
         level: typeof asTree.level === 'string' ? asTree.level : dir,
         entries,
         ...(projectMeta ? { projectMeta } : {}),
+        ...(projectAnchor ? { projectAnchor } : {}),
+        ...(anchors ? { anchors } : {}),
         page: {
           limit: typeof page.limit === 'number' ? page.limit : entries.length,
           cursor: page.cursor ?? null,
@@ -1869,17 +1936,22 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
 
     /* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
 
-    async setResourceMetadata(projectId, path, patch) {
+    async setResourceMetadata(projectId, path, patch, expect) {
       // 只把**用户真的改过**的字段发出去：没传的字段由 Host 保持原值
       const payload: Record<string, unknown> = { projectId, path };
       if (patch.alias !== undefined) payload.alias = patch.alias;
       if (patch.tags !== undefined) payload.tags = patch.tags;
       if (patch.color !== undefined) payload.color = patch.color;
+      // 资源锚只是前置条件：有才发，绝不补一个客户端猜测的值
+      if (expect?.anchor) payload.anchor = expect.anchor;
       return postMetadata('/api/metadata/set', payload);
     },
 
-    async clearResourceMetadata(projectId, path) {
-      return postMetadata('/api/metadata/clear', { projectId, path });
+    async clearResourceMetadata(projectId, path, expect, scope) {
+      const payload: Record<string, unknown> = { projectId, path };
+      if (expect?.anchor) payload.anchor = expect.anchor;
+      if (scope) payload.scope = scope;
+      return postMetadata('/api/metadata/clear', payload);
     },
 
     async resourceMetadata(projectId) {
@@ -2150,11 +2222,13 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
     const { httpStatus, body } = response;
     if (httpStatus === 200 && body.status === 'APPLIED') {
       const raw = (body as unknown as { metadata?: unknown }).metadata;
+      const rawScope = (body as unknown as { scope?: unknown }).scope;
       return {
         status: 'APPLIED',
         projectId: typeof body.projectId === 'string' ? body.projectId : projectId,
         path: typeof body.path === 'string' ? body.path : path,
         changed: body.changed === false ? false : true,
+        ...(rawScope === 'object' || rawScope === 'stale' ? { scope: rawScope } : {}),
         metadata: raw === null ? { tags: [] } : metadataFieldsOf(raw),
       };
     }
@@ -2276,6 +2350,8 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         targetName?: unknown;
         entryKind?: unknown;
         contentSha256?: unknown;
+        metadataMigration?: unknown;
+        metadataMoved?: unknown;
       };
       if (
         typeof applied.sourcePath === 'string' &&
@@ -2284,6 +2360,28 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
         typeof applied.targetName === 'string' &&
         (applied.entryKind === 'file' || applied.entryKind === 'directory')
       ) {
+        /*
+         * 标注迁移结论（UX-02C-04-R1 / R1-04）。
+         *
+         * 三个取值只有字面量可信：任何其它写法（旧版服务端、拼错的字段、被中间层
+         * 改过的响应）一律按 `none` 处理——绝不能让一个来路不明的字符串把
+         * "标注其实没迁移"说成"已迁移"。
+         *
+         * `metadataMoved` 只接受**正整数**：0 与非法值都等同于"没有该字段"，
+         * 界面就不会出现"迁移了 0 条"这种自相矛盾的提示。
+         */
+        const migration =
+          applied.metadataMigration === 'moved' ||
+          applied.metadataMigration === 'none' ||
+          applied.metadataMigration === 'failed'
+            ? applied.metadataMigration
+            : 'none';
+        const movedCount =
+          typeof applied.metadataMoved === 'number' &&
+          Number.isInteger(applied.metadataMoved) &&
+          applied.metadataMoved > 0
+            ? applied.metadataMoved
+            : undefined;
         return {
           status: 'APPLIED',
           projectId: identity.projectId,
@@ -2293,6 +2391,8 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
           targetName: applied.targetName,
           entryKind: applied.entryKind,
           contentSha256: typeof applied.contentSha256 === 'string' ? applied.contentSha256 : null,
+          metadataMigration: migration,
+          ...(movedCount !== undefined ? { metadataMoved: movedCount } : {}),
         };
       }
     }

@@ -1,12 +1,19 @@
 /**
- * 资源标注的 Shell 编排（UX-02C-04）：对话框状态 + 单飞提交 + 保存后刷新。
+ * 资源标注的 Shell 编排（UX-02C-04 / R1-03）：对话框状态 + 单飞提交 + 归属核对。
  *
  * 为什么要单独一层而不是继续塞进 `DocumentActionsContext`：
  * - `DocumentActions` 的职责是"打开/编辑/保存的编排"，它已经很长；
  * - 标注是**行级展示元数据**，与文档会话、草稿、标签页毫无关系，
  *   混进去只会让两边的依赖互相牵扯；
- * - 这里只依赖 `DocumentActions` 提供的三个动作（设置 / 清除 / 刷新该层），
- *   不 fetch、不碰配置、不复制任何身份或安全判定。
+ * - 这里只依赖 `DocumentActions` 提供的窄动作（设置 / 清除 / 刷新该层 /
+ *   身份键 / 该行当前状态），不 fetch、不碰配置、不复制任何身份或安全判定。
+ *
+ * R1-03 的关键点：对话框打开的那一刻就是一个**会话**，它绑定
+ * `工作区身份 + 项目 + 路径 + 资源锚`。判定逻辑全在 `metadata-session.ts`
+ * （纯 TS，可被 node:test 直接驱动），这里只负责：
+ * - 打开时冻结绑定、把当前行状态交给判定层；
+ * - 提交/清除时把绑定原样交给 runner，由它在提交前后各判一次归属；
+ * - 归属不成立时**一个请求都不发**，并给出"没有保存"而不是"保存失败"的提示。
  *
  * 交互纪律：
  * - 一次只有一个编辑会话（单飞），避免同一行被双击产生两条并发写入；
@@ -20,13 +27,16 @@ import type { ResourceMetadataDto } from '../client/client-api.ts';
 import { useDocumentActions } from './DocumentActionsContext.tsx';
 import { useWorkspace } from './WorkspaceContext.tsx';
 import {
+  createMetadataRunner,
+  type MetadataRunner,
+  type MetadataRunnerHost,
+  type MetadataSessionBinding,
+} from './metadata-session.ts';
+import {
   addTagToDraft,
   draftErrorOf,
   draftOf,
-  metadataClearedNotice,
   metadataNoopNotice,
-  metadataSavedNotice,
-  metadataUnknownNotice,
   patchIsEmpty,
   patchOfDraft,
   removeTagFromDraft,
@@ -50,6 +60,12 @@ export interface MetadataSession {
   readonly submitting: boolean;
   /** 打开时希望聚焦的分区（右键点了哪一项）。 */
   readonly focus: 'alias' | 'tags' | 'color';
+  /**
+   * 打开时冻结的归属（工作区身份 + 项目 + 路径 + 资源锚）。
+   *
+   * 提交与清除都只认这份绑定：界面之后怎么变都不影响"这次编辑原本指向谁"。
+   */
+  readonly binding: MetadataSessionBinding;
 }
 
 interface MetadataContextValue {
@@ -75,10 +91,49 @@ export function MetadataProvider({ children }: { children: ReactNode }) {
   /** 单飞：一次只允许一个写入在途（对话框是模态的，但回车键可能连发两次）。 */
   const busy = useRef(false);
 
-  const open = useCallback((target: MetadataTarget, focus: 'alias' | 'tags' | 'color' = 'alias') => {
-    if (busy.current) return;
-    setSession({ target, draft: draftOf(target.meta), error: null, submitting: false, focus });
-  }, []);
+  /*
+   * runner 的端口全是 `actions` 上的窄方法：没有一处自己拼身份、自己读盘、
+   * 自己决定要不要刷新。这样"归属判定"只有 `metadata-session.ts` 一个答案。
+   */
+  const runner = useMemo<MetadataRunner>(() => {
+    const host: MetadataRunnerHost = {
+      identityKey: () => actions.metadataIdentityKey(),
+      targetState: (projectId, path) => actions.metadataTargetState(projectId, path),
+      set: (projectId, path, patch, anchor) =>
+        actions.setResourceMetadata(projectId, path, patch, anchor === null ? undefined : { anchor }),
+      clear: (projectId, path, anchor) =>
+        actions.clearResourceMetadata(projectId, path, anchor === null ? undefined : { anchor }),
+      refresh: (projectId, path) => actions.applyMetadataChange(projectId, path),
+      notice: (message) => dispatch({ type: 'NOTICE', message }),
+    };
+    return createMetadataRunner(host);
+  }, [actions, dispatch]);
+
+  const open = useCallback(
+    (target: MetadataTarget, focus: 'alias' | 'tags' | 'color' = 'alias') => {
+      if (busy.current) return;
+      /*
+       * 绑定在这里**冻结**：身份键与资源锚都取打开这一刻的值。
+       * 之后无论用户切工作区、文件被替换还是行被刷新，都不会改这份绑定——
+       * 它记录的是"用户以为自己在编辑谁"，不是"现在是谁"。
+       */
+      const state = actions.metadataTargetState(target.projectId, target.path);
+      setSession({
+        target,
+        draft: draftOf(target.meta),
+        error: null,
+        submitting: false,
+        focus,
+        binding: {
+          key: actions.metadataIdentityKey(),
+          projectId: target.projectId,
+          path: target.path,
+          anchor: state.anchor,
+        },
+      });
+    },
+    [actions],
+  );
 
   const close = useCallback(() => {
     if (busy.current) return;
@@ -124,73 +179,30 @@ export function MetadataProvider({ children }: { children: ReactNode }) {
     }
     busy.current = true;
     setSession((state) => (state ? { ...state, submitting: true, error: null } : state));
-    try {
-      const outcome = await actions.setResourceMetadata(current.target.projectId, current.target.path, patch);
-      if (outcome.status === 'APPLIED') {
-        // 先刷新再提示：提示"已保存"时行上必须真的已经是新值
-        await actions.applyMetadataChange(current.target.projectId, current.target.path);
-        dispatch({
-          type: 'NOTICE',
-          message: outcome.changed
-            ? metadataSavedNotice(outcome.metadata.alias)
-            : metadataNoopNotice(),
-        });
-        busy.current = false;
-        setSession(null);
-        return;
-      }
-      if (outcome.status === 'UNKNOWN') {
-        // 幂等写入：结果未知时只刷新核对，不重发、不宣布成功
-        await actions.applyMetadataChange(current.target.projectId, current.target.path);
-        dispatch({ type: 'NOTICE', message: metadataUnknownNotice() });
-        busy.current = false;
-        setSession(null);
-        return;
-      }
-      busy.current = false;
-      setSession((state) =>
-        state ? { ...state, submitting: false, error: outcome.message ?? '资源标注保存失败' } : state,
-      );
-    } catch {
-      busy.current = false;
-      setSession((state) =>
-        state ? { ...state, submitting: false, error: '资源标注保存失败：本地服务不可用' } : state,
-      );
+    const result = await runner.submit(current.binding, patch);
+    busy.current = false;
+    // 归属已变 / 已保存 / 未确认：这次会话到此结束（旧结果不会落到新界面）
+    if (result.kind !== 'rejected') {
+      setSession(null);
+      return;
     }
-  }, [actions, dispatch, session]);
+    // 只有"试过了、Host 拒绝"才留在对话框里，让用户看到原因并修正
+    setSession((state) => (state ? { ...state, submitting: false, error: result.message } : state));
+  }, [dispatch, runner, session]);
 
   const clearAll = useCallback(async () => {
     const current = session;
     if (!current || busy.current) return;
     busy.current = true;
     setSession((state) => (state ? { ...state, submitting: true, error: null } : state));
-    try {
-      const outcome = await actions.clearResourceMetadata(current.target.projectId, current.target.path);
-      if (outcome.status === 'APPLIED') {
-        await actions.applyMetadataChange(current.target.projectId, current.target.path);
-        dispatch({ type: 'NOTICE', message: metadataClearedNotice() });
-        busy.current = false;
-        setSession(null);
-        return;
-      }
-      if (outcome.status === 'UNKNOWN') {
-        await actions.applyMetadataChange(current.target.projectId, current.target.path);
-        dispatch({ type: 'NOTICE', message: metadataUnknownNotice() });
-        busy.current = false;
-        setSession(null);
-        return;
-      }
-      busy.current = false;
-      setSession((state) =>
-        state ? { ...state, submitting: false, error: outcome.message ?? '清除标注失败' } : state,
-      );
-    } catch {
-      busy.current = false;
-      setSession((state) =>
-        state ? { ...state, submitting: false, error: '清除标注失败：本地服务不可用' } : state,
-      );
+    const result = await runner.clear(current.binding);
+    busy.current = false;
+    if (result.kind !== 'rejected') {
+      setSession(null);
+      return;
     }
-  }, [actions, dispatch, session]);
+    setSession((state) => (state ? { ...state, submitting: false, error: result.message } : state));
+  }, [runner, session]);
 
   const value = useMemo<MetadataContextValue>(
     () => ({ session, open, close, setAlias, addTag, removeTag, setColor, submit, clearAll }),

@@ -171,6 +171,33 @@ export function blockedText(codes: readonly string[]): string {
   return `无法改名或移动：${parts}。请先关闭相关标签并处理草稿，操作没有任何磁盘副作用。`;
 }
 
+/**
+ * 结构变更结果里的"标注迁移"结论（UX-02C-04-R1 / R1-04）。
+ *
+ * 三种结论必须说清楚，尤其是 `failed`：
+ * **磁盘已经变了**，只是配置没写进去。若把它说成"改名失败"，用户会去重试一次
+ * 真实操作（那时源路径已经不存在），或者以为文件没动。文案里必须同时出现
+ * "文件已移动"和"资源标注未能迁移"两件事。
+ */
+export type StructureMetadataMigration = 'moved' | 'none' | 'failed';
+
+export function structureMetadataNote(migration: StructureMetadataMigration | undefined): string {
+  if (migration === 'failed') return '文件已移动，但资源标注未能随文件迁移。';
+  if (migration === 'moved') return '资源标注已随文件迁移。';
+  return '';
+}
+
+/** 改名 / 移动成功的完整提示（含标注迁移结论）。 */
+export function structureChangeNotice(outcome: {
+  readonly sourcePath: string;
+  readonly targetPath: string;
+  readonly metadataMigration?: StructureMetadataMigration | undefined;
+}): string {
+  const base = `已把「${outcome.sourcePath}」变更为「${outcome.targetPath}」（只刷新了相关目录）`;
+  const note = structureMetadataNote(outcome.metadataMigration);
+  return note ? `${base}；${note}` : base;
+}
+
 export interface StructureRunnerHost {
   rename(projectId: string, sourcePath: string, name: string): Promise<StructureChangeOutcome>;
   move(

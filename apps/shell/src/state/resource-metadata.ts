@@ -170,6 +170,49 @@ export function metadataUnknownNotice(): string {
   return '标注保存结果未确认：已刷新该目录，请核对后再决定是否重试（不会自动重发）';
 }
 
+/**
+ * 编辑会话归属失效的原因（UX-02C-04-R1）。
+ *
+ * 四种原因与"保存失败"是**两件事**：失败是"试过了、Host 拒绝了"，
+ * 这里是"这次编辑已经不再指向原来那个对象/工作区"，因此提示文案里
+ * 不允许出现"失败"二字，也不该建议用户"重试"同一个对话框。
+ */
+export type MetadataStaleReason =
+  | 'workspace-switched'
+  | 'target-changed'
+  | 'target-missing'
+  | 'target-unverified';
+
+export const METADATA_STALE_REASONS: readonly MetadataStaleReason[] = Object.freeze([
+  'workspace-switched',
+  'target-changed',
+  'target-missing',
+  'target-unverified',
+] as MetadataStaleReason[]);
+
+const STALE_TEXTS: Readonly<Record<MetadataStaleReason, { readonly save: string; readonly clear: string }>> = {
+  'workspace-switched': {
+    save: '工作区已切换，这次标注没有保存（请在新工作区重新打开对话框）',
+    clear: '工作区已切换，这次清除没有执行',
+  },
+  'target-changed': {
+    save: '目标资源已被替换，这次标注没有保存（请对当前文件重新设置）',
+    clear: '目标资源已被替换，这次清除没有执行（不会删掉别的对象的标注）',
+  },
+  'target-missing': {
+    save: '目标资源已不存在，这次标注没有保存',
+    clear: '目标资源已不存在，这次清除没有执行',
+  },
+  'target-unverified': {
+    save: '无法确认目标资源的身份，这次标注没有保存（请刷新后重试）',
+    clear: '无法确认目标资源的身份，这次清除没有执行（请刷新后重试）',
+  },
+};
+
+export function metadataStaleNotice(reason: MetadataStaleReason, action: 'save' | 'clear'): string {
+  return STALE_TEXTS[reason][action];
+}
+
 export interface MetadataCommandState {
   readonly visible: boolean;
   readonly disabled: boolean;

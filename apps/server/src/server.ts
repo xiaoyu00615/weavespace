@@ -38,6 +38,7 @@ import { realpathSync } from 'node:fs';
 import {
   createLocalProvider,
   entryRelativePath,
+  isEntryUnder,
   isReservedPath,
   rootTokenOf,
   sameEntryPath,
@@ -81,6 +82,7 @@ import {
   displayOf,
   isEmptyDisplay,
   markMetadata,
+  metadataAnchorOf,
   parseMetadataClearBody,
   parseMetadataSetBody,
   type MetadataRecordState,
@@ -97,7 +99,7 @@ import {
   type TrashProbe,
   PROJECT_ID_RE,
 } from './trash.ts';
-import type { ConfigHiddenEntry, ConfigTrashEntry } from './store/index.ts';
+import type { ConfigHiddenEntry, ConfigMetadataEntry, ConfigTrashEntry } from './store/index.ts';
 
 export type SaveOutcomeStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN';
 
@@ -289,6 +291,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
       return 403;
     // 资源标注容量上限：需要先清理，属冲突而非服务端故障（UX-02C-04）
     case 'ERR_METADATA_LIMIT':
+    // 编辑会话的目标对象已经换了：拒绝写入，绝不把旧草稿写到新对象上（UX-02C-04-R1）
+    case 'ERR_METADATA_TARGET_CHANGED':
       return 409;
     // 链接不可展开：客户端指错了对象（既不是路径越界，也不是权限问题）。
     case 'ERR_DIR_IS_LINK':
@@ -387,6 +391,36 @@ function assertPathNotReserved(path: string): void {
   }
 }
 
+/**
+ * 资源锚比对（UX-02C-04-R1 / R1-03）。
+ *
+ * `anchor` 缺省 = 这条请求不携带身份预期（兼容旧客户端与"文件已不存在时清理记录"）。
+ * 一旦携带，就必须与 Host 自己算出的锚完全一致：不一致说明目标对象已经被替换，
+ * 这次编辑不再指向它。锚不参与授权，也绝不被当成客户端自述的身份。
+ */
+function assertMetadataAnchorMatches(input: {
+  anchor: string | undefined;
+  projectId: string;
+  path: string;
+  rootToken: string;
+  identity: string;
+}): void {
+  if (input.anchor === undefined) return;
+  const expected = metadataAnchorOf({
+    projectId: input.projectId,
+    path: input.path,
+    rootToken: input.rootToken,
+    identity: input.identity,
+  });
+  if (expected !== input.anchor) {
+    throw new HttpError(
+      409,
+      'ERR_METADATA_TARGET_CHANGED',
+      PUBLIC_ERROR_MESSAGES.ERR_METADATA_TARGET_CHANGED ?? '目标资源已被替换，标注未保存',
+    );
+  }
+}
+
 class HttpError extends Error {
   readonly statusCode: number;
   readonly errorCode: string;
@@ -467,6 +501,7 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_TRASH_STATE_CONFLICT: '该回收记录当前不可执行此操作，需要人工核对',
   ERR_ENTRY_SOURCE_CHANGED: '该路径上的文件已被外部替换，未执行任何移动',
   ERR_METADATA_LIMIT: '资源标注已达上限，请先清理部分标注再保存',
+  ERR_METADATA_TARGET_CHANGED: '目标资源已被替换或已不存在，标注未保存（请对当前文件重新设置）',
 };
 
 function publicMessageOf(errorCode: ErrorCode): string {
@@ -1234,6 +1269,121 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     } catch {
       emitHiddenRefresh({ type: 'hidden-refresh', projectId, path: record.path, result: 'failed', reason: 'persist-failed' });
       return { status: 'failed', reason: 'persist-failed' };
+    }
+  }
+
+  /**
+   * 内容保存成功后把**资源标注**的对象身份换成本次提交写入的那个对象（UX-02C-04-R1）。
+   *
+   * 为什么缩表里也要有这一条：保存是"临时文件 + rename"，**必然换 inode**。
+   * 记录里存的 `dev:ino` 因此在每次保存后都对不上，读取侧会把它判成 `rebound`，
+   * 用户刚标注的文件只要编辑一次，标注就从界面上消失了——而它还是同一个文件。
+   *
+   * 判定直接复用 `decideHiddenRefresh`：三份证据（保存前身份 / 提交侧身份 /
+   * 保存后身份）缺一不可。区别只在于落库动作是 `commitMetadataUpdateIdentity`
+   * （update-only CAS），而不是隐藏记录的提交。
+   *
+   * 任何一步不能证明都只是**不刷新**：保存结论、草稿、标签与其它记录一概不动。
+   * 那时记录保持原样（读取侧如实报 `rebound`），用户看到的"标注没了"与磁盘事实一致。
+   */
+  interface PreparedMetadataRefresh {
+    readonly record: ConfigMetadataEntry;
+    readonly rootToken: string;
+    readonly preIdentity: string | null;
+    readonly preReadFailed: boolean;
+    readonly providerSupportsIdentity: boolean;
+  }
+
+  async function prepareMetadataRefresh(projectId: string, path: string): Promise<PreparedMetadataRefresh | null> {
+    if (!managedFileStore || !runtime) return null;
+    const handle = refreshHandle(projectId);
+    if (!handle) return null;
+    // 只关心**本根**、非项目根、且路径对得上的记录（同一路径可能有多条历史身份）
+    const candidates = managedFileStore
+      .metadataOf(projectId)
+      .filter((entry) => entry.rootToken === handle.rootToken && entry.path !== '' && sameEntryPath(entry.path, path));
+    if (candidates.length === 0) return null;
+
+    if (typeof handle.provider.identityOf !== 'function') {
+      return {
+        record: candidates[0]!,
+        rootToken: handle.rootToken,
+        preIdentity: null,
+        preReadFailed: false,
+        providerSupportsIdentity: false,
+      };
+    }
+
+    let preIdentity: string | null;
+    try {
+      preIdentity = await withDiskOp(projectId, () => handle.provider.identityOf!(path));
+    } catch {
+      return {
+        record: candidates[0]!,
+        rootToken: handle.rootToken,
+        preIdentity: null,
+        preReadFailed: true,
+        providerSupportsIdentity: true,
+      };
+    }
+    /*
+     * 优先挑"现在真的在这个路径上"的那条记录：多身份共存时，只有它就是
+     * 用户当初标注的对象，这次保存才该把它绑到新身份上。找不到就交第一条，
+     * 判定会以 `rebound` 跳过——绝不去猜。
+     */
+    const record = candidates.find((entry) => entry.identity === preIdentity) ?? candidates[0]!;
+    return {
+      record,
+      rootToken: handle.rootToken,
+      preIdentity,
+      preReadFailed: false,
+      providerSupportsIdentity: true,
+    };
+  }
+
+  async function applyMetadataRefresh(
+    prepared: PreparedMetadataRefresh,
+    savedIdentity: string | null,
+  ): Promise<void> {
+    const { record, rootToken } = prepared;
+    const projectId = record.projectId;
+
+    let postIdentity: string | null = null;
+    let postReadFailed = false;
+    if (prepared.providerSupportsIdentity) {
+      const handle = refreshHandle(projectId);
+      if (!handle) {
+        postReadFailed = true;
+      } else {
+        try {
+          postIdentity = await withDiskOp(projectId, () => handle.provider.identityOf!(record.path));
+        } catch {
+          postReadFailed = true;
+        }
+      }
+    }
+
+    const decision = decideHiddenRefresh({
+      record,
+      rootToken,
+      providerSupportsIdentity: prepared.providerSupportsIdentity,
+      preIdentity: prepared.preIdentity,
+      preReadFailed: prepared.preReadFailed,
+      savedIdentity,
+      postIdentity: postReadFailed ? null : postIdentity,
+    });
+    if (decision.action !== 'update') return;
+
+    try {
+      await managedFileStore!.commitMetadataUpdateIdentity({
+        projectId,
+        path: record.path,
+        rootToken,
+        identity: decision.identity,
+        expectIdentity: record.identity,
+      });
+    } catch {
+      // 刷新失败不影响保存结论：记录保持原样（读取侧会如实报 rebound）
     }
   }
 
@@ -2088,6 +2238,22 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         identity = probe.identity;
       }
 
+      /*
+       * 会话身份前置条件（R1-03）。
+       *
+       * Shell 带回来的是"打开对话框那一刻"的资源锚；权威身份永远是 Host 刚刚
+       * `lstat` 出来的这一个。两者不一致 = 用户正在编辑的那个对象已经不在了，
+       * 此时写入会把草稿挂到别人身上。锚只是**比对条件**：对不上就拒绝，
+       * 它既不参与授权，也不会被当成客户端自述的身份。
+       */
+      assertMetadataAnchorMatches({
+        anchor: request.anchor,
+        projectId: request.projectId,
+        path: request.path,
+        rootToken: handle.rootToken,
+        identity,
+      });
+
       const result = await managedFileStore.commitMetadata({
         projectId: request.projectId,
         path: request.path,
@@ -2108,10 +2274,16 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
     }
 
     /**
-     * 清除资源元数据（UX-02C-04）：整条记录删除。
+     * 清除资源元数据（UX-02C-04 / R1-01 / R1-03）。
      *
-     * 与 `set` 的差别：**不要求对象仍然存在**。文件被外部删掉之后，标注必须还能清掉，
-     * 否则那条记录会永远留在配置里，而且没有任何入口能看见它。
+     * 三种情形必须分清，绝不能用一句"清除"糊过去：
+     * - 带 `anchor`：只清**那个对象**的那一条。对象已被替换 → 409；对象已不存在 → 409。
+     *   这是对话框"清除"按钮走的路径，它绝不能顺手删掉同路径别的对象的历史记录。
+     * - 不带 `anchor` 且对象存在：清当前对象那一条（旧客户端的等价语义）。
+     * - 对象已不存在：那条记录已经不可能生效了，按"清理失效记录"处理并如实回报
+     *   `scope: 'stale'`——这样"清掉孤儿记录"与"清掉当前对象的标注"在响应里可区分。
+     *
+     * `scope: 'stale'` 是显式的失效清理：只删身份不匹配的记录，当前对象那一条保留。
      */
     if (method === 'POST' && pathname === '/api/metadata/clear') {
       if (!runtime || !managedFileStore) {
@@ -2147,14 +2319,63 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         throw new HttpError(403, decision.errorCode ?? 'ERR_PERMISSION_DENIED', decision.reason);
       }
       assertPathNotReserved(request.path);
-      const result = await managedFileStore.commitMetadataClear({
-        projectId: request.projectId,
-        path: request.path,
-      });
+
+      // 当前对象身份：根用根令牌；其余由 Host 自己核验（不采信任何客户端自述）
+      let identity: string | null;
+      if (request.path === '') {
+        identity = handle.rootToken;
+      } else if (typeof handle.provider.identityOf === 'function') {
+        identity = await withDiskOp(request.projectId, () => handle.provider.identityOf!(request.path));
+      } else {
+        identity = null;
+        if (request.anchor !== undefined) {
+          // 带锚就要求能核验；核验不了不能假装"对得上"
+          throw new HttpError(
+            501,
+            'ERR_COMMAND_UNSUPPORTED',
+            '该项目的存储实现不提供对象身份，无法确认要清除的是哪一个对象',
+          );
+        }
+      }
+
+      if (request.anchor !== undefined) {
+        if (identity === null) {
+          throw new HttpError(
+            409,
+            'ERR_METADATA_TARGET_CHANGED',
+            PUBLIC_ERROR_MESSAGES.ERR_METADATA_TARGET_CHANGED ?? '目标资源已被替换，标注未保存',
+          );
+        }
+        assertMetadataAnchorMatches({
+          anchor: request.anchor,
+          projectId: request.projectId,
+          path: request.path,
+          rootToken: handle.rootToken,
+          identity,
+        });
+      }
+
+      const scope: 'object' | 'stale' = request.scope === 'stale' ? 'stale' : identity === null ? 'stale' : 'object';
+      const result =
+        scope === 'stale'
+          ? await managedFileStore.commitMetadataClearStale({
+              projectId: request.projectId,
+              path: request.path,
+              rootToken: handle.rootToken,
+              currentIdentity: identity,
+            })
+          : await managedFileStore.commitMetadataClear({
+              projectId: request.projectId,
+              path: request.path,
+              rootToken: handle.rootToken,
+              identity: identity as string,
+            });
+
       sendJson(res, 200, {
         status: 'APPLIED',
         projectId: request.projectId,
         path: request.path,
+        scope,
         changed: result.changed,
         metadata: null,
       });
@@ -2234,22 +2455,38 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         const state = await classifyMetadataRecord(rootRecord, treeProvider, treeRootToken);
         if (state === 'active') projectMeta = displayOf(rootRecord);
       }
+      /**
+       * 项目根的资源锚（UX-02C-04-R1）：根的身份就是根令牌，因此任何能读到根层的
+       * 调用方都能拿到一个可校验的预期；它不是磁盘条目，也不会带来任何根目录操作能力。
+       */
+      const projectAnchor =
+        dir === '' && treeRootToken !== '' && treeProjectId
+          ? metadataAnchorOf({
+              projectId: treeProjectId,
+              path: '',
+              rootToken: treeRootToken,
+              identity: treeRootToken,
+            })
+          : undefined;
 
       try {
         const page = await withDiskOp(treeProjectId, async () => {
           const raw = await treeProvider.readDir(dir === '' ? '.' : dir);
-          // 元数据打标只对**本层**条目生效，不做目录继承（契约 §4.4）
-          const withMeta =
-            metadataRecords.length === 0
-              ? raw
-              : (
-                  await markMetadata(raw, {
-                    level: dir,
-                    records: metadataRecords.filter((record) => record.path !== ''),
-                    probe: treeProvider,
-                    rootToken: treeRootToken,
-                  })
-                ).entries;
+          /*
+           * 元数据打标只对**本层**条目生效，不做目录继承（契约 §4.4）。
+           *
+           * 即便这一层一条记录都没有，也仍然要走一遍：资源锚（R1-03）对每一行都要有，
+           * 它是编辑会话"打开时是哪个对象"的唯一预期来源。
+           */
+          const withMeta = (
+            await markMetadata(raw, {
+              level: dir,
+              projectId: treeProjectId ?? '',
+              records: metadataRecords.filter((record) => record.path !== ''),
+              probe: treeProvider,
+              rootToken: treeRootToken,
+            })
+          ).entries;
           if (hiddenRecords.length === 0) return { entries: withMeta, hiddenCount: 0 };
           const marked = await markVisibility(withMeta, {
             level: dir,
@@ -2271,6 +2508,7 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
             expectedSnapshot,
             hiddenCount: page.hiddenCount,
             ...(projectMeta && !isEmptyDisplay(projectMeta) ? { projectMeta } : {}),
+            ...(projectAnchor ? { projectAnchor } : {}),
           }),
         );
       } catch (err) {
@@ -2660,28 +2898,60 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           );
         }
         /**
-         * 元数据迁移（UX-02C-04 / 契约 C3）。
+         * 元数据迁移（UX-02C-04 / 契约 C3；R1-02 重写为"逐条核验身份"）。
          *
          * 只在**磁盘已经真的变了**（APPLIED）且源/目标都已知时做，`UNKNOWN` 与失败
          * 一律不动（那时连"文件在哪"都不知道，迁移就是把标注绑到猜测的位置上）。
          *
+         * R1-02 的核心：**不能按路径前缀无条件迁移**。
+         * - 迁移的依据是"这个身份的记录搬到了这个新路径"，而身份只能由 Host 自己核验；
+         * - 目录移动时逐条核对**每个后代**在新位置的身份：文件被外部换过、
+         *   已经被删除的后代，其旧记录留在原位（它本来就不成立），绝不冒充"已迁移"；
+         * - 目标路径上别的身份的历史记录一条都不动。
+         *
          * 失败不回滚磁盘、也不把这次结构变更说成失败：文件确实已经改名/移动了，
          * 报错会让用户重试一次真实操作。改为在响应里显式报告 `metadataMigration`，
-         * 界面据此提示"标注未能随文件迁移"，由用户决定要不要重设。
+         * 界面据此提示"文件已移动，但资源标注未能随文件迁移"，由用户决定要不要重设。
          */
         let metadataMigration: 'moved' | 'none' | 'failed' = 'none';
         let metadataMoved = 0;
         if (managedFileStore) {
-          try {
-            const migration = await managedFileStore.commitMetadataMove({
-              projectId: request.projectId,
-              sourcePath: outcome.sourcePath,
-              targetPath: outcome.targetPath,
-            });
-            metadataMigration = migration.changed ? 'moved' : 'none';
-            metadataMoved = migration.moved;
-          } catch {
-            metadataMigration = 'failed';
+          const candidates = managedFileStore
+            .metadataOf(request.projectId)
+            .filter(
+              (record) =>
+                record.rootToken === handle.rootToken && isEntryUnder(record.path, outcome.sourcePath),
+            );
+          if (candidates.length > 0) {
+            if (typeof handle.provider.identityOf !== 'function') {
+              // 连"目标位置上还是不是同一个对象"都问不了，就不能声称迁移成功
+              metadataMigration = 'failed';
+            } else {
+              try {
+                const moves = await withDiskOp(request.projectId, async () => {
+                  const verified: Array<{ from: string; to: string; identity: string }> = [];
+                  for (const record of candidates) {
+                    const to = sameEntryPath(record.path, outcome.sourcePath)
+                      ? outcome.targetPath
+                      : `${outcome.targetPath}${record.path.slice(outcome.sourcePath.length)}`;
+                    const now = await handle.provider.identityOf!(to);
+                    // 目标位置上没有对象、或是另一个对象：这条记录不属于本次移动
+                    if (now === null || now !== record.identity) continue;
+                    verified.push({ from: record.path, to, identity: record.identity });
+                  }
+                  return verified;
+                });
+                const migration = await managedFileStore.commitMetadataRelocate({
+                  projectId: request.projectId,
+                  rootToken: handle.rootToken,
+                  moves,
+                });
+                metadataMoved = migration.moved;
+                metadataMigration = migration.moved > 0 ? 'moved' : 'none';
+              } catch {
+                metadataMigration = 'failed';
+              }
+            }
           }
         }
         sendJson(res, 200, {
@@ -3625,11 +3895,22 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
          * 这里任何异常都只让本次不刷新，绝不影响正文保存。
          */
         let hiddenPrepared: PreparedHiddenRefresh | null = null;
+        let metadataPrepared: PreparedMetadataRefresh | null = null;
         if (saveIdentity?.projectId) {
           try {
             hiddenPrepared = await prepareHiddenRefresh(saveIdentity.projectId, saveIdentity.path);
           } catch {
             hiddenPrepared = null;
+          }
+          /*
+           * 标注的身份再绑定同样必须在 `dispatch` **之前**取证据（UX-02C-04-R1）：
+           * 保存换 inode，之后读到的只能是新对象，无法回答"这次保存写的是不是
+           * 用户当初标注的那个对象"。异常只让本次不刷新，绝不影响正文保存。
+           */
+          try {
+            metadataPrepared = await prepareMetadataRefresh(saveIdentity.projectId, saveIdentity.path);
+          } catch {
+            metadataPrepared = null;
           }
         }
 
@@ -3675,12 +3956,20 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
         // 结论只用于诊断与提示，**不参与**正文保存的成功/冲突/失败判定。
         let hiddenRefresh: HiddenRefreshStatus = 'none';
         let hiddenRefreshReason: HiddenRefreshEvent['reason'] | undefined;
-        if (status === 'COMMITTED' && hiddenPrepared) {
+        if (status === 'COMMITTED' && (hiddenPrepared || metadataPrepared)) {
           const savedResult = outcome.result as { identity?: unknown } | undefined;
           const savedIdentity = typeof savedResult?.identity === 'string' ? savedResult.identity : null;
-          const refreshed = await applyHiddenRefresh(hiddenPrepared, savedIdentity);
-          hiddenRefresh = refreshed.status;
-          hiddenRefreshReason = refreshed.reason;
+          if (hiddenPrepared) {
+            const refreshed = await applyHiddenRefresh(hiddenPrepared, savedIdentity);
+            hiddenRefresh = refreshed.status;
+            hiddenRefreshReason = refreshed.reason;
+          }
+          /*
+           * 资源标注同样要跟着新身份走（UX-02C-04-R1）。**不加新的响应字段**：
+           * 保存语义与提示完全不变，这里只是让"标注在编辑之后仍然成立"。
+           * 无法证明时不刷新，记录保持原样并如实报 `rebound`。
+           */
+          if (metadataPrepared) await applyMetadataRefresh(metadataPrepared, savedIdentity);
         }
 
         const httpStatus =

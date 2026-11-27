@@ -32,6 +32,7 @@ import {
   type TrashOpQueryOutcome,
   type TrashSendGate,
   type MetadataOutcome,
+  type ResourceMetadataExpectation,
   type ResourceMetadataPatch,
 } from '../client/client-api';
 import { createEditQueue, flushLatest, type EditQueue } from '../client/edit-queue';
@@ -78,6 +79,8 @@ import {
 } from './workspace-identity-sync.ts';
 import { createWorkspaceRestorer, type RestoreReport, type WorkspaceRestorer } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
+import { metadataSessionKeyOf, type MetadataTargetState } from './metadata-session.ts';
+import { structureChangeNotice } from './structure-change.ts';
 import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
 
@@ -230,14 +233,43 @@ export interface DocumentActions {
    *
    * 只提交用户改过的字段（见 `patchOfDraft`）：不传的字段由 Host 保持原值。
    * Demo / Legacy / 静态 Multi 明确 501 —— 那里没有工作区配置可写。
+   *
+   * `expect` 是**打开对话框那一刻**的资源锚：Host 与它自己核验的身份比对不上就
+   * 拒绝写入（目标对象已被替换）。它只作前置条件，不是身份，也不是授权。
    */
   setResourceMetadata(
     projectId: string,
     path: string,
     patch: ResourceMetadataPatch,
+    expect?: ResourceMetadataExpectation,
   ): Promise<MetadataOutcome>;
-  /** 清除整条元数据记录（不要求文件仍存在）。 */
-  clearResourceMetadata(projectId: string, path: string): Promise<MetadataOutcome>;
+  /**
+   * 清除元数据记录。
+   *
+   * `scope` 缺省 `object`：只清**当前对象**那条；`stale` 是显式的失效清理
+   * （只删身份对不上的历史记录）。两者绝不互相代劳——清除当前对象时顺手删掉
+   * 同路径别的对象的历史记录，是不可逆的破坏。
+   */
+  clearResourceMetadata(
+    projectId: string,
+    path: string,
+    expect?: ResourceMetadataExpectation,
+    scope?: 'object' | 'stale',
+  ): Promise<MetadataOutcome>;
+  /**
+   * 当前工作区身份键（模式 + 工作区模式 + 工作区摘要 + 加载代次）。
+   *
+   * 标注编辑会话在打开时记下它，提交前后各比一次：工作区换了，这次编辑就不再
+   * 属于当前界面，既不提交也不刷新。
+   */
+  metadataIdentityKey(): string;
+  /**
+   * 某一项目里某一行**此刻**在层表里的状态（是否还在、资源锚是什么）。
+   *
+   * 只读层表，不读盘、不发请求：它回答的是"界面认为这一行是谁"，权威身份
+   * 始终由 Host 自己核验。
+   */
+  metadataTargetState(projectId: string, path: string): MetadataTargetState;
   /**
    * 标注保存后只重取**该路径所在的那一层**：元数据是行级展示，
    * 不递归、不过滤、不影响其它层/项目/标签与草稿。
@@ -1094,19 +1126,13 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           if (folder) dispatch({ type: 'EXPAND_PROJECT_NODE', projectId, path: folder.id });
         }
         /*
-         * 标注是否跟着走了（UX-02C-04）。失败必须说：磁盘确实变了，
-         * 用户会以为标注还在，直到下次打开才发现没了。
+         * 标注是否跟着走了（UX-02C-04 / R1-04）。
+         *
+         * 三种结论由 `structureChangeNotice` 统一成一句话：`failed` 必须说清
+         * "文件已移动，但资源标注未能随文件迁移"——磁盘确实变了，它既不是
+         * 磁盘失败，也不能让用户以为标注还在。
          */
-        const metadataNote =
-          outcome.metadataMigration === 'failed'
-            ? '；但资源标注未能写入工作区配置，请重新设置'
-            : outcome.metadataMigration === 'moved'
-              ? '，资源标注已随文件迁移'
-              : '';
-        dispatch({
-          type: 'NOTICE',
-          message: `已把「${outcome.sourcePath}」变更为「${outcome.targetPath}」（只刷新了相关目录）${metadataNote}`,
-        });
+        dispatch({ type: 'NOTICE', message: structureChangeNotice(outcome) });
       },
 
       /** UNKNOWN：恰好一次只读核对源位置与目标位置，不重发、不改草稿、不推断成功。 */
@@ -1158,18 +1184,45 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
 
       /* ---- UX-02C-04：资源标注名 / 标签 / 行颜色 ---- */
 
-      async setResourceMetadata(projectId, path, patch) {
+      async setResourceMetadata(projectId, path, patch, expect) {
         if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
           return unsupportedMetadata('当前模式没有工作区配置，无法保存资源标注');
         }
-        return liveClient.setResourceMetadata(projectId, path, patch);
+        return liveClient.setResourceMetadata(projectId, path, patch, expect);
       },
 
-      async clearResourceMetadata(projectId, path) {
+      async clearResourceMetadata(projectId, path, expect, scope) {
         if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
           return unsupportedMetadata('当前模式没有工作区配置，无法清除资源标注');
         }
-        return liveClient.clearResourceMetadata(projectId, path);
+        return liveClient.clearResourceMetadata(projectId, path, expect, scope);
+      },
+
+      metadataIdentityKey() {
+        const current = stateRef.current;
+        return metadataSessionKeyOf({
+          mode: current.mode,
+          workspaceMode: current.workspaceMode,
+          workspaceKey: current.workspaceKey,
+          epoch: loadEpoch.current.current(),
+        });
+      },
+
+      metadataTargetState(projectId, path) {
+        const current = stateRef.current;
+        const levels = current.treeByProject[projectId];
+        if (path === '') {
+          /*
+           * 项目根不是磁盘条目：它"还在"的判据是这个项目仍在项目表里，
+           * 身份凭据是根层的 `projectAnchor`（根令牌的摘要）。
+           */
+          const present = current.projects.some((project) => project.projectId === projectId);
+          return { present, anchor: levels?.[ROOT_LEVEL]?.projectAnchor ?? null };
+        }
+        const level = levels?.[parentDirOfEntry(path)];
+        const row = level?.entries.find((node) => (node.path ?? '') === path);
+        // 锚在层表的锚表里（不放进条目：保存换 inode 不该让"条目集合"变化）
+        return { present: row !== undefined, anchor: level?.anchors?.[path] ?? null };
       },
 
       /**

@@ -230,6 +230,14 @@ export const ERROR_CODES = {
    * 绝不静默淘汰用户写过的标注名/标签来腾位置——那会让一次保存悄悄删掉别处的数据。
    */
   ERR_METADATA_LIMIT: 'ERR_METADATA_LIMIT',
+  /**
+   * 编辑会话打开之后，目标位置上的对象换了（或已经不存在），而用户提交的标注
+   * 还绑在旧对象上（UX-02C-04-R1）。
+   *
+   * 与"保存失败"严格区分：这不是 IO 或容量问题，而是**这次编辑不再指向同一个对象**。
+   * 拒绝写入，绝不把旧草稿写到新对象上；也不自动重试（重试只会再撞一次）。
+   */
+  ERR_METADATA_TARGET_CHANGED: 'ERR_METADATA_TARGET_CHANGED',
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

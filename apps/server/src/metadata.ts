@@ -19,6 +19,7 @@
  * 元数据遇到 `unverified` **不显示**（宁可少标注）。理由是同一条——
  * 拿不准的时候不要声称一件用户没有确认过的事实。
  */
+import { createHash } from 'node:crypto';
 import type { ErrorCode } from '../../../packages/contracts/errors.ts';
 import { sameEntryPath, validateEntryPath } from '../../../packages/storage/entry-name.ts';
 import type {
@@ -27,6 +28,7 @@ import type {
 } from './store/config.ts';
 import {
   RESOURCE_COLORS,
+  isMetadataAnchor,
   normalizeAliasText,
   normalizeTagList,
 } from '../../../packages/contracts/metadata.ts';
@@ -51,6 +53,32 @@ const PROJECT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 /** 与 `sameEntryPath` 同一口径的 Map 键（Windows 大小写不敏感，其它平台原样）。 */
 const pathKey = (path: string): string => (process.platform === 'win32' ? path.toLowerCase() : path);
 
+/**
+ * 资源锚（R1-03）：`projectId + path + rootToken + identity` 的摘要。
+ *
+ * 用途只有一个——**编辑会话的身份预期**：Shell 打开对话框时拿到的锚，提交时原样带回；
+ * Host 用它和自己刚核验出的身份比一遍，不一致就拒绝写入。
+ *
+ * 纪律：
+ * - 它是**不透明**的：客户端不解析、Host 也不从它反推身份；
+ * - 它**不是**身份或授权：写入仍然走项目级授权判定，身份仍然由 Host 自己 `lstat`；
+ * - 路径按平台大小写口径归一（Windows 上 `A.md` 与 `a.md` 是同一个对象）。
+ */
+export function metadataAnchorOf(input: {
+  readonly projectId: string;
+  readonly path: string;
+  readonly rootToken: string;
+  readonly identity: string;
+}): string {
+  return createHash('sha256')
+    .update(
+      `ws-meta-anchor-v1\n${input.projectId}\n${pathKey(input.path)}\n${input.rootToken}\n${input.identity}`,
+      'utf8',
+    )
+    .digest('hex')
+    .slice(0, 32);
+}
+
 /** 写入意图：`undefined` = 不改这一项；`null` / `[]` = 清除这一项。 */
 export interface MetadataUpdateRequest {
   readonly projectId: string;
@@ -59,11 +87,18 @@ export interface MetadataUpdateRequest {
   readonly alias?: string | null;
   readonly tags?: readonly string[];
   readonly color?: ResourceColor | null;
+  /** 打开对话框时捕获的资源锚：**只作为前置条件**，不作为身份来源。 */
+  readonly anchor?: string;
 }
+
+/** 清除范围：`object` = 当前对象那一条；`stale` = 该路径上所有失效记录。 */
+export type MetadataClearScope = 'object' | 'stale';
 
 export interface MetadataClearRequest {
   readonly projectId: string;
   readonly path: string;
+  readonly anchor?: string;
+  readonly scope: MetadataClearScope;
 }
 
 export type ParseMetadataResult<T> =
@@ -148,6 +183,8 @@ export function parseMetadataSetBody(
   if (!projectId) return reject('ERR_COMMAND_INVALID', '缺少或非法的 projectId');
   const path = parseMetadataPath(body.path);
   if (!path.ok) return path;
+  const anchor = parseAnchor(body.anchor);
+  if (!anchor.ok) return anchor;
 
   const has = (key: string): boolean => key in body;
   if (!has('alias') && !has('tags') && !has('color')) {
@@ -176,7 +213,41 @@ export function parseMetadataSetBody(
     color = parsed.color;
   }
 
-  return { ok: true, request: { projectId, path: path.path, alias, tags, color } };
+  return {
+    ok: true,
+    request: {
+      projectId,
+      path: path.path,
+      ...(anchor.anchor !== undefined ? { anchor: anchor.anchor } : {}),
+      ...(alias !== undefined ? { alias } : {}),
+      ...(tags !== undefined ? { tags } : {}),
+      ...(color !== undefined ? { color } : {}),
+    },
+  };
+}
+
+/**
+ * 资源锚的形状校验。
+ *
+ * 只校验形状：内容是否对得上由 Host 用**自己核验出的身份**重算后比对。
+ * 客户端声称"我是这个对象"在这里没有任何分量。
+ */
+function parseAnchor(
+  value: unknown,
+): { ok: true; anchor?: string } | { ok: false; errorCode: ErrorCode; message: string } {
+  if (value === undefined || value === null) return { ok: true };
+  if (!isMetadataAnchor(value)) {
+    return reject('ERR_COMMAND_INVALID', 'anchor 必须是 32 位十六进制字符串');
+  }
+  return { ok: true, anchor: value };
+}
+
+function parseClearScope(
+  value: unknown,
+): { ok: true; scope: MetadataClearScope } | { ok: false; errorCode: ErrorCode; message: string } {
+  if (value === undefined || value === null) return { ok: true, scope: 'object' };
+  if (value === 'object' || value === 'stale') return { ok: true, scope: value };
+  return reject('ERR_COMMAND_INVALID', 'scope 只能是 object 或 stale');
 }
 
 export function parseMetadataClearBody(
@@ -189,7 +260,19 @@ export function parseMetadataClearBody(
   if (!projectId) return reject('ERR_COMMAND_INVALID', '缺少或非法的 projectId');
   const path = parseMetadataPath(body.path);
   if (!path.ok) return path;
-  return { ok: true, request: { projectId, path: path.path } };
+  const anchor = parseAnchor(body.anchor);
+  if (!anchor.ok) return anchor;
+  const scope = parseClearScope(body.scope);
+  if (!scope.ok) return scope;
+  return {
+    ok: true,
+    request: {
+      projectId,
+      path: path.path,
+      scope: scope.scope,
+      ...(anchor.anchor !== undefined ? { anchor: anchor.anchor } : {}),
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -255,14 +338,22 @@ export function isEmptyDisplay(display: MetadataDisplay): boolean {
 export interface MarkMetadataInput {
   /** 本次读取的层路径（根为空串）。 */
   readonly level: string;
+  /** 项目 id：参与资源锚的派生，保证锚只在同一项目的同一对象上成立。 */
+  readonly projectId: string;
   readonly records: readonly ConfigMetadataEntry[];
   readonly probe: MetadataIdentityProbe;
   readonly rootToken?: string;
 }
 
+export interface MarkedMetadata {
+  readonly meta?: MetadataDisplay;
+  /** 资源锚：Provider 能核验身份且对象存在时才有。 */
+  readonly anchor?: string;
+}
+
 export interface MarkMetadataResult<T> {
-  /** 原条目 + 可选 `meta`（只有核验通过才有）。 */
-  readonly entries: T[];
+  /** 原条目 + 可选 `meta` / `anchor`。 */
+  readonly entries: Array<T & MarkedMetadata>;
   /** 生效的元数据条数（本层）。 */
   readonly applied: number;
   /** 失效条数（`missing` + `rebound` + `unverified`）：只用于诊断，不改变记录。 */
@@ -270,38 +361,61 @@ export interface MarkMetadataResult<T> {
 }
 
 /**
- * 给一层的条目挂上元数据。
+ * 给一层的条目挂上元数据与资源锚。
  *
- * 只为**本层**的条目找记录：元数据是逐条目的展示信息，不做"目录标注影响子项"的继承
- * （那会让一次目录标注把整棵子树染色，用户无法区分"我自己标的"和"被上级带的"）。
+ * 两件事在同一个循环里做，因为**两者都需要对象身份**：
+ * - `meta`：只为**本层**的条目找记录（不做目录继承）；
+ * - `anchor`：给 Shell 的编辑会话一个"打开时是哪个对象"的凭据（R1-03）。
+ *
+ * 同一路径可能存在多条记录（对象换过、历史未清）：只有 `identity` 与当前对象
+ * **完全一致**的那一条才算生效。这条判定与 `classifyMetadataRecord` 同一口径，
+ * 区别只在于这里已经拿到了 `now`，不必再查一次。
  */
 export async function markMetadata<T extends { readonly name: string }>(
   entries: readonly T[],
   input: MarkMetadataInput,
-): Promise<MarkMetadataResult<T & { readonly meta?: MetadataDisplay }>> {
-  const { level, records, probe, rootToken } = input;
-  const byPath = new Map<string, ConfigMetadataEntry>();
-  for (const record of records) byPath.set(pathKey(record.path), record);
+): Promise<MarkMetadataResult<T>> {
+  const { level, projectId, records, probe, rootToken } = input;
+  const byPath = new Map<string, ConfigMetadataEntry[]>();
+  for (const record of records) {
+    const key = pathKey(record.path);
+    const bucket = byPath.get(key);
+    if (bucket) bucket.push(record);
+    else byPath.set(key, [record]);
+  }
 
-  const out: Array<T & { readonly meta?: MetadataDisplay }> = [];
+  const out: Array<T & MarkedMetadata> = [];
   let applied = 0;
   let stale = 0;
 
   for (const entry of entries) {
     const path = level === '' ? entry.name : `${level}/${entry.name}`;
-    const record = byPath.get(pathKey(path));
-    if (!record) {
-      out.push(entry);
-      continue;
+    const candidates = byPath.get(pathKey(path));
+
+    // 每行只查一次身份：既用于元数据核验，也用于资源锚。
+    let now: string | null | undefined;
+    if (typeof probe.identityOf === 'function') {
+      try {
+        now = await probe.identityOf(path);
+      } catch {
+        now = undefined;
+      }
     }
-    const state = await classifyMetadataRecord(record, probe, rootToken);
-    if (!stateShowsMetadata(state)) {
-      stale += 1;
-      out.push(entry);
-      continue;
+    const anchor =
+      typeof now === 'string' && rootToken ? metadataAnchorOf({ projectId, path, rootToken, identity: now }) : undefined;
+
+    let meta: MetadataDisplay | undefined;
+    if (candidates && candidates.length > 0) {
+      const match = typeof now === 'string' ? candidates.find((record) => record.identity === now) : undefined;
+      if (match) {
+        applied += 1;
+        meta = displayOf(match);
+      } else {
+        stale += 1;
+      }
     }
-    applied += 1;
-    out.push({ ...entry, meta: displayOf(record) });
+
+    out.push({ ...entry, ...(meta ? { meta } : {}), ...(anchor ? { anchor } : {}) });
   }
 
   return { entries: out, applied, stale };

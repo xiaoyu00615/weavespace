@@ -191,6 +191,25 @@ export interface TreePageDto {
     readonly tags: readonly string[];
     readonly color?: string;
   };
+  /**
+   * 本页条目的资源锚（UX-02C-04-R1）：`relPath → 32 位十六进制摘要`。
+   *
+   * 为什么**不放在条目里**：锚由对象身份派生，而"保存文件"是临时文件 + rename，
+   * **必然换 inode**。若把它塞进条目，任何一次普通保存都会让"这一层的条目"
+   * 发生变化——那会让以条目为口径的比较（"别的项目/别的操作不该影响这棵树"）
+   * 变成假失败。锚是**行的附着信息**，不是条目的身份字段。
+   *
+   * 不透明：客户端不解析、不据此授权；Host 只用它和自己核验出的身份比对。
+   * 对象不存在或 Provider 无身份能力时不会出现在这里。
+   */
+  anchors?: Readonly<Record<string, string>>;
+  /**
+   * 项目根的资源锚（UX-02C-04-R1）：只在 `level === ''` 且项目有根令牌时出现。
+   *
+   * 根不是磁盘条目，它的身份就是根令牌；这里给的是一个**仅供比对**的预期值，
+   * 与"借元数据获得根目录操作权限"无关（元数据端点完全不碰磁盘）。
+   */
+  projectAnchor?: string;
 }
 
 export const TREE_PAGE_DEFAULT_LIMIT = 200;
@@ -205,6 +224,12 @@ interface DirEntryLike {
   readonly hiddenBy?: string;
   /** 该条目的展示元数据已核验通过（UX-02C-04）。 */
   readonly meta?: TreeEntryDto['meta'];
+  /**
+   * 该条目的资源锚（UX-02C-04-R1）；对象不可核验时没有。
+   *
+   * 只用于在构造响应时汇成 `TreePageDto.anchors`：**不进入条目**（理由见那里）。
+   */
+  readonly anchor?: string;
 }
 
 /** 扩展名（小写含点）。点开头的隐藏文件与无扩展名文件都返回空串。 */
@@ -271,6 +296,8 @@ export interface BuildTreePageOptions {
   hiddenCount?: number;
   /** 项目根展示项的元数据（只在 `level === ''` 时有意义）。 */
   projectMeta?: TreePageDto['projectMeta'];
+  /** 项目根的资源锚（只在 `level === ''` 时有意义）。 */
+  projectAnchor?: string;
 }
 
 /**
@@ -318,19 +345,28 @@ export function buildTreePage(
   const limit = options.limit ?? TREE_PAGE_DEFAULT_LIMIT;
   const offset = options.cursor ?? 0;
 
+  /*
+   * 资源锚单独收集：它是**行的附着信息**，不是条目字段（见 `TreePageDto.anchors`）。
+   * 键用 `relPath`，与条目一一对应；对象不可核验的条目没有锚。
+   */
+  const anchors = new Map<string, string>();
   const all: TreeEntryDto[] = sortTreeEntries(
-    entries.map((entry) => ({
-      id: treeEntryIdOf(entry.kind, level ? `${level}/${entry.name}` : entry.name, options.projectId),
-      name: entry.name,
-      kind: entry.kind,
-      extension: entry.kind === 'folder' ? '' : extensionOf(entry.name),
-      relPath: level ? `${level}/${entry.name}` : entry.name,
-      ...(entry.hidden ? { hidden: true as const } : {}),
-      ...(entry.hiddenBy ? { hiddenBy: entry.hiddenBy } : {}),
-      // 元数据**不参与**目录快照：它不影响"这一层有哪些条目"，
-      // 因此改一个颜色不该让正在进行的翻页作废。
-      ...(entry.meta ? { meta: entry.meta } : {}),
-    })),
+    entries.map((entry) => {
+      const relPath = level ? `${level}/${entry.name}` : entry.name;
+      if (entry.anchor) anchors.set(relPath, entry.anchor);
+      return {
+        id: treeEntryIdOf(entry.kind, relPath, options.projectId),
+        name: entry.name,
+        kind: entry.kind,
+        extension: entry.kind === 'folder' ? '' : extensionOf(entry.name),
+        relPath,
+        ...(entry.hidden ? { hidden: true as const } : {}),
+        ...(entry.hiddenBy ? { hiddenBy: entry.hiddenBy } : {}),
+        // 元数据**不参与**目录快照：它不影响"这一层有哪些条目"，
+        // 因此改一个颜色不该让正在进行的翻页作废。
+        ...(entry.meta ? { meta: entry.meta } : {}),
+      };
+    }),
   );
 
   const total = all.length;
@@ -350,6 +386,16 @@ export function buildTreePage(
   const page = all.slice(offset, offset + limit);
   const end = offset + page.length;
 
+  /*
+   * 只给本页返回的条目带锚：续页不需要别人的锚，多带只是白白扩大响应体。
+   * 顺序按 `page` 走，序列化结果因此是稳定的。
+   */
+  const pageAnchors: Record<string, string> = {};
+  for (const entry of page) {
+    const anchor = anchors.get(entry.relPath);
+    if (anchor) pageAnchors[entry.relPath] = anchor;
+  }
+
   return {
     status: 'APPLIED',
     level,
@@ -365,5 +411,8 @@ export function buildTreePage(
     // 项目根展示项的元数据放在**顶层**：它不是"这一页"的属性，
     // 而是这个项目根的展示信息（分页时每页都可以带同一个值）。
     ...(options.projectMeta ? { projectMeta: options.projectMeta } : {}),
+    // 根的资源锚同理：每页都带同一个值，续页丢失不会影响已加载的行。
+    ...(options.projectAnchor ? { projectAnchor: options.projectAnchor } : {}),
+    ...(Object.keys(pageAnchors).length > 0 ? { anchors: pageAnchors } : {}),
   };
 }

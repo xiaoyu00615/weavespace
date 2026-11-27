@@ -545,6 +545,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           snapshot: action.snapshot ?? null,
           // 0 与"字段缺失"必须区别对待：缺失（旧版服务端）保留上一次已知值
           hiddenCount: action.hiddenCount,
+          // 根层展示信息与资源锚：缺失时沿用上一次（续页不带不等于"没有了"）
+          ...(action.projectMeta !== undefined ? { projectMeta: action.projectMeta } : {}),
+          ...(action.projectAnchor !== undefined ? { projectAnchor: action.projectAnchor } : {}),
+          ...(action.anchors !== undefined ? { anchors: action.anchors } : {}),
         }),
       );
       // 只在"首次拿到根层的第一页"时补默认展开；续页与刷新都不重置展开状态

@@ -318,6 +318,10 @@ export function createTreeLevelLoader(
         snapshot: outcome.page.snapshot ?? null,
         // 逐层计数必须原样传递：丢了它，工具栏的"隐藏项 N"永远是 0（R1-01）
         hiddenCount: outcome.page.hiddenCount,
+        // 根层展示信息与资源锚：锚表丢失 = 每一行的标注对话框都变成"无法确认身份"
+        ...(outcome.projectMeta ? { projectMeta: outcome.projectMeta } : {}),
+        ...(outcome.projectAnchor ? { projectAnchor: outcome.projectAnchor } : {}),
+        ...(outcome.anchors ? { anchors: outcome.anchors } : {}),
       });
       return 'applied';
     } catch {
