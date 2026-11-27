@@ -1,0 +1,109 @@
+{
+  "run": "ux-02c-02-r21",
+  "at": "2026-11-27T18:34:31.514Z",
+  "checks": {
+    "S-01 fixture 就绪（两个真实项目 / 三份根文件 / 两个子目录）": true,
+    "S-02 真实工作区已加载（项目A 有文件行）": true,
+    "A-00 找到 note.md 名称": true,
+    "A-01 双击进入改名输入行": true,
+    "A-02 打开即聚焦（Escape 有接收者）": true,
+    "A-03 非法名称 + Enter：行内错误可见": true,
+    "A-04 非法名称零请求（本地形状校验先挡）": true,
+    "A-05 被拒后输入行保留（不抹掉刚写的错误）": true,
+    "A-06 焦点在输入框时 Escape 正常取消": true,
+    "A-07 取消没有发出任何改名请求": true,
+    "A-08 打开 dup.md 的改名输入行": true,
+    "A-09 Host 拒绝（同名已存在）后错误可见": true,
+    "A-10 请求确实发出过一次并被拒绝": true,
+    "A-11 输入行仍在（保留输入供修正）": true,
+    "A-12 提交结束后焦点回到输入框（Escape / Enter 才有接收者）": true,
+    "A-13 焦点恢复后 Escape 真正取消（不是点按钮）": true,
+    "A-14 提交中再按 Enter 不产生第二个请求": true,
+    "A-15 Enter 提交成功且磁盘真的改名（不是只有界面变了）": true,
+    "M-00 找到 other.md 行": true,
+    "M-01 右键菜单出现": true,
+    "M-02 移动对话框打开": true,
+    "M-03 打开即聚焦确认按钮（Escape / Enter 有接收者）": true,
+    "M-04 Escape 关闭对话框": true,
+    "M-05 Escape 零移动请求": true,
+    "M-06 Enter 提交移动：磁盘真的搬进 archive": true,
+    "M-07 找到仍留在根目录的文件行": true,
+    "M-08 目标目录被替换后 Host 拒绝并给出明确原因": true,
+    "M-09 只发出一次移动请求（拒绝后不自动重发）": true,
+    "M-10 源文件仍原地（没有被搬进用户没确认的目录）": true,
+    "M-11 新目录保持空（没有留下痕迹）": true,
+    "M-12 对话框保留（错误行内可见，输入不丢）": true,
+    "M-13 被拒后焦点回到确认按钮（Escape 可再取消）": true,
+    "M-14 被拒后 Escape 仍能关闭对话框": true,
+    "T-01 单击打开编辑器": true,
+    "T-02 按键真的进了编辑器（XY 与换行都写进了缓冲）": true,
+    "T-03 树的改名输入行没有被打开": true,
+    "T-04 移动对话框没有被打开": true,
+    "T-05 焦点仍在编辑器里（没有被树抢走）": true
+  },
+  "detail": {
+    "A-00 找到 note.md 名称": {
+      "x": 262,
+      "y": 224.75
+    },
+    "A-02 打开即聚焦（Escape 有接收者）": {
+      "tag": "INPUT",
+      "label": "新名称",
+      "cls": "tree__create-input"
+    },
+    "A-03 非法名称 + Enter：行内错误可见": "名称含有非法字符或路径分隔符",
+    "A-09 Host 拒绝（同名已存在）后错误可见": "该位置已有同名文件或文件夹，未覆盖任何内容",
+    "A-12 提交结束后焦点回到输入框（Escape / Enter 才有接收者）": {
+      "tag": "INPUT",
+      "label": "新名称",
+      "cls": "tree__create-input tree__create-input--invalid"
+    },
+    "A-14 提交中再按 Enter 不产生第二个请求": {
+      "paused": 1,
+      "requests": 1
+    },
+    "M-00 找到 other.md 行": {
+      "x": 216,
+      "y": 250.25
+    },
+    "M-07 找到仍留在根目录的文件行": {
+      "x": 216,
+      "y": 224.75
+    },
+    "M-08 目标目录被替换后 Host 拒绝并给出明确原因": "目标文件夹已被外部替换，未执行任何移动（请重新选择目标）"
+  },
+  "facts": {
+    "conflictError": "该位置已有同名文件或文件夹，未覆盖任何内容",
+    "focusAfterConflict": {
+      "tag": "INPUT",
+      "label": "新名称",
+      "cls": "tree__create-input tree__create-input--invalid"
+    },
+    "renameRequestsDuringDoubleEnter": 1,
+    "renamedDisk": {
+      "exists": true,
+      "size": 6,
+      "ino": "1407374884769257",
+      "sha256": "3720adff5c46f1758ea46b5830f3e4d1acbce1e11e9963f3ddf8830ceee5b710"
+    },
+    "movedDisk": {
+      "exists": true,
+      "size": 8,
+      "ino": "1407374884769256",
+      "sha256": "f32b0240fc28d4473e92dab1f773274687d806250f15e2f93b3316a27a559996"
+    },
+    "moveOptions": [
+      "archive",
+      "docs"
+    ],
+    "targetChangedError": "目标文件夹已被外部替换，未执行任何移动（请重新选择目标）",
+    "editorBefore": "# dup\n",
+    "editorAfter": "XY\n# dup\n",
+    "requestTotals": {
+      "rename": 2,
+      "move": 2
+    }
+  },
+  "failed": [],
+  "ok": true
+}

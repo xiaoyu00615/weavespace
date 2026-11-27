@@ -346,7 +346,7 @@ test('R1.2-04e 外部文件占住目标名：零副作用拒绝，外部文件�
 
 /* ---------------------- R1-05：rename 原子性边界 ---------------------- */
 
-test('R1.2-05a 身份复核后、rename 前被外部替换：hook 位置正确，覆盖行为如实记录', async () => {
+test('R1.2-05a 身份复核后、rename 前被外部替换：最终目标核验收紧，外部对象不被覆盖', async () => {
   let targetAbs = '';
   let hookCalls = 0;
   await withHost(
@@ -360,18 +360,25 @@ test('R1.2-05a 身份复核后、rename 前被外部替换：hook 位置正确�
       });
       assert.equal(hookCalls, 1, '新注入点必须被触发且只触发一次');
       /**
-       * hook 在归属复核**之后**才触发：若它早于复核，注入了外部文件的那次操作
-       * 会以 ERR_ENTRY_EXISTS 收场（见 R1.2-04e）。
+       * R2.1 / C03 收紧了这里的顺序：`beforeMoveRename` 之后还有一道
+       * **最终目标占位复核**（10d），它紧贴着 `rename`。因此这一轮注入的外部
+       * 同名对象会被识别出来，操作以"目标已存在"明确拒绝，源文件保持原位。
+       *
+       * 残留窗口因此收缩到"10d 之后、`rename` 之前"——仍然存在（Node/Windows
+       * 没有原子 no-replace rename），只是不再是"整个占位阶段"。
        */
-      assert.equal(res.status, 200, JSON.stringify(res.body));
-      assert.equal(res.body.status, 'APPLIED');
-      // 已知未解决风险：窗口内被外部替换的同名文件会被 rename 覆盖。
+      assert.equal(res.status, 409, JSON.stringify(res.body));
+      assert.equal(res.body.errorCode, 'ERR_ENTRY_EXISTS');
       assert.equal(
         await readFile(targetAbs, 'utf8'),
-        'NOTES-CONTENT\n',
-        '外部文件已被覆盖：Node/Windows 没有原子 no-replace rename（见 notes.md）',
+        'FOREIGN-CONTENT\n',
+        '外部对象一个字都不能被覆盖',
       );
-      assert.equal(existsSync(join(h.rootA, 'docs', 'notes.md')), false);
+      assert.equal(
+        await readFile(join(h.rootA, 'docs', 'notes.md'), 'utf8'),
+        'NOTES-CONTENT\n',
+        '源文件必须保持原位（零副作用）',
+      );
     },
     {
       faults: {

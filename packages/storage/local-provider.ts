@@ -161,6 +161,14 @@ export interface StorageFaultHooks {
    */
   beforeMoveRename?: () => void;
   /**
+   * `rename` **已经返回**、结果确认（`verify`）尚未开始时调用（UX-02C-02-R2.1）。
+   *
+   * 用途：确定性注入"刚搬过去的目标被外部删除并换成内容一模一样的新文件"。
+   * 只按"源没了 + 目标在 + 内容 SHA-256 相同 + 目录指纹相同"判定的实现会把它
+   * 当成成功；按目标**对象身份**判定的实现必须收敛为 UNKNOWN。
+   */
+  afterRename?: () => Promise<void> | void;
+  /**
    * 内部文件（`.ws-internal` / `.gitignore`）的临时文件**已写入并关闭**、
    * `rename` 尚未执行时调用（UX-02C-03-P2-01-R2 / R2-04）。
    *
@@ -308,6 +316,14 @@ export interface StorageProvider {
     targetParentDir: string,
     targetName: string,
     expectedIdentity: string,
+    /**
+     * 目标文件夹的身份预期（UX-02C-02-R2.1）。
+     *
+     * `null` / 省略 = 不适用（改名：目标父目录由 Host 派生且与源同层）。
+     * 给出时，占位前后各核一次目录连续性：用户选中的那个目录被删除重建后，
+     * 绝不把文件搬进去。
+     */
+    expectedTargetIdentity?: string | null,
   ): Promise<MoveEntryResult>;
   /**
    * 目录项事实（UX-02C-03-P2-01）：`lstat` 得到"这一项本身"是文件/目录/链接/重解析点，
@@ -2051,7 +2067,13 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
      * - 进程在"占位已建、rename 未执行"之间崩溃会留下一个 0 字节占位文件；
      * - `rename` 成功但之后根连续性/确认链失败一律 UNKNOWN，不回滚、不删除。
      */
-    async moveEntry(sourcePath, targetParentDir, targetName, expectedIdentity): Promise<MoveEntryResult> {
+    async moveEntry(
+      sourcePath,
+      targetParentDir,
+      targetName,
+      expectedIdentity,
+      expectedTargetIdentity,
+    ): Promise<MoveEntryResult> {
       const reject = (errorCode: ErrorCode): MoveEntryResult => ({ status: 'REJECTED', errorCode });
       const unknown = (): MoveEntryResult => ({ status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN' });
 
@@ -2131,10 +2153,39 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       const parentCheck = resolveInBoundary(boundary, targetDir === '' ? '.' : targetDir);
       if (!parentCheck.ok) return reject(parentCheck.errorCode);
       const parentAbs = resolvePath(boundary.canonicalRoot, normalize(targetDir === '' ? '.' : targetDir));
+      /**
+       * 目标目录的预期身份（UX-02C-02-R2.1 / D）：`null` = 不适用（改名）。
+       *
+       * 空串按"没提供"处理，与源身份同一处理：否则会被误报成"目标变了"。
+       */
+      const expectedTarget =
+        typeof expectedTargetIdentity === 'string' && expectedTargetIdentity.trim() !== ''
+          ? expectedTargetIdentity
+          : null;
+      /** 目标目录连续性：仍是同一个目录项、普通目录、不是链接/重解析点。 */
+      const targetDirStillMatches = async (): Promise<boolean> => {
+        if (expectedTarget === null) return true;
+        try {
+          const info = await lstat(parentAbs);
+          if (!info.isDirectory() || info.isSymbolicLink() || isUntrustedResolution(parentAbs)) {
+            return false;
+          }
+          return `${info.dev}:${info.ino}` === expectedTarget;
+        } catch {
+          return false;
+        }
+      };
       try {
         const info = await lstat(parentAbs);
         if (!info.isDirectory() || info.isSymbolicLink() || isUntrustedResolution(parentAbs)) {
           return reject('ERR_ENTRY_PARENT_INVALID');
+        }
+        /**
+         * 身份不符 → 明确的"目标变了"，**不是**"父目录非法"：
+         * 用户要做的是重新选择目标，不是去检查路径合法性。
+         */
+        if (expectedTarget !== null && `${info.dev}:${info.ino}` !== expectedTarget) {
+          return reject('ERR_ENTRY_TARGET_CHANGED');
         }
       } catch (err) {
         if (isMissing(err)) return reject('ERR_ENTRY_PARENT_INVALID');
@@ -2265,8 +2316,15 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       const verify = async (): Promise<'moved' | 'unchanged' | 'ambiguous'> => {
         try {
           if (isCaseOnly) {
+            /**
+             * 大小写仅变化也要核身份（R2.1 / C02）：名称正确**不是**成功依据。
+             * 目标必须仍是源那个对象，否则只能 UNKNOWN。
+             */
             const names = await readdir(dirname(targetAbs));
-            return names.includes(name) ? 'moved' : 'unchanged';
+            if (!names.includes(name)) return 'unchanged';
+            const info = await lstat(targetAbs).catch(() => null);
+            if (info === null) return 'ambiguous';
+            return `${info.dev}:${info.ino}` === expectedIdentity ? 'moved' : 'ambiguous';
           }
           let sourceGone = false;
           try {
@@ -2288,6 +2346,16 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
           }
           const isDir = targetInfo.isDirectory();
           if (isDir !== sourceIsDir) return 'ambiguous';
+          /**
+           * 目标必须是**同一个对象**（R2.1 / C02）。
+           *
+           * `rename` 不换 inode，所以"目标身份 == 源身份"是成功率最高的证据。
+           * 下面四项**都不是**独立成功依据：源路径消失、目标存在、内容 SHA-256
+           * 相同、目录结构指纹相同——外部在中间删掉刚搬过去的文件、再放一个
+           * 内容一模一样的新文件，这四项全部成立，而用户的数据已经丢了。
+           * 证明不了就是 UNKNOWN，绝不据外观宣布成功。
+           */
+          if (`${targetInfo.dev}:${targetInfo.ino}` !== expectedIdentity) return 'ambiguous';
           const after = await fingerprintOf(targetAbs, isDir).catch(() => null);
           if (before !== null && after !== null && before !== after) return 'ambiguous';
           return 'moved';
@@ -2379,6 +2447,18 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
 
       try {
         const again = await lstat(sourceAbs);
+        /**
+         * 结构与类型优先于"身份不符"（R2.1 / C01）：
+         * 沿链接改名会改到根外的对象，那是比"改错文件"更严重的事故；
+         * 类型也必须是**第一次判定时的那一种**——`dev:ino` 相同只能证明
+         * "同一个 inode"，这里要证明的是"还是那个普通文件/目录本身"。
+         */
+        if (again.isSymbolicLink() || isUntrustedResolution(sourceAbs)) {
+          return await rejectSourceChanged('ERR_ENTRY_SOURCE_INVALID');
+        }
+        if (sourceIsDir ? !again.isDirectory() : !again.isFile()) {
+          return await rejectSourceChanged('ERR_ENTRY_SOURCE_INVALID');
+        }
         if (`${again.dev}:${again.ino}` !== expectedIdentity) {
           return await rejectSourceChanged('ERR_ENTRY_SOURCE_CHANGED');
         }
@@ -2388,9 +2468,42 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         return await rejectSourceChanged('ERR_STORAGE_IO');
       }
 
+      /**
+       * 10d) **最后一次**目标核验（R2.1 / C03）。
+       *
+       * 10b 与这里之间隔着一个异步 `lstat`（源终检）：这就是新增源终检带来的
+       * 额外窗口。顺序刻意安排为"先认源、后认目标"——因为最后这一次
+       * 目标核验紧贴着 `rename`，它保护的是"绝不覆盖外部对象"这件更危险的事。
+       *
+       * - 目标被外部对象占走 → 拒绝，且绝不删除它（源保持原位）；
+       * - 占位被删但名字还空着 → 重新占一次（与初次同一段实现），把窗口收紧；
+       * - 目标目录已经不是用户选中的那个 → 拒绝（源保持原位）。
+       */
+      /**
+       * 顺序：**先认目录、再认占位**。
+       *
+       * 目录已经不是用户选中的那个时，绝不能"顺手重新占位"——那会在一个
+       * 用户从未确认过的目录里留下（哪怕立刻删除）本次操作的痕迹。
+       */
+      if (!(await targetDirStillMatches())) {
+        return await rejectSourceChanged('ERR_ENTRY_TARGET_CHANGED');
+      }
+      if (reserved) {
+        const state = await reservationState();
+        if (state === 'foreign') return reject('ERR_ENTRY_EXISTS');
+        if (state === 'missing') {
+          const again = await reserveExclusive(2);
+          if (again.status === 'FAILED') return again.result;
+          reservedIdentity = again.identity;
+          if ((await reservationState()) !== 'owned') return unknown();
+        }
+      }
+
       // 11) 真正的路径变更：只覆盖我们自己的占位
       try {
         await rename(sourceAbs, targetAbs);
+        // 仅测试注入：目标已被外部替换成"内容一模一样的新对象"的窗口
+        await faults.afterRename?.();
       } catch (err) {
         const state = await verify();
         if (state === 'moved') return finish(); // 已确认结构变更完成

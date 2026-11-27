@@ -74,6 +74,14 @@ export interface StructureChangeRequest {
    * 重算锚再比对。它回答的问题只有一个——"用户当初指的是不是现在这个对象"。
    */
   readonly sourceAnchor: string;
+  /**
+   * **移动目标文件夹**的身份预期（UX-02C-02-R2.1）。
+   *
+   * 项目根用根层的 `projectAnchor`（根令牌摘要），普通文件夹用它所在层的锚。
+   * 只有 `move` 需要：`rename` 的目标父目录由 Host 派生，不接受客户端指定，
+   * 因此不存在"自由指定改名目录"的旁路。
+   */
+  readonly targetAnchor?: string;
 }
 
 /** 资源锚的形状：与 `metadataAnchorOf` 的输出一致（sha256 前 32 位小写十六进制）。 */
@@ -169,6 +177,34 @@ export function parseStructureBody(
   }
   const anchor = rawAnchor;
 
+  /**
+   * 目标文件夹身份（R2.1）：同样**必填、零 IO**。
+   *
+   * 缺它不是"兼容老客户端"，而是"这次移动说不清要搬进哪个目录"：
+   * 明确报 `ERR_STRUCTURE_INTENT_MISSING`（文案指向目标），绝不退化成按当前层表
+   * 里的路径直接搬。
+   */
+  let targetAnchor: string | undefined;
+  if (kind === 'move') {
+    const rawTargetAnchor =
+      typeof body.targetAnchor === 'string' ? body.targetAnchor.trim() : '';
+    if (rawTargetAnchor === '') {
+      return {
+        ok: false,
+        errorCode: 'ERR_STRUCTURE_INTENT_MISSING',
+        message: '缺少目标文件夹的身份信息，未执行任何变更',
+      };
+    }
+    if (!SOURCE_ANCHOR_RE.test(rawTargetAnchor)) {
+      return {
+        ok: false,
+        errorCode: 'ERR_COMMAND_INVALID',
+        message: '目标文件夹的身份信息形状非法',
+      };
+    }
+    targetAnchor = rawTargetAnchor;
+  }
+
   return {
     ok: true,
     request: {
@@ -178,6 +214,7 @@ export function parseStructureBody(
       targetParentDir,
       targetName: name.value,
       sourceAnchor: anchor,
+      ...(targetAnchor ? { targetAnchor } : {}),
     },
   };
 }
@@ -219,6 +256,13 @@ export interface StructureChangeDeps {
    * 而这次读取正是"要动它之前先认清它"的一部分。
    */
   readSourceIdentity(capability: StructureChangeCapability, path: string): Promise<string | null>;
+  /**
+   * 在**屏障内**读**目标目录**的真实身份（UX-02C-02-R2.1）。
+   *
+   * 与源身份同一条通道：屏障期间普通 `withDiskOp` 已被拒，这次读取正是
+   * "要往里放东西之前先认清这个目录"的一部分。
+   */
+  readTargetIdentity(capability: StructureChangeCapability, path: string): Promise<string | null>;
   /**
    * 结构变更专用磁盘通道：runtime.withStructureDiskOp（UX-02C-02-R1.1）。
    *
@@ -328,6 +372,48 @@ export async function runManagedStructureChange(
         return reject('ERR_ENTRY_SOURCE_CHANGED');
       }
 
+      /**
+       * 目标文件夹身份（UX-02C-02-R2.1 / D）：用户选中的目录必须还是那一个。
+       *
+       * 顺序排在源身份之后、任何磁盘副作用之前：
+       * - 项目根没有 `dev:ino`，身份就是根令牌（磁盘连续性由 Provider 的
+       *   `assertRootContinuity` 守护），因此这里只重算锚比对；
+       * - 普通文件夹读一次真实身份，用**同一套规则**重算锚，与客户端预期比对。
+       *
+       * 失败分两种，都不动手：读不到（目录没了）→ `ERR_ENTRY_PARENT_INVALID`；
+       * 读到了但不是那一个（删除重建）→ `ERR_ENTRY_TARGET_CHANGED`。
+       * 源对象压根没被碰过，可以放心让用户重选。
+       */
+      let targetIdentity: string | null = null;
+      if (request.kind === 'move') {
+        if (request.targetParentDir === '') {
+          const rootAnchor = metadataAnchorOf({
+            projectId: request.projectId,
+            path: '',
+            rootToken: deps.rootToken,
+            identity: deps.rootToken,
+          });
+          if (rootAnchor !== request.targetAnchor) return reject('ERR_ENTRY_TARGET_CHANGED');
+        } else {
+          let currentTarget: string | null;
+          try {
+            currentTarget = await deps.readTargetIdentity(capability, request.targetParentDir);
+          } catch (err) {
+            return reject(asKnownCode((err as { errorCode?: unknown }).errorCode) ?? 'ERR_STORAGE_IO');
+          }
+          // 目录已经不在了：沿用既有"目标父目录无效"语义（用户要做的是重选）
+          if (currentTarget === null) return reject('ERR_ENTRY_PARENT_INVALID');
+          const targetAnchor = metadataAnchorOf({
+            projectId: request.projectId,
+            path: request.targetParentDir,
+            rootToken: deps.rootToken,
+            identity: currentTarget,
+          });
+          if (targetAnchor !== request.targetAnchor) return reject('ERR_ENTRY_TARGET_CHANGED');
+          targetIdentity = currentTarget;
+        }
+      }
+
       let result: MoveEntryResult;
       try {
         result = await deps.withStructureDiskOp(capability, () =>
@@ -336,6 +422,7 @@ export async function runManagedStructureChange(
             request.targetParentDir,
             request.targetName,
             identity as string,
+            targetIdentity,
           ),
         );
       } catch (err) {

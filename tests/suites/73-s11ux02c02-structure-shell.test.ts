@@ -25,6 +25,7 @@ import {
 } from '../../apps/shell/src/state/structure-change.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import { createTreeOwnershipGuard, type TreeLoadIdentity } from '../../apps/shell/src/state/tree-load.ts';
+import type { StructureIntent } from '../../apps/shell/src/state/structure-intent.ts';
 import { validateEntryName } from '../../packages/storage/entry-name.ts';
 
 const applied = (over: Record<string, unknown> = {}): StructureChangeOutcome => ({
@@ -39,6 +40,23 @@ const applied = (over: Record<string, unknown> = {}): StructureChangeOutcome => 
   ...over,
 }) as StructureChangeOutcome;
 
+/**
+ * 冻结意图（UX-02C-02-R2.1）：锚 + 世界 + 票据。
+ *
+ * 这里是纯编排层，锚只需形状合法；世界与票据用来证明"提交前必须核验"这条链
+ * 走的是真实对象，而不是重新查一次"当前最新意图"。
+ */
+const testIntent = (over: Partial<StructureIntent> = {}): StructureIntent => ({
+  projectId: 'project-a',
+  sourcePath: 'docs/notes.md',
+  entryKind: 'file',
+  anchor: '0123456789abcdef0123456789abcdef',
+  verification: 'verified',
+  world: { mode: 'live', workspaceMode: 'multi', workspaceKey: 'ws-1', epoch: 1 },
+  sessionId: 1,
+  ...over,
+});
+
 const baseSubmit = (over: Partial<StructureSubmitInput> = {}): StructureSubmitInput => ({
   kind: 'rename',
   projectId: 'project-a',
@@ -46,8 +64,7 @@ const baseSubmit = (over: Partial<StructureSubmitInput> = {}): StructureSubmitIn
   targetParentDir: 'docs',
   targetName: '数学笔记.md',
   entryKind: 'file',
-  // 结构变更必须带源身份预期（UX-02C-02-R2）；这里是纯编排层，锚只需形状合法。
-  sourceAnchor: '0123456789abcdef0123456789abcdef',
+  intent: testIntent(),
   ...over,
 });
 
@@ -167,9 +184,9 @@ function harness(outcome: StructureChangeOutcome | (() => never), opts: { blocke
       return outcome;
     },
     localBlockers: () => opts.blocked ?? [],
-    // 提交前的最后一次身份核验：`null` 表示"还是那个对象"，可以发请求。
-    verifySource: (target) => {
-      verifications.push(`${target.projectId}:${target.sourcePath}:${target.entryKind}`);
+    // 提交前的意图核验：`null` 表示"还是那个对象、还在那个世界"，可以发请求。
+    verifyIntent: ({ intent }) => {
+      verifications.push(`${intent.projectId}:${intent.sourcePath}:${intent.entryKind}`);
       return null;
     },
     onRejected: (outcome, target) => {
@@ -272,7 +289,16 @@ test('网络断开 / UNKNOWN：恰好一次只读核对，绝不重发、不据�
   const network = harness(() => {
     throw new Error('ECONNRESET');
   });
-  assert.equal(await network.runner.submit(baseSubmit({ kind: 'move', targetParentDir: 'archive' })), 'unknown');
+  assert.equal(
+    await network.runner.submit(
+      baseSubmit({
+        kind: 'move',
+        targetParentDir: 'archive',
+        targetAnchor: 'fedcba9876543210fedcba9876543210',
+      }),
+    ),
+    'unknown',
+  );
   assert.deepEqual(network.calls, ['move', 'check:project-a:docs:archive']);
   assert.match(network.notices[0] ?? '', /人工核对/);
   assert.doesNotMatch(network.notices[0] ?? '', /已创建|已移动/);
@@ -377,5 +403,5 @@ test('invalidateLevel 使旧路径的迟到响应失效', () => {
 test('Demo 客户端明确不支持真实改名/移动', async () => {
   const demo = createDemoClient([], {});
   assert.equal((await demo.renameEntry('p', 'a.md', 'b.md', '0123456789abcdef0123456789abcdef')).status, 'REJECTED');
-  assert.equal((await demo.moveEntry('p', 'a.md', '', 'a.md', '0123456789abcdef0123456789abcdef')).status, 'REJECTED');
+  assert.equal((await demo.moveEntry('p', 'a.md', '', 'a.md', '0123456789abcdef0123456789abcdef', 'fedcba9876543210fedcba9876543210')).status, 'REJECTED');
 });

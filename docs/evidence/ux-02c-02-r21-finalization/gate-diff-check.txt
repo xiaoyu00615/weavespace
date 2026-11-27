@@ -1,0 +1,1 @@
+warning: in the working copy of 'docs/33_UX-02C-02-R2_结构变更资源意图.md', CRLF will be replaced by LF the next time Git touches it

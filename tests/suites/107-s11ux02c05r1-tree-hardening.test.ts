@@ -453,6 +453,8 @@ test('S01 会话归属一致、项目可用：放行提交', () => {
     tc.projectRenameGateOf({
       sessionScope: 'live\u0000multi\u0000ws-1',
       currentScope: 'live\u0000multi\u0000ws-1',
+      activeProjectAtStart: 'project-a',
+      currentActiveProject: 'project-a',
       projectExists: true,
       projectSupported: true,
     }),
@@ -465,6 +467,8 @@ test('S02 工作区 / 模式变化：旧会话不得在新世界里提交', () =
     tc.projectRenameGateOf({
       sessionScope: tc.workspaceScopeOf({ mode: 'live', workspaceMode: 'multi', workspaceKey: 'ws-1' }),
       currentScope: tc.workspaceScopeOf({ mode: 'live', workspaceMode: 'multi', workspaceKey: 'ws-2' }),
+      activeProjectAtStart: 'project-a',
+      currentActiveProject: 'project-a',
       projectExists: true,
       projectSupported: true,
     }),
@@ -475,6 +479,8 @@ test('S02 工作区 / 模式变化：旧会话不得在新世界里提交', () =
     tc.projectRenameGateOf({
       sessionScope: 'old',
       currentScope: 'new',
+      activeProjectAtStart: 'project-a',
+      currentActiveProject: 'project-a',
       projectExists: false,
       projectSupported: false,
     }),
@@ -485,18 +491,37 @@ test('S02 工作区 / 模式变化：旧会话不得在新世界里提交', () =
 test('S03 项目已不在工作区 / 已不可用：分别给出原因', () => {
   const scope = 'live\u0000multi\u0000ws-1';
   assert.equal(
-    tc.projectRenameGateOf({ sessionScope: scope, currentScope: scope, projectExists: false, projectSupported: true }),
+    tc.projectRenameGateOf({
+      sessionScope: scope,
+      currentScope: scope,
+      activeProjectAtStart: 'project-a',
+      currentActiveProject: 'project-a',
+      projectExists: false,
+      projectSupported: true,
+    }),
     'project-missing',
   );
   assert.equal(
-    tc.projectRenameGateOf({ sessionScope: scope, currentScope: scope, projectExists: true, projectSupported: false }),
+    tc.projectRenameGateOf({
+      sessionScope: scope,
+      currentScope: scope,
+      activeProjectAtStart: 'project-a',
+      currentActiveProject: 'project-a',
+      projectExists: true,
+      projectSupported: false,
+    }),
     'unsupported',
   );
 });
 
 test('S04 每个不放行的原因都有可展示的文案，ok 没有文案', () => {
   assert.equal(tc.projectRenameGateMessage('ok'), null);
-  for (const gate of ['scope-changed', 'project-missing', 'unsupported'] as const) {
+  for (const gate of [
+    'scope-changed',
+    'active-project-changed',
+    'project-missing',
+    'unsupported',
+  ] as const) {
     const message = tc.projectRenameGateMessage(gate);
     assert.equal(typeof message, 'string');
     assert.ok((message ?? '').length > 0, `${gate} 必须有说明`);

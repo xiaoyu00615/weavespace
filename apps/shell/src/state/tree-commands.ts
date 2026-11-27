@@ -653,21 +653,38 @@ export function workspaceScopeOf(input: {
   return [input.mode, input.workspaceMode, input.workspaceKey ?? ''].join('\u0000');
 }
 
-export type ProjectRenameGate = 'ok' | 'scope-changed' | 'project-missing' | 'unsupported';
+export type ProjectRenameGate =
+  | 'ok'
+  | 'scope-changed'
+  | 'active-project-changed'
+  | 'project-missing'
+  | 'unsupported';
 
 /**
  * 提交前的归属复核。
  *
- * 顺序是产品语义：先确认"这个会话还属于当前世界"，再说项目还在不在、能不能改。
- * 旧世界的会话即使在新世界里能找到同名项目，也**不是**同一个会话。
+ * 顺序是产品语义：先确认"这个会话还属于当前世界"，再确认"还属于当前这一屏"，
+ * 最后才说项目还在不在、能不能改。旧世界的会话即使在新世界里能找到同名项目，
+ * 也**不是**同一个会话。
+ *
+ * `activeProjectAtStart` 与当前活动项目必须同步核验（R2.1 / A01）：
+ * 会话的清理是 `useEffect`，而提交是事件回调——两者之间有一个窗口，
+ * 切换当前项目后的第一次 Enter 会落在旧会话上。不能只靠 effect 收尸。
+ *
+ * 注意**不能**直接比较 `session.projectId` 与 `activeProjectId`：右键菜单可以给
+ * **非当前项目**改显示名，那种会话的 `projectId` 本来就不等于活动项目。
+ * 要比的是"打开会话那一刻的活动项目"与"现在的活动项目"。
  */
 export function projectRenameGateOf(input: {
   readonly sessionScope: string;
   readonly currentScope: string;
+  readonly activeProjectAtStart: string | null;
+  readonly currentActiveProject: string | null;
   readonly projectExists: boolean;
   readonly projectSupported: boolean;
 }): ProjectRenameGate {
   if (input.sessionScope !== input.currentScope) return 'scope-changed';
+  if (input.activeProjectAtStart !== input.currentActiveProject) return 'active-project-changed';
   if (!input.projectExists) return 'project-missing';
   if (!input.projectSupported) return 'unsupported';
   return 'ok';
@@ -679,6 +696,8 @@ export function projectRenameGateMessage(gate: ProjectRenameGate): string | null
       return null;
     case 'scope-changed':
       return '工作区或模式已经改变，旧的改名会话已失效';
+    case 'active-project-changed':
+      return '当前项目已经切换，旧的改名会话已失效（没有发出任何修改）';
     case 'project-missing':
       return '该项目已不在工作区里';
     case 'unsupported':

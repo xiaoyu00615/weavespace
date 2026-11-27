@@ -10,6 +10,7 @@
  * `<button>` 里，也不做"先把节点名字改了"的乐观更新。
  */
 import { useEffect, useRef } from 'react';
+import { focusWhereOf, shouldRestoreFocus, type FocusWhere } from './focus-restore.ts';
 import { useTreeCommands, type NamingState } from './TreeCommandsContext.tsx';
 
 export function InlineCreateSlot({
@@ -69,6 +70,10 @@ function InlineNamingRow({
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const renaming = state.mode === 'rename';
+  /** 本次提交属于哪个会话（含创建会话）：结果回来时据此判断还能不能还焦点。 */
+  const submitSession = useRef<number | null>(null);
+  const focusAtStart = useRef<FocusWhere>('body');
+  const prevSubmitting = useRef(state.submitting);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -78,6 +83,40 @@ function InlineNamingRow({
     // 只在挂载时设定初值/选区；之后用户自己编辑的输入不被重设
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * 提交结束后把焦点还回来（R2.1 / E）。
+   *
+   * 提交期间输入框 `disabled`，浏览器会把焦点扔到 `body`；若不再还回去，
+   * 用户在被拒之后按 Escape / Enter 毫无反应。判定交给纯模块：
+   * 只还给**同一个会话**、且不抢用户已经点走的焦点。
+   */
+  useEffect(() => {
+    const ended = prevSubmitting.current && !state.submitting;
+    prevSubmitting.current = state.submitting;
+    if (state.submitting) {
+      submitSession.current = state.sessionId;
+      focusAtStart.current = focusWhereOf(document.activeElement, inputRef.current);
+      return;
+    }
+    if (!ended) return;
+    const sessionCurrent = submitSession.current !== null && submitSession.current === state.sessionId;
+    submitSession.current = null;
+    if (
+      !shouldRestoreFocus({
+        ended: true,
+        sessionCurrent,
+        atStart: focusAtStart.current,
+        now: focusWhereOf(document.activeElement, inputRef.current),
+      })
+    ) {
+      return;
+    }
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.setSelectionRange(state.selection[0], state.selection[1]);
+  }, [state.submitting, state.sessionId, state.selection]);
 
   return (
     <li className="tree__create" style={{ paddingLeft: `${depth * 18 + 26}px` }}>

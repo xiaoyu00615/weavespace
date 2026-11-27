@@ -281,6 +281,10 @@ export function createProjectRenameFlow(port: ProjectRenameFlowPort): ProjectRen
         const gate = projectRenameGateOf({
           sessionScope: session.scope,
           currentScope: port.currentScope(),
+          // 打开会话那一刻的活动项目 vs 现在的活动项目（R2.1 / A01）：
+          // 不能比 `session.projectId`——它可以是**非当前项目**（右键菜单改名）
+          activeProjectAtStart: session.activeProjectAtStart,
+          currentActiveProject: port.currentActiveProject(),
           projectExists: port.projects().some((item) => item.projectId === session.projectId),
           projectSupported: port.supported(session.projectId),
         });
@@ -343,6 +347,20 @@ export function createProjectRenameFlow(port: ProjectRenameFlowPort): ProjectRen
 
         const effect = projectRenameResultEffect({ applied, sessionStillCurrent: stillCurrent });
         if (effect === 'close') {
+          /**
+           * 会话还在，但**列表没回填**（R2.1 / A02）。
+           *
+           * 这是最容易被误读的一种组合：Host 确实改完了，行内会话也还开着，
+           * 只是这一行已经不属于当前列表（代次变了 / 同一行被别的操作改过）。
+           * 静默关掉会让用户以为"没改成"，于是再改一次——第二次会撞上
+           * "名称已被其他操作修改"，变成一条无法解释的失败。
+           */
+          if (applied && result.backfill === 'stale') {
+            port.notice(
+              `「${checked.name}」的显示名称已在工作区中更新，但当前项目列表未回填：` +
+                `${result.backfillProblem ?? '当前界面已切换'}（没有自动重发）`,
+            );
+          }
           port.close(session.sessionId);
           return;
         }

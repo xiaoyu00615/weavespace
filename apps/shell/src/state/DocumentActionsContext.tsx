@@ -80,7 +80,16 @@ import {
 import { createWorkspaceRestorer, type RestoreReport, type WorkspaceRestorer } from './workspace-restore';
 import { createWorkspaceWriteGate } from './workspace-write-gate';
 import { metadataSessionKeyOf, type MetadataTargetState } from './metadata-session.ts';
-import { structureChangeNotice } from './structure-change.ts';
+import type { StructureIntent } from './structure-intent.ts';
+import { structureWorldProblem, type StructureWorld } from './structure-ownership.ts';
+import {
+  applyStructureChangeWithOwnership,
+  checkStructureLocationsWithOwnership,
+  refreshStructureSourceParent as refreshStructureSourceParentWithOwnership,
+  staleStructureNotice,
+  type StructureApplyResult,
+  type StructureRefreshHost,
+} from './structure-refresh.ts';
 import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
 
@@ -210,20 +219,44 @@ export interface DocumentActions {
     targetParentDir: string,
     name: string,
     sourceAnchor: string,
+    targetAnchor: string,
   ): Promise<StructureChangeOutcome>;
+  /**
+   * 此刻的"世界"票据（UX-02C-02-R2.1）：模式 + 工作区模式 + 工作区摘要 + 加载代次。
+   *
+   * Shell 在打开改名输入行 / 移动对话框时冻结它，提交时随意图一起核验。
+   * 不含当前活动项目：同一工作区内切焦点不该让真实结构变更失效。
+   */
+  structureWorld(): StructureWorld;
   /**
    * Host 明确 APPLIED 之后才调用：清理旧路径层/展开/选择，刷新源父层与目标父层，
    * 并尽可能展开目标位置。失败或 UNKNOWN 时**不得**调用（不许乐观改名字）。
+   *
+   * 第二个参数是发起这次提交时冻结的意图：每次副作用前都会重新核验归属
+   * （R2.1 / B03）。跨世界时返回 `'stale'`，一个 dispatch 都不发。
    */
   applyStructureChange(
     outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>,
-  ): Promise<void>;
+    intent: StructureIntent,
+  ): Promise<StructureApplyResult>;
   /** UNKNOWN 时恰好一次的只读核对：只刷新源父层与目标父层，不重发、不改草稿。 */
   checkStructureLocations(
     projectId: string,
     sourceParentDir: string,
     targetParentDir: string,
-  ): Promise<void>;
+    intent: StructureIntent,
+  ): Promise<StructureApplyResult>;
+  /**
+   * 拒绝之后重取源父层（R2 的 `onRejected` 落地）。
+   *
+   * 只有 `ERR_ENTRY_SOURCE_CHANGED` / `ERR_RESOURCE_NOT_FOUND` 才代表
+   * "这一层关于源对象的缓存已过期"；其余拒绝不动层表。同样按意图核验归属。
+   */
+  refreshStructureSourceParent(
+    projectId: string,
+    sourcePath: string,
+    intent: StructureIntent,
+  ): Promise<StructureApplyResult>;
 
   /* ---- UX-02C-03-P1：工作台隐藏 / 取消隐藏 ---- */
 
@@ -480,6 +513,46 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         }),
       ),
     ),
+  );
+
+  /**
+   * 此刻的世界票据（R2.1 / B01）：`structureWorld()` 与结果落地共用同一份读法。
+   *
+   * 与 `metadataIdentityKey()` 同一组维度，但保留结构化字段：意图里要能分别核验
+   * "模式换了"和"代次换了"，给用户的文案也不同。
+   */
+  const currentStructureWorld = useCallback(
+    (): StructureWorld => ({
+      mode: stateRef.current.mode,
+      workspaceMode: stateRef.current.workspaceMode,
+      workspaceKey: stateRef.current.workspaceKey,
+      epoch: loadEpoch.current.current(),
+    }),
+    [],
+  );
+
+  /**
+   * 结构变更结果落地的宿主（R2.1 / B03）。
+   *
+   * 全部读**实时值**：`applyStructureChange` 内部有多段 await，闭包里的 state
+   * 在任何一段之后都可能过期。展开与作废层表都走与手工刷新同一条通道
+   * （`treeLoader`），因此迟到的旧路径响应仍会被层代次挡住。
+   */
+  const structureRefreshHost = useCallback(
+    (): StructureRefreshHost => ({
+      world: currentStructureWorld,
+      levels: (projectId) => stateRef.current.treeByProject[projectId] ?? emptyLevels(),
+      invalidateLevel: (projectId, dir) => treeLoader.current.invalidateLevel(projectId, dir),
+      markStructureChanged: (projectId, sourcePath, targetPath) =>
+        dispatch({ type: 'TREE_STRUCTURE_CHANGED', projectId, sourcePath, targetPath }),
+      expandFolder: (projectId, path) =>
+        dispatch({ type: 'EXPAND_PROJECT_NODE', projectId, path }),
+      load: async (projectId, dir) => {
+        await treeLoader.current.load(projectId, dir, false);
+      },
+      notice: (message) => dispatch({ type: 'NOTICE', message }),
+    }),
+    [dispatch],
   );
 
   /**
@@ -1075,69 +1148,88 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         return liveClient.renameEntry(projectId, sourcePath, name, sourceAnchor);
       },
 
-      async moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor) {
+      /**
+       * 此刻的世界票据（R2.1 / B01）。
+       *
+       * 与 `metadataIdentityKey()` 同一组维度，但**保留结构化字段**：意图里要能
+       * 分别核验"模式换了"和"代次换了"，给用户的文案也不同。
+       */
+      structureWorld(): StructureWorld {
+        const current = stateRef.current;
+        return {
+          mode: current.mode,
+          workspaceMode: current.workspaceMode,
+          workspaceKey: current.workspaceKey,
+          epoch: loadEpoch.current.current(),
+        };
+      },
+
+      async moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor, targetAnchor) {
         if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
           return unsupportedStructure();
         }
-        return liveClient.moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor);
+        return liveClient.moveEntry(
+          projectId,
+          sourcePath,
+          targetParentDir,
+          name,
+          sourceAnchor,
+          targetAnchor,
+        );
       },
 
       /**
        * 只有 Host 明确 APPLIED 才走到这里。
        *
-       * 迟到的旧路径加载结果由 `invalidateLevel` 推进该层请求代次作废；
-       * `TREE_STRUCTURE_CHANGED` 删掉旧层缓存 / 展开 / 选择记录；随后只重新取
-       * 源父层与目标父层，不递归扫描整棵树，也不动其它项目、标签与草稿。
+       * 编排在 `structure-refresh.ts`（纯 TS）：迟到的旧路径加载结果由
+       * `invalidateLevel` 推进该层请求代次作废；`TREE_STRUCTURE_CHANGED` 删掉旧层
+       * 缓存 / 展开 / 选择记录；随后只重新取源父层与目标父层，不递归扫描整棵树。
+       *
+       * R2.1：每一段副作用之前都按**发起提交时冻结的世界**重新核验。跨世界时
+       * 只留一条全局提示（Host 确实改完了），绝不把结果写进这一屏。
        */
-      async applyStructureChange(outcome) {
-        const projectId = outcome.projectId;
-        const sourceParent = parentDirOfEntry(outcome.sourcePath);
-        const targetParent = outcome.targetParentDir;
-        const levels = stateRef.current.treeByProject[projectId] ?? {};
-        for (const dir of Object.keys(levels)) {
-          if (dir === outcome.sourcePath || dir.startsWith(`${outcome.sourcePath}/`)) {
-            treeLoader.current.invalidateLevel(projectId, dir);
-          }
-        }
-        treeLoader.current.invalidateLevel(projectId, sourceParent);
-        treeLoader.current.invalidateLevel(projectId, targetParent);
-        dispatch({
-          type: 'TREE_STRUCTURE_CHANGED',
-          projectId,
-          sourcePath: outcome.sourcePath,
-          targetPath: outcome.targetPath,
+      async applyStructureChange(outcome, intent) {
+        const result = await applyStructureChangeWithOwnership({
+          start: intent.world,
+          outcome,
+          host: structureRefreshHost(),
         });
-        await treeLoader.current.load(projectId, sourceParent, false);
-        if (targetParent !== sourceParent) {
-          await treeLoader.current.load(projectId, targetParent, false);
+        if (result === 'stale') {
+          dispatch({
+            type: 'NOTICE',
+            message: staleStructureNotice(
+              outcome,
+              structureWorldProblem(intent.world, currentStructureWorld()),
+            ),
+          });
         }
-        // 尽可能展开目标位置的祖先目录，让用户看到新位置；分页未加载到的节点不假装可见
-        const refreshed = stateRef.current.treeByProject[projectId] ?? {};
-        const allNodes = Object.values(refreshed).flatMap((level) => level.entries);
-        const segments = targetParent.split('/').filter(Boolean);
-        for (let i = 1; i <= segments.length; i += 1) {
-          const dir = segments.slice(0, i).join('/');
-          const folder = allNodes.find(
-            (node) => node.kind === 'folder' && (node.path ?? '') === dir,
-          );
-          if (folder) dispatch({ type: 'EXPAND_PROJECT_NODE', projectId, path: folder.id });
-        }
-        /*
-         * 标注是否跟着走了（UX-02C-04 / R1-04）。
-         *
-         * 三种结论由 `structureChangeNotice` 统一成一句话：`failed` 必须说清
-         * "文件已移动，但资源标注未能随文件迁移"——磁盘确实变了，它既不是
-         * 磁盘失败，也不能让用户以为标注还在。
-         */
-        dispatch({ type: 'NOTICE', message: structureChangeNotice(outcome) });
+        return result;
       },
 
       /** UNKNOWN：恰好一次只读核对源位置与目标位置，不重发、不改草稿、不推断成功。 */
-      async checkStructureLocations(projectId, sourceParentDir, targetParentDir) {
-        await treeLoader.current.load(projectId, sourceParentDir, false);
-        if (targetParentDir !== sourceParentDir) {
-          await treeLoader.current.load(projectId, targetParentDir, false);
-        }
+      async checkStructureLocations(projectId, sourceParentDir, targetParentDir, intent) {
+        return checkStructureLocationsWithOwnership({
+          start: intent.world,
+          projectId,
+          sourceParentDir,
+          targetParentDir,
+          host: structureRefreshHost(),
+        });
+      },
+
+      /**
+       * 拒绝即"这一层关于源对象的缓存已经过期"（UX-02C-02-R2 / R2.1）。
+       *
+       * 只有源对象真的变了（`ERR_ENTRY_SOURCE_CHANGED` / `ERR_RESOURCE_NOT_FOUND`）
+       * 才重取；其余拒绝不动层表。跨世界时不发任何请求。
+       */
+      async refreshStructureSourceParent(projectId, sourcePath, intent) {
+        return refreshStructureSourceParentWithOwnership({
+          start: intent.world,
+          projectId,
+          sourcePath,
+          host: structureRefreshHost(),
+        });
       },
 
       /* ---- UX-02C-03-P1：工作台隐藏 / 取消隐藏 ---- */

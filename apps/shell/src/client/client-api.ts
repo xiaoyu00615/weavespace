@@ -1000,13 +1000,19 @@ export interface WeaveSpaceClient {
     name: string,
     sourceAnchor: string,
   ): Promise<StructureChangeOutcome>;
-  /** 同一授权项目内移动：只提交项目内相对目录 + 单段名称 + 源身份预期。 */
+  /**
+   * 同一授权项目内移动：只提交项目内相对目录 + 单段名称 + 源身份预期。
+   *
+   * `targetAnchor` 是**目标文件夹**的身份预期（UX-02C-02-R2.1）：用户在对话框里
+   * 选中的那个目录必须还是那一个，否则文件会被搬进一个用户没确认过的位置。
+   */
   moveEntry(
     projectId: string,
     sourcePath: string,
     targetParentDir: string,
     name: string,
     sourceAnchor: string,
+    targetAnchor: string,
   ): Promise<StructureChangeOutcome>;
 }
 
@@ -1910,10 +1916,10 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       );
     },
 
-    async moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor) {
+    async moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor, targetAnchor) {
       return postStructureChange(
         '/api/files/move',
-        { projectId, sourcePath, targetParentDir, name, sourceAnchor },
+        { projectId, sourcePath, targetParentDir, name, sourceAnchor, targetAnchor },
         { projectId, sourcePath, targetParentDir, targetName: name },
       );
     },

@@ -464,6 +464,10 @@ test('10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝'
         identityReads += 1;
         return null;
       },
+      readTargetIdentity: async () => {
+        identityReads += 1;
+        return null;
+      },
       withStructureDiskOp: async <T,>(_capability: unknown, fn: () => Promise<T>): Promise<T> => {
         diskOps += 1;
         return fn();

@@ -1,5 +1,5 @@
 /**
- * 真实改名 / 移动的**资源意图身份**（UX-02C-02-R2）。
+ * 真实改名 / 移动的**资源意图身份**（UX-02C-02-R2 / R2.1）。
  *
  * 一次改名/移动从"用户点开输入行"到"Host 动手"之间，世界会变：
  * 树可能刷新、文件可能被外部换成同名新对象、Provider 可能换了一种身份能力。
@@ -11,11 +11,16 @@
  * - **提交前核验**：用当前树里的锚再比一次，不一致就**本地拒绝、不发请求**；
  *   Host 仍会独立再核验一次（权威在那里，这里只是尽早给用户一个明确原因）。
  *
+ * R2.1 补的是另一维：意图还必须记住**它在哪个世界里打开**（模式 + 工作区 +
+ * 加载代次）。只比源身份不够——`Live → Demo → Live` 之后项目 ID、路径、锚
+ * 可以完全一样，但那是另一个世界里的同名同构对象，旧意图必须失效。
+ *
  * 为什么锚可以当预期而不能当授权：它由 Host 用自己 `lstat` 到的 `dev:ino`
  * 派生，客户端只负责原样回传；Host 拿到后**自己重算**再比对，不采信客户端
  * 自述的身份。锚既不能解锁任何路径，也不能替代权限判定。
  */
 import type { StructureEntryKind } from './structure-change.ts';
+import { structureWorldProblem, type StructureWorld } from './structure-ownership.ts';
 
 /** 与 `tree-commands.ts` 同一套三态；这里独立声明，避免交互层与结构层互相依赖。 */
 export type StructureIdentityState = 'verified' | 'unsupported' | 'unverified';
@@ -39,6 +44,12 @@ export interface StructureIntent {
   readonly anchor: string;
   /** 与锚同时冻结的身份状态，用于区分"能力变了"和"对象变了"。 */
   readonly verification: StructureIdentityState;
+  /**
+   * 打开意图时所在的世界（R2.1）。提交时逐项核验；任一项不同即失效。
+   *
+   * 不含"当前活动项目"：同一工作区内切换焦点不该让一条真实的改名失效。
+   */
+  readonly world: StructureWorld;
   /** 会话票据：结果回来时据此判断是否还属于当前输入行。 */
   readonly sessionId: number;
 }
@@ -57,6 +68,7 @@ export function captureStructureIntent(input: {
   readonly entryKind: StructureEntryKind;
   readonly anchor: string | null;
   readonly verification: StructureIdentityState;
+  readonly world: StructureWorld;
   readonly sessionId: number;
 }): CaptureStructureIntentResult {
   if (input.projectId === '' || input.sourcePath === '') {
@@ -81,6 +93,12 @@ export function captureStructureIntent(input: {
       entryKind: input.entryKind,
       anchor: input.anchor,
       verification: input.verification,
+      world: Object.freeze({
+        mode: input.world.mode,
+        workspaceMode: input.world.workspaceMode,
+        workspaceKey: input.world.workspaceKey,
+        epoch: input.world.epoch,
+      }),
       sessionId: input.sessionId,
     }),
   };
@@ -103,6 +121,46 @@ export function structureIntentProblem(input: {
   if (current.anchor === null || current.anchor === '') return OBJECT_CHANGED;
   if (current.anchor !== input.intent.anchor) return OBJECT_CHANGED;
   return null;
+}
+
+/**
+ * 提交前核验：意图打开时的世界还在不在（R2.1 / B01）。
+ *
+ * `Live → Demo → Live` 会回到同一个 `mode`，所以判据必须带上代次；只比模式
+ * 等于把"整整两代之前的那一次点击"当成刚刚发生的。文案与"对象变了"分开：
+ * 一个是"世界换了"，一个是"文件换了"，用户要做的事也不同。
+ */
+export function structureIntentScopeProblem(input: {
+  readonly intent: StructureIntent;
+  readonly current: StructureWorld;
+}): string | null {
+  return structureWorldProblem(input.intent.world, input.current);
+}
+
+/**
+ * 提交前**完整**的意图核验（R2.1 / B01）：票据 → 世界 → 源身份。
+ *
+ * 三段必须按这个顺序判，因为对用户是三件不同的事：
+ * - 票据不符：这条输入已经不是当前这一行了（可能已经收起、或换了对象）；
+ * - 世界不符：工作区/代次变了（`Live → Demo → Live` 之后一切看起来都一样）；
+ * - 身份不符：还是同一个世界，但那个路径上的对象换了。
+ *
+ * 把顺序和文案收在一处，组件只负责提供"此刻"的值，不在 JSX 里再抄一遍判定。
+ */
+export function structureSubmitIntentProblem(input: {
+  readonly intent: StructureIntent;
+  /** 这条意图的票据是否仍属于当前打开的会话。 */
+  readonly sessionCurrent: boolean;
+  readonly world: StructureWorld;
+  readonly current: {
+    readonly anchor: string | null;
+    readonly verification: StructureIdentityState;
+  };
+}): string | null {
+  if (!input.sessionCurrent) return '这次操作所属的输入已经结束，命令没有执行';
+  const scopeProblem = structureIntentScopeProblem({ intent: input.intent, current: input.world });
+  if (scopeProblem) return scopeProblem;
+  return structureIntentProblem({ intent: input.intent, current: input.current });
 }
 
 /**

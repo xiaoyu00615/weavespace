@@ -1,0 +1,121 @@
+{
+  "at": "2026-11-27T18:26:07.318Z",
+  "suite": "tests/suites/111-s11ux02c02r21-finalization.test.ts",
+  "results": [
+    {
+      "id": "C02R21-M21",
+      "desc": "删除结构变更的工作区归属检查（切工作区后旧 APPLIED 仍写新层表）",
+      "file": "apps/shell/src/state/structure-ownership.ts",
+      "baselineSha256": "d8743353f6d4984986fb27c8b171b9d5a0d72e0a0d96170bf2df11554776cb8f",
+      "mutatedSha256": "f8e67216e482025258d6083d8276bc04c5b3b503ebe3e5e1f9d7c9dbf234c97a",
+      "sourceChanged": true,
+      "restoredSha256": "d8743353f6d4984986fb27c8b171b9d5a0d72e0a0d96170bf2df11554776cb8f",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "W-01 世界四维：任一维不同都判为不同世界，且文案指向那一维",
+        "W-03 闸门：作废后 check() 恒为 true，且不回退（代次只增不减）",
+        "A-01 改名请求在途切换工作区：APPLIED 落地零副作用（连层表都不作废）",
+        "A-05 拒绝后的源父层刷新：跨世界零请求；只有\"源真的变了\"才重取"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R21-M22",
+      "desc": "删除加载代次检查（Live→Demo→Live 之后旧结果仍被当成当前）",
+      "file": "apps/shell/src/state/structure-ownership.ts",
+      "baselineSha256": "d8743353f6d4984986fb27c8b171b9d5a0d72e0a0d96170bf2df11554776cb8f",
+      "mutatedSha256": "f580b307373b514cc886d4bfe194df14d70ace7f309eb07682c94cf4c48d140b",
+      "sourceChanged": true,
+      "restoredSha256": "d8743353f6d4984986fb27c8b171b9d5a0d72e0a0d96170bf2df11554776cb8f",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "W-01 世界四维：任一维不同都判为不同世界，且文案指向那一维",
+        "W-02 Live→Demo→Live：模式回到 live，代次仍是唯一判据",
+        "W-05 提交前核验顺序：票据 → 世界 → 源身份（三段文案不互相顶替）",
+        "A-02 移动请求在途 Live→Demo→Live：UNKNOWN 的只读核对一次都不发",
+        "A-04 多段 await 之间世界变化：后续 load / 展开 / 提示全部停止"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R21-M23",
+      "desc": "行内提示不看会话票据（两个输入框同时收到同一条错误）",
+      "file": "apps/shell/src/state/structure-ownership.ts",
+      "baselineSha256": "d8743353f6d4984986fb27c8b171b9d5a0d72e0a0d96170bf2df11554776cb8f",
+      "mutatedSha256": "9adcfc6ada8c8924d224d015fde387b07e7c9a41d281987107d28a2673da97f1",
+      "sourceChanged": true,
+      "restoredSha256": "d8743353f6d4984986fb27c8b171b9d5a0d72e0a0d96170bf2df11554776cb8f",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "N-01 改名会话的票据 → 只写改名输入行，不碰移动对话框",
+        "N-02 移动会话的票据 → 只写移动对话框",
+        "N-03 旧会话的迟到结果 → 两个行内界面都不写（不污染新会话）"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R21-M24",
+      "desc": "删除 Provider 最后一次目标目录身份核验（占位阶段被换掉也照样搬）",
+      "file": "packages/storage/local-provider.ts",
+      "baselineSha256": "c108874a4dccb05f3736eed3d69ff7271c3f2dd394b1d852b4704468d83823ef",
+      "mutatedSha256": "79042ac41400f9a28c9bc6ebea3c627ca5b907f2b302b130503cbc62d3bce1e2",
+      "sourceChanged": true,
+      "restoredSha256": "c108874a4dccb05f3736eed3d69ff7271c3f2dd394b1d852b4704468d83823ef",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "F-08 占位阶段目标目录被换掉 → 拒绝；新目录里没有本次操作的痕迹"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R21-M25",
+      "desc": "删除 Provider 的最终类型核验（目录/文件类型变了仍按身份判）",
+      "file": "packages/storage/local-provider.ts",
+      "baselineSha256": "c108874a4dccb05f3736eed3d69ff7271c3f2dd394b1d852b4704468d83823ef",
+      "mutatedSha256": "5822d626060eeba63bf128b697f1bd07224e69208e1a34cf8ddc1adb7966f2bb",
+      "sourceChanged": true,
+      "restoredSha256": "c108874a4dccb05f3736eed3d69ff7271c3f2dd394b1d852b4704468d83823ef",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "F-02 源被换成同路径的目录 → ERR_ENTRY_SOURCE_INVALID，且不删除外部目录"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R21-M26",
+      "desc": "删除 Host 的移动目标身份检查（客户端的错锚被忽略）",
+      "file": "apps/server/src/structure-change.ts",
+      "baselineSha256": "e12e5d021cecee26e21a3f3c90d002049b533f3e00f36a9f54bef4f3ebdb2736",
+      "mutatedSha256": "0a08a1633dfbe4f81abb42983c236c8257fc1db1a7a86b005ee3be6ee18a0624",
+      "sourceChanged": true,
+      "restoredSha256": "e12e5d021cecee26e21a3f3c90d002049b533f3e00f36a9f54bef4f3ebdb2736",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "H-02 目标锚指向另一个目录 → 409 ERR_ENTRY_TARGET_CHANGED，零磁盘变更",
+        "H-03 目标目录被删除重建后旧锚失效 → 409 ERR_ENTRY_TARGET_CHANGED，源原地不动"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R21-M27",
+      "desc": "删除提交前的会话票据核验（旧输入行的结果落到新输入行）",
+      "file": "apps/shell/src/state/structure-intent.ts",
+      "baselineSha256": "8f6105215d266d64bfaa291ce9dc50eb3dc8d3afa2d9b59f93842f2729a84f8b",
+      "mutatedSha256": "ba0758604c48e74720f59532e2bec13ba115d071fb4ba837d603ecd81ff564b1",
+      "sourceChanged": true,
+      "restoredSha256": "8f6105215d266d64bfaa291ce9dc50eb3dc8d3afa2d9b59f93842f2729a84f8b",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "W-05 提交前核验顺序：票据 → 世界 → 源身份（三段文案不互相顶替）"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

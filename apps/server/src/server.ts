@@ -271,6 +271,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_ENTRY_IDENTITY_UNVERIFIED':
     // 结构变更：这次操作指向的对象已经不是当初那个（锚/身份核验不通过）
     case 'ERR_ENTRY_SOURCE_CHANGED':
+    // 结构变更：移动的目标文件夹已经不是用户选中的那一个（R2.1）
+    case 'ERR_ENTRY_TARGET_CHANGED':
     // Windows 上目录被占用，无法完成改名/移动
     case 'ERR_ENTRY_DIR_BUSY':
       return 409;
@@ -508,6 +510,7 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_TRASH_RECORD_NOT_FOUND: '回收记录不存在',
   ERR_TRASH_STATE_CONFLICT: '该回收记录当前不可执行此操作，需要人工核对',
   ERR_ENTRY_SOURCE_CHANGED: '该路径上的文件已被外部替换，未执行任何移动',
+  ERR_ENTRY_TARGET_CHANGED: '目标文件夹已被外部替换，未执行任何移动（请重新选择目标）',
   ERR_ENTRY_IDENTITY_UNVERIFIED: '无法确认源文件的身份，未执行任何移动（请刷新文件树后重试）',
   ERR_STRUCTURE_INTENT_MISSING: '缺少源文件的身份信息：请刷新文件树后重新发起操作',
   ERR_IDENTITY_STATE_CHANGED: '该目录的身份核验状态已变化，已作废本次加载，请刷新',
@@ -2879,6 +2882,9 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           sessionsUnder: (projectId, prefix) => document.sessionsUnder(projectId, prefix),
           // 读源身份也走结构变更自己的通道：屏障期间普通 withDiskOp 已被拒
           readSourceIdentity: (capability, path) =>
+            runtime.withStructureDiskOp(capability, () => handle.provider.identityOf!(path)),
+          // 目标目录身份同一条通道（R2.1）：移动必须搬进用户当初选中的那个目录
+          readTargetIdentity: (capability, path) =>
             runtime.withStructureDiskOp(capability, () => handle.provider.identityOf!(path)),
           // 屏障持有期间普通 withDiskOp 已被拒，结构变更自己的磁盘操作走专用通道
           withStructureDiskOp: <T,>(capability: StructureChangeCapability, fn: () => Promise<T>) =>

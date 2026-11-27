@@ -13,6 +13,7 @@
  * 这里只挡"注定失败"的输入；路径归属、会话保护与排他创建的权威判定始终在 Host。
  */
 import type { StructureChangeOutcome } from '../client/client-api.ts';
+import type { StructureIntent } from './structure-intent.ts';
 import {
   entryNameOf,
   isEntryUnder,
@@ -205,30 +206,45 @@ export interface StructureRunnerHost {
     name: string,
     sourceAnchor: string,
   ): Promise<StructureChangeOutcome>;
+  /**
+   * `targetAnchor` 是**移动目标文件夹**的身份预期（UX-02C-02-R2.1 / D）。
+   *
+   * 与源锚同一套语义：用户在对话框里选中的那个目录，到 Host 动手时还必须
+   * 还是那一个；否则"删除重建同名目录"会让文件被搬进一个用户没确认过的目录。
+   */
   move(
     projectId: string,
     sourcePath: string,
     targetParentDir: string,
     name: string,
     sourceAnchor: string,
+    targetAnchor: string,
   ): Promise<StructureChangeOutcome>;
   /** Shell 本地草稿阻断；先于任何请求。 */
   localBlockers(projectId: string, sourcePath: string, entryKind: StructureEntryKind): string[];
   /**
-   * 提交前的身份核验（UX-02C-02-R2）：当前这一行还是不是打开意图时那个对象。
+   * 提交前的意图核验（UX-02C-02-R2 / R2.1）：票据、世界、源身份三件事。
+   *
+   * 传进来的是**这次提交实际使用的那一份冻结意图**（`intent`），不是按
+   * `projectId + sourcePath` 现查一遍"当前最新的意图"——同一行先后开过两个会话时，
+   * 后者会把前者顶掉，于是核验的对象根本不是要提交的那个。
    *
    * 返回 `null` 才能发请求；返回文案表示本地直接拒绝（零请求）。
    * 它**不替代** Host 的核验：权威判据始终在 Host（客户端只看自己看到的树）。
    */
-  verifySource(input: {
-    readonly projectId: string;
-    readonly sourcePath: string;
-    readonly entryKind: StructureEntryKind;
-  }): string | null;
+  verifyIntent(input: { readonly intent: StructureIntent }): string | null;
   /** UNKNOWN 时恰好一次的只读核对：只刷新源父层与目标父层，不重发、不改草稿。 */
-  checkLocations(projectId: string, sourceParentDir: string, targetParentDir: string): Promise<void>;
+  checkLocations(
+    projectId: string,
+    sourceParentDir: string,
+    targetParentDir: string,
+    intent: StructureIntent,
+  ): Promise<void>;
   /** 只有 Host 明确 APPLIED 才调用：更新层表、作废旧路径、必要时展开目标。 */
-  onApplied(outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>): void;
+  onApplied(
+    outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>,
+    intent: StructureIntent,
+  ): void;
   /**
    * Host 明确 REJECTED 时调用（UX-02C-02-R2）。
    *
@@ -242,8 +258,13 @@ export interface StructureRunnerHost {
   onRejected?(
     outcome: Extract<StructureChangeOutcome, { status: 'REJECTED' }>,
     target: { readonly projectId: string; readonly sourcePath: string },
+    intent: StructureIntent,
   ): void;
-  onNotice(message: string): void;
+  /**
+   * 提示落地。`sessionId` 是发起这次请求的会话票据：
+   * 调用方据此决定写进**哪一个**输入行 / 移动对话框（而不是两个都写）。
+   */
+  onNotice(message: string, sessionId: number): void;
 }
 
 export interface StructureSubmitInput {
@@ -254,13 +275,20 @@ export interface StructureSubmitInput {
   readonly targetName: string;
   readonly entryKind: StructureEntryKind;
   /**
-   * 打开意图时冻结的资源锚（UX-02C-02-R2）。
+   * 打开意图时冻结的**整份**预期（UX-02C-02-R2 / R2.1）。
    *
-   * **必填**：`''` 表示没有身份预期 → 本地直接拒绝，不发请求。
-   * 声明为必填而不是可选，是为了让"漏传"变成编译错误而不是一次静默的
+   * **必填**：它同时携带源锚、身份状态、所在世界（模式/工作区/代次）与会话票据。
+   * 声明为必填而不是可选，是为了让"漏传"变成编译错误，而不是一次静默的
    * 无锚路径操作（与 `restoreTrash` 的 `gate` 同一处理）。
    */
-  readonly sourceAnchor: string;
+  readonly intent: StructureIntent;
+  /**
+   * move 专用：对话框里选中的目标文件夹身份（项目根用 `projectAnchor`）。
+   *
+   * 缺失 / 形状非法一律本地拒绝——"目标身份未知时不得静默移动"。
+   * rename 的目标父目录由 Host 派生，不需要也不接受这一项。
+   */
+  readonly targetAnchor?: string;
 }
 
 export type StructureRunResult = 'applied' | 'rejected' | 'unknown' | 'busy' | 'blocked';
@@ -291,6 +319,11 @@ const UNKNOWN_NOTICE =
 
 /** 没有身份预期就不发请求（与 Host 的 `ERR_STRUCTURE_INTENT_MISSING` 同义，只是更早）。 */
 const MISSING_INTENT_NOTICE = '缺少源文件的身份信息：请刷新文件树后重新发起操作';
+/** 目标目录身份未知：绝不"先搬过去再说"。 */
+export const MISSING_TARGET_INTENT_NOTICE = '目标文件夹的身份无法核验：请重新选择目标后再试';
+
+/** 资源锚形状（与 Host 的 `SOURCE_ANCHOR_RE` 同一规则）。 */
+const ANCHOR_RE = /^[0-9a-f]{32}$/;
 
 /**
  * 一次装配 = 一把单飞锁。菜单、行内改名、移动确认框都走这里，不实现第二套逻辑。
@@ -302,10 +335,12 @@ export function createStructureRunner(host: StructureRunnerHost): StructureRunne
     async submit(input) {
       if (inflight) return 'busy';
       inflight = true;
+      const sessionId = input.intent.sessionId;
+      const notify = (message: string): void => host.onNotice(message, sessionId);
       try {
         const blockedBy = host.localBlockers(input.projectId, input.sourcePath, input.entryKind);
         if (blockedBy.length > 0) {
-          host.onNotice(blockedText(blockedBy));
+          notify(blockedText(blockedBy));
           return 'blocked';
         }
         const checked = structureTargetCheck({
@@ -315,61 +350,91 @@ export function createStructureRunner(host: StructureRunnerHost): StructureRunne
           entryKind: input.entryKind,
         });
         if (!checked.ok) {
-          host.onNotice(checked.reason);
+          notify(checked.reason);
           return 'rejected';
         }
         /**
-         * 身份预期（UX-02C-02-R2）：先确认"要改的是哪个对象"，再谈怎么改。
-         *
-         * 两道都在**发请求之前**：没有锚、或当前这一行已经不是那个对象，
+         * 意图核验（UX-02C-02-R2 / R2.1）：先确认"要改的是哪个对象、在哪个世界"，
+         * 再谈怎么改。两道都在**发请求之前**：票据/世界/锚任一不成立，
          * 一个字节都不发出去。Host 侧仍会独立核验（这里只是尽早给原因）。
          */
-        if (typeof input.sourceAnchor !== 'string' || input.sourceAnchor === '') {
-          host.onNotice(MISSING_INTENT_NOTICE);
+        if (typeof input.intent.anchor !== 'string' || input.intent.anchor === '') {
+          notify(MISSING_INTENT_NOTICE);
           return 'rejected';
         }
-        const intentProblem = host.verifySource({
-          projectId: input.projectId,
-          sourcePath: input.sourcePath,
-          entryKind: input.entryKind,
-        });
+        if (
+          input.intent.projectId !== input.projectId ||
+          input.intent.sourcePath !== input.sourcePath
+        ) {
+          // 意图与本次请求不是同一个对象：宁可拒绝，也不要拿 A 的锚去改 B
+          notify(MISSING_INTENT_NOTICE);
+          return 'rejected';
+        }
+        if (input.kind === 'move') {
+          const targetAnchor = input.targetAnchor;
+          if (typeof targetAnchor !== 'string' || !ANCHOR_RE.test(targetAnchor)) {
+            notify(MISSING_TARGET_INTENT_NOTICE);
+            return 'rejected';
+          }
+        }
+        const intentProblem = host.verifyIntent({ intent: input.intent });
         if (intentProblem) {
-          host.onNotice(intentProblem);
+          notify(intentProblem);
           return 'rejected';
         }
         let outcome: StructureChangeOutcome;
         try {
           outcome =
             input.kind === 'rename'
-              ? await host.rename(input.projectId, input.sourcePath, input.targetName, input.sourceAnchor)
+              ? await host.rename(
+                  input.projectId,
+                  input.sourcePath,
+                  input.targetName,
+                  input.intent.anchor,
+                )
               : await host.move(
                   input.projectId,
                   input.sourcePath,
                   input.targetParentDir,
                   input.targetName,
-                  input.sourceAnchor,
+                  input.intent.anchor,
+                  input.targetAnchor as string,
                 );
         } catch {
           // 传输层抛出：磁盘可能已经变了，只能 UNKNOWN，绝不重发
           await host
-            .checkLocations(input.projectId, parentDirOfEntry(input.sourcePath), input.targetParentDir)
+            .checkLocations(
+              input.projectId,
+              parentDirOfEntry(input.sourcePath),
+              input.targetParentDir,
+              input.intent,
+            )
             .catch(() => {});
-          host.onNotice(UNKNOWN_NOTICE);
+          notify(UNKNOWN_NOTICE);
           return 'unknown';
         }
         if (outcome.status === 'APPLIED') {
-          host.onApplied(outcome);
+          host.onApplied(outcome, input.intent);
           return 'applied';
         }
         if (outcome.status === 'UNKNOWN') {
           await host
-            .checkLocations(input.projectId, parentDirOfEntry(input.sourcePath), input.targetParentDir)
+            .checkLocations(
+              input.projectId,
+              parentDirOfEntry(input.sourcePath),
+              input.targetParentDir,
+              input.intent,
+            )
             .catch(() => {});
-          host.onNotice(UNKNOWN_NOTICE);
+          notify(UNKNOWN_NOTICE);
           return 'unknown';
         }
-        host.onRejected?.(outcome, { projectId: input.projectId, sourcePath: input.sourcePath });
-        host.onNotice(outcome.message || '改名或移动失败');
+        host.onRejected?.(
+          outcome,
+          { projectId: input.projectId, sourcePath: input.sourcePath },
+          input.intent,
+        );
+        notify(outcome.message || '改名或移动失败');
         return 'rejected';
       } finally {
         inflight = false;

@@ -9,13 +9,55 @@
  *
  * 组件不 fetch、不碰磁盘：确认动作交给 `TreeCommandsContext` 的同一条编排。
  */
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { displayPath } from '../state/structure-change.ts';
+import { focusWhereOf, shouldRestoreFocus, type FocusWhere } from './focus-restore.ts';
 import { useTreeCommands } from './TreeCommandsContext.tsx';
 
 export function MoveEntryDialog() {
   const commands = useTreeCommands();
   const dialog = commands.moveDialog;
+  /**
+   * 焦点锚点（R2.1 / E）：对话框打开时落在「确认移动」，提交结束后再还回去。
+   *
+   * 必须在提前 return **之前**声明 hooks：对话框关闭时组件仍然挂在这个位置，
+   * hooks 顺序不能因为 `dialog === null` 而变。
+   */
+  const primaryRef = useRef<HTMLButtonElement | null>(null);
+  const prevSubmitting = useRef(false);
+  const focusAtStart = useRef<FocusWhere>('body');
+  const sessionId = dialog?.intent.sessionId ?? null;
+
+  // 打开 / 换会话：把焦点放进对话框，Escape 才有接收者
+  useEffect(() => {
+    if (sessionId === null) return;
+    primaryRef.current?.focus();
+  }, [sessionId]);
+
+  // 提交结束（true → false）：只还给同一个会话，且不抢别人已经拿走的焦点
+  useEffect(() => {
+    const submitting = dialog?.submitting ?? false;
+    const ended = prevSubmitting.current && !submitting;
+    prevSubmitting.current = submitting;
+    if (submitting) {
+      focusAtStart.current = focusWhereOf(document.activeElement, primaryRef.current);
+      return;
+    }
+    if (!ended) return;
+    if (
+      !shouldRestoreFocus({
+        ended: true,
+        sessionCurrent: sessionId !== null,
+        atStart: focusAtStart.current,
+        now: focusWhereOf(document.activeElement, primaryRef.current),
+      })
+    ) {
+      return;
+    }
+    primaryRef.current?.focus();
+  }, [dialog?.submitting, sessionId]);
+
   if (!dialog) return null;
 
   const targetPath =
@@ -35,6 +77,19 @@ export function MoveEntryDialog() {
           if (event.key === 'Escape') {
             event.preventDefault();
             commands.cancelMove();
+            return;
+          }
+          /**
+           * Enter = 按既有契约提交（R2.1 / E）。
+           *
+           * 只在对话框内生效；`preventDefault` 同时挡掉按钮的原生激活，
+           * 因此不会出现"一次 Enter 提交两次"。提交中一律忽略（单飞已在编排层）。
+           */
+          if (event.key === 'Enter') {
+            if (event.target instanceof HTMLElement && event.target.tagName === 'TEXTAREA') return;
+            event.preventDefault();
+            if (dialog.submitting || dialog.options.length === 0) return;
+            void commands.confirmMove();
           }
         }}
       >
@@ -78,6 +133,7 @@ export function MoveEntryDialog() {
             取消（Esc）
           </button>
           <button
+            ref={primaryRef}
             type="button"
             className="button"
             disabled={dialog.submitting || dialog.options.length === 0}

@@ -58,6 +58,7 @@ import {
 } from '../../apps/shell/src/state/structure-change.ts';
 import type { StructureChangeOutcome } from '../../apps/shell/src/client/client-api.ts';
 import { identityVerificationOf } from '../../apps/shell/src/state/tree-commands.ts';
+import { withSourceAnchor, type StructureBody } from '../helpers/structure-intent.ts';
 
 const PROJ_A = 'project-a';
 const PROJ_B = 'project-b';
@@ -315,7 +316,8 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>, options: HarnessOptions
     get,
     anchorOf,
     rename: (body, opts) => post('/api/files/rename', body, opts),
-    move: (body, opts) => post('/api/files/move', body, opts),
+    move: async (body, opts) =>
+      post('/api/files/move', await withSourceAnchor(body as unknown as StructureBody, tree), opts),
     open: (projectId, path) => post('/api/open', { projectId, path }),
     disk: (projectId = PROJ_A) => diskState(projectId === PROJ_A ? rootA : rootB),
   };
@@ -337,11 +339,20 @@ const INTENT_INPUT = {
   entryKind: 'file' as StructureEntryKind,
 };
 
+/** S 段的世界票据（R2.1）：意图必须记住它在哪个世界打开。 */
+const TEST_WORLD = {
+  mode: 'live',
+  workspaceMode: 'multi',
+  workspaceKey: 'ws-1',
+  epoch: 1,
+} as const;
+
 test('S-01 捕获意图：有锚且已核验 → 成功，锚与票据被原样保存', () => {
   const captured = captureStructureIntent({
     ...INTENT_INPUT,
     anchor: hex32('notes'),
     verification: 'verified',
+    world: TEST_WORLD,
     sessionId: 7,
   });
   assert.equal(captured.ok, true);
@@ -359,6 +370,7 @@ test('S-02 捕获意图：没有锚且身份未确认 → 拒绝（不得按路�
     ...INTENT_INPUT,
     anchor: null,
     verification: 'unverified',
+    world: TEST_WORLD,
     sessionId: 1,
   });
   assert.equal(captured.ok, false);
@@ -371,6 +383,7 @@ test('S-03 捕获意图：Provider 声明无身份能力 → 同样拒绝，不�
     ...INTENT_INPUT,
     anchor: null,
     verification: 'unsupported',
+    world: TEST_WORLD,
     sessionId: 1,
   });
   assert.equal(captured.ok, false);
@@ -384,6 +397,7 @@ test('S-04 提交前：当前锚与捕获锚一致 → 放行', () => {
     ...INTENT_INPUT,
     anchor,
     verification: 'verified',
+    world: TEST_WORLD,
     sessionId: 1,
   });
   assert.ok(captured.ok);
@@ -401,6 +415,7 @@ test('S-05 提交前：同路径换成新对象（锚变了）→ 对象已变�
     ...INTENT_INPUT,
     anchor: hex32('notes'),
     verification: 'verified',
+    world: TEST_WORLD,
     sessionId: 1,
   });
   assert.ok(captured.ok);
@@ -418,6 +433,7 @@ test('S-06 提交前：当前探测失败（unverified）→ 无法确认，不�
     ...INTENT_INPUT,
     anchor,
     verification: 'verified',
+    world: TEST_WORLD,
     sessionId: 1,
   });
   assert.ok(captured.ok);
@@ -435,6 +451,7 @@ test('S-07 提交前：当前声明改口（unsupported）→ 身份状态已变
     ...INTENT_INPUT,
     anchor,
     verification: 'verified',
+    world: TEST_WORLD,
     sessionId: 1,
   });
   assert.ok(captured.ok);
@@ -451,6 +468,7 @@ test('S-08 提交前：声明 supported 但已探不到对象 → 对象已变�
     ...INTENT_INPUT,
     anchor: hex32('notes'),
     verification: 'verified',
+    world: TEST_WORLD,
     sessionId: 1,
   });
   assert.ok(captured.ok);
@@ -475,6 +493,7 @@ test('S-10 输入期间改草稿不改变捕获的锚（预期不可自动刷新
     ...INTENT_INPUT,
     anchor,
     verification: 'verified',
+    world: TEST_WORLD,
     sessionId: 1,
   });
   assert.ok(captured.ok);
@@ -503,13 +522,18 @@ interface RunnerProbe {
     targetParentDir: string;
     name: string;
     sourceAnchor: string;
+    targetAnchor: string;
   }>;
   applied: number;
   notices: string[];
 }
 
 function makeRunner(options: {
-  verify?: (input: { projectId: string; sourcePath: string }) => string | null;
+  verify?: (intent: {
+    projectId: string;
+    sourcePath: string;
+    entryKind: StructureEntryKind;
+  }) => string | null;
   outcome?: (input: { kind: 'rename' | 'move' }) => StructureChangeOutcome;
 } = {}): { runner: ReturnType<typeof createStructureRunner>; probe: RunnerProbe } {
   const probe: RunnerProbe = { renames: [], moves: [], applied: 0, notices: [] };
@@ -529,8 +553,8 @@ function makeRunner(options: {
         }
       );
     },
-    move: async (projectId, sourcePath, targetParentDir, name, sourceAnchor) => {
-      probe.moves.push({ projectId, sourcePath, targetParentDir, name, sourceAnchor });
+    move: async (projectId, sourcePath, targetParentDir, name, sourceAnchor, targetAnchor) => {
+      probe.moves.push({ projectId, sourcePath, targetParentDir, name, sourceAnchor, targetAnchor });
       return (
         options.outcome?.({ kind: 'move' }) ?? {
           status: 'APPLIED',
@@ -545,7 +569,7 @@ function makeRunner(options: {
       );
     },
     localBlockers: () => [],
-    verifySource: (input) => (options.verify ? options.verify(input) : null),
+    verifyIntent: (input) => (options.verify ? options.verify(input.intent) : null),
     checkLocations: async () => {},
     onApplied: () => {
       probe.applied += 1;
@@ -564,13 +588,24 @@ const RENAME_INPUT = {
   targetParentDir: 'docs',
   targetName: 'n.md',
   entryKind: 'file' as StructureEntryKind,
-  sourceAnchor: hex32('notes'),
+  intent: {
+    projectId: PROJ_A,
+    sourcePath: 'docs/notes.md',
+    entryKind: 'file' as StructureEntryKind,
+    anchor: hex32('notes'),
+    verification: 'verified' as const,
+    world: TEST_WORLD,
+    sessionId: 1,
+  },
   sessionId: 1,
 };
 
 test('S-11 提交时没有锚 → 本地拒绝，一个请求都不发', async () => {
   const { runner, probe } = makeRunner();
-  const result: StructureRunResult = await runner.submit({ ...RENAME_INPUT, sourceAnchor: '' });
+  const result: StructureRunResult = await runner.submit({
+    ...RENAME_INPUT,
+    intent: { ...RENAME_INPUT.intent, anchor: '' },
+  });
   assert.equal(result, 'rejected');
   assert.equal(probe.renames.length, 0, '缺少身份预期时不得发出请求');
   assert.equal(probe.moves.length, 0);
@@ -592,7 +627,7 @@ test('S-13 正常提交：发出的请求带着同一个锚，成功才 onApplie
   const result = await runner.submit(RENAME_INPUT);
   assert.equal(result, 'applied');
   assert.equal(probe.renames.length, 1);
-  assert.equal(probe.renames[0]!.sourceAnchor, RENAME_INPUT.sourceAnchor, '必须把捕获的锚原样发出');
+  assert.equal(probe.renames[0]!.sourceAnchor, RENAME_INPUT.intent.anchor, '必须把捕获的锚原样发出');
   assert.equal(probe.renames[0]!.sourcePath, 'docs/notes.md');
   assert.equal(probe.applied, 1);
 });
@@ -616,15 +651,21 @@ test('S-14 Host 拒绝（源已变化）：保留输入、只发一次、不自�
 test('S-15 移动提交同样带锚；verifySource 拿到的是源项目与源路径', async () => {
   const seen: Array<{ projectId: string; sourcePath: string }> = [];
   const { runner, probe } = makeRunner({
-    verify: (input) => {
-      seen.push(input);
+    verify: (intent) => {
+      seen.push({ projectId: intent.projectId, sourcePath: intent.sourcePath });
       return null;
     },
   });
-  const result = await runner.submit({ ...RENAME_INPUT, kind: 'move', targetParentDir: 'archive' });
+  const result = await runner.submit({
+    ...RENAME_INPUT,
+    kind: 'move',
+    targetParentDir: 'archive',
+    targetAnchor: hex32('archive'),
+  });
   assert.equal(result, 'applied');
   assert.equal(probe.moves.length, 1);
-  assert.equal(probe.moves[0]!.sourceAnchor, RENAME_INPUT.sourceAnchor);
+  assert.equal(probe.moves[0]!.sourceAnchor, RENAME_INPUT.intent.anchor);
+  assert.equal(probe.moves[0]!.targetAnchor, hex32('archive'));
   assert.deepEqual(
     seen.map((item) => [item.projectId, item.sourcePath]),
     [[PROJ_A, 'docs/notes.md']],
@@ -1255,6 +1296,9 @@ test('R-11 目标父目录不存在：409/400 明确拒绝，源不动', async (
       targetParentDir: 'no-such-dir',
       name: 'notes.md',
       sourceAnchor: anchor,
+      // 目录早就不在了，取不到真锚：给一个形状合法的占位，
+      // 让这条用例真的走到"目标父目录不存在"，而不是被"缺目标身份"提前拦下
+      targetAnchor: hex32('no-such-dir'),
     });
     assert.ok(res.status >= 400, JSON.stringify(res.body));
     assert.equal(res.body.errorCode, 'ERR_ENTRY_PARENT_INVALID');

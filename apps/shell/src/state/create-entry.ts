@@ -203,7 +203,11 @@ export interface CreateEntryRunnerHost {
   checkDirectory(projectId: string, parentDir: string): Promise<void>;
   /** 只有 Host 明确 APPLIED 才调用：失效目标层并刷新、必要时展开目录。 */
   onApplied(outcome: Extract<CreateEntryOutcome, { status: 'APPLIED' }>): void;
-  onNotice(message: string): void;
+  /**
+   * 提示落地。`sessionId` 是发起这次请求的输入行票据（UX-02C-02-R2.1 / B02）：
+   * 调用方据此只写进**对应的**那个输入行，而不是把错误写进所有打开着的行内界面。
+   */
+  onNotice(message: string, sessionId?: number): void;
 }
 
 export type CreateRunResult = 'applied' | 'rejected' | 'unknown' | 'busy';
@@ -215,6 +219,8 @@ export interface CreateSubmitInput {
   readonly name: string;
   readonly kind: CreateEntryKindDto;
   readonly presetExtension?: string;
+  /** 输入行票据：结果回来时用于核验"还是不是这一行"。 */
+  readonly sessionId?: number;
 }
 
 export interface CreateEntryRunner {
@@ -243,12 +249,12 @@ export function createEntryRunner(host: CreateEntryRunnerHost): CreateEntryRunne
         // 纵深防御：即使 UI 漏了预检，预设模式的空主名也绝不发给 Host。
         // 组件层还会提前拦一次，避免输入框因"提交中"禁用而失焦。
         if (missingPresetStem(input.name, input.presetExtension)) {
-          host.onNotice(EMPTY_PRESET_STEM_MESSAGE);
+          host.onNotice(EMPTY_PRESET_STEM_MESSAGE, input.sessionId);
           return 'rejected';
         }
         const checked = validateEntryName(input.name);
         if (!checked.ok) {
-          host.onNotice(checked.message);
+          host.onNotice(checked.message, input.sessionId);
           return 'rejected';
         }
         // 显式拼装请求：presetExtension 等 UI 字段一概不进入 Host
@@ -264,7 +270,7 @@ export function createEntryRunner(host: CreateEntryRunnerHost): CreateEntryRunne
         } catch {
           // 传输层抛出：同样按"结果不明"收敛，绝不重发
           await host.checkDirectory(input.projectId, input.parentDir).catch(() => {});
-          host.onNotice(unknownNotice);
+          host.onNotice(unknownNotice, input.sessionId);
           return 'unknown';
         }
         if (outcome.status === 'APPLIED') {
@@ -273,10 +279,10 @@ export function createEntryRunner(host: CreateEntryRunnerHost): CreateEntryRunne
         }
         if (outcome.status === 'UNKNOWN') {
           await host.checkDirectory(input.projectId, input.parentDir).catch(() => {});
-          host.onNotice(unknownNotice);
+          host.onNotice(unknownNotice, input.sessionId);
           return 'unknown';
         }
-        host.onNotice(outcome.message || '创建失败');
+        host.onNotice(outcome.message || '创建失败', input.sessionId);
         return 'rejected';
       } finally {
         inflight = false;

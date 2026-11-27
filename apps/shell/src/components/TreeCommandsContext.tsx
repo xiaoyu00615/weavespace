@@ -19,7 +19,6 @@ import type {
   CreateEntryOutcome,
   ProjectSummary,
   ResourceMetadataDto,
-  StructureChangeOutcome,
 } from '../client/client-api.ts';
 import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
 import { supportedFileExtensions, type SupportedExtension } from '../capabilities/supported-extensions.ts';
@@ -46,11 +45,13 @@ import {
 } from '../state/structure-change.ts';
 import {
   captureStructureIntent,
-  structureIntentProblem,
   structureSessionApplies,
+  structureSubmitIntentProblem,
   type StructureIdentityState,
   type StructureIntent,
 } from '../state/structure-intent.ts';
+import { inlineNoticeTargets } from '../state/structure-ownership.ts';
+import { structureRejectionInvalidatesSource } from '../state/structure-refresh.ts';
 import { entryNameOf } from '../../../../packages/storage/entry-name.ts';
 import {
   visibilityNoopNotice,
@@ -110,6 +111,13 @@ export interface TreeTarget extends TreeCommandTarget {
 export interface NamingState {
   /** create = 新建；rename = 真实改名。两者共用同一个行内输入行。 */
   readonly mode: 'create' | 'rename';
+  /**
+   * 会话票据（UX-02C-02-R2.1 / B02）。
+   *
+   * 每个新输入行一个号：请求结果回来时据此判断"这条错误该写进哪个输入框"。
+   * 只比项目 + 路径不够——同一行可以先收起再打开，那是两个会话。
+   */
+  readonly sessionId: number;
   readonly projectId: string;
   /** 输入行所在的层：create 是目标目录；rename 是源节点的父目录。 */
   readonly parentDir: string;
@@ -123,10 +131,11 @@ export interface NamingState {
   readonly sourcePath?: string;
   readonly entryKind?: StructureEntryKind;
   /**
-   * rename 专用：打开输入行那一刻的**身份预期**（UX-02C-02-R2）。
+   * rename 专用：打开输入行那一刻的**身份预期**（UX-02C-02-R2 / R2.1）。
    *
-   * 冻结的锚 + 身份状态 + 会话票据。输入期间不随界面刷新自动更新：
-   * 把它悄悄换成最新值，等于把"要改的已经不是那个对象了"藏起来。
+   * 冻结的锚 + 身份状态 + 世界（模式/工作区/代次）+ 会话票据。
+   * 输入期间不随界面刷新自动更新：把它悄悄换成最新值，
+   * 等于把"要改的已经不是那个对象了"藏起来。
    */
   readonly intent?: StructureIntent;
 }
@@ -137,6 +146,14 @@ export interface MoveDialogState {
   readonly targetName: string;
   readonly entryKind: StructureEntryKind;
   readonly targetParentDir: string;
+  /**
+   * 当前选中目标文件夹的身份预期（UX-02C-02-R2.1 / D）。
+   *
+   * 项目根用根层的 `projectAnchor`；普通文件夹用父层的锚表。用户重新选择目标时
+   * 重新捕获——**绝不**在提交时现算（那等于承认"搬进哪个目录都行"）。
+   */
+  readonly targetAnchor: string | null;
+  readonly targetVerification: StructureIdentityState;
   readonly options: readonly string[];
   readonly error: string | null;
   readonly submitting: boolean;
@@ -346,16 +363,46 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
    */
   const stateRef = useRef(state);
   stateRef.current = state;
+  /**
+   * DocumentActions 的实时镜像（R2.1）：结构变更编排只装配**一次**（单飞锁必须
+   * 跨重渲染存活），但其中每一步动作都必须是最新的那份实现。
+   */
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+  /** 提示回调的实时镜像（它依赖 dispatch 与两个会话 ref）。 */
+  const noticeRef = useRef<(message: string, sessionId: number | null) => void>(() => undefined);
+  /** 意图核验的实时镜像（依赖当前层表、票据与当前世界）。 */
+  const verifyIntentRef = useRef<(intent: StructureIntent) => string | null>(() => null);
 
-  /** 两个编排器共用的提示落地：状态栏 + 当前输入行/对话框的行内错误。 */
-  const onNotice = useCallback(
-    (message: string) => {
+  /**
+   * 提示落地：**全局状态栏**与**行内错误**分开表达（UX-02C-02-R2.1 / B02）。
+   *
+   * 旧实现把同一条提示同时写进 `naming` 与 `moveDialog`：只要两个会话同时存在，
+   * 另一个会话就会收到一条与它无关的错误（"这一行对应的对象已经变化"出现在
+   * 一个完全不同的输入框里），用户据此会去改错的东西。
+   *
+   * 现在按**会话票据**路由：`sessionId` 是发起这次请求的那个会话，
+   * 只有票据相同的行内界面才接收这条错误。`sessionId === null`（例如编辑器里
+   * 的命令）只写状态栏。
+   */
+  const noticeFor = useCallback(
+    (message: string, sessionId: number | null) => {
       dispatch({ type: 'NOTICE', message });
-      setNaming((current) => (current ? { ...current, error: message } : current));
-      setMoveDialog((current) => (current ? { ...current, error: message } : current));
+      const target = inlineNoticeTargets({
+        sessionId,
+        namingSessionId: namingRef.current?.sessionId ?? null,
+        moveSessionId: moveRef.current?.intent.sessionId ?? null,
+      });
+      if (target.naming) {
+        setNaming((current) => (current ? { ...current, error: message } : current));
+      }
+      if (target.move) {
+        setMoveDialog((current) => (current ? { ...current, error: message } : current));
+      }
     },
     [dispatch],
   );
+  noticeRef.current = noticeFor;
 
   const runner = useMemo(
     () =>
@@ -371,9 +418,9 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
             message: `已创建「${outcome.name}」（刷新该目录后可见；未加载到的分页不声明已显示）`,
           });
         },
-        onNotice,
+        onNotice: (message, sessionId) => noticeFor(message, sessionId ?? null),
       }),
-    [actions, dispatch, onNotice],
+    [actions, dispatch, noticeFor],
   );
 
   /**
@@ -397,73 +444,127 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const intentOf = useCallback((projectId: string, sourcePath: string): StructureIntent | null => {
+  /**
+   * 移动目标文件夹的身份（R2.1 / D）。
+   *
+   * 与源锚同一套口径：项目根用根层的 `projectAnchor`（根令牌摘要），普通文件夹用
+   * 它所在层的锚表。用户选目标的那一刻捕获一次；重新选择时重新捕获。
+   * 拿不到就是 `unverified` —— **不允许**"不知道也搬过去"。
+   */
+  const targetIdentityOf = useCallback(
+    (projectId: string, dir: string): { anchor: string | null; verification: StructureIdentityState } => {
+      const levels = stateRef.current.treeByProject[projectId] ?? {};
+      if (dir === '') {
+        const root = levels[''];
+        const anchor = root?.projectAnchor ?? null;
+        return {
+          anchor,
+          verification: identityVerificationOf({ anchor, support: root?.identitySupport ?? null }),
+        };
+      }
+      const level = levels[parentDirOf(dir)];
+      const anchor = level?.anchors?.[dir] ?? null;
+      return {
+        anchor,
+        verification: identityVerificationOf({ anchor, support: level?.identitySupport ?? null }),
+      };
+    },
+    [],
+  );
+
+  /**
+   * 结构变更的提交前意图核验（UX-02C-02-R2 / R2.1）。
+   *
+   * 三件事都要核，缺一不可：
+   * 1. **票据**：这条意图还属于当前这一行（同一行先后开过两个会话时，旧票据失效）；
+   * 2. **世界**：模式 / 工作区 / 加载代次都没变（`Live → Demo → Live` 之后
+   *    项目 ID、路径、锚可以完全一样，但那是另一个世界）；
+   * 3. **源身份**：当前这一行的锚还是打开意图时那一个。
+   *
+   * 注意它核验的是**传进来的那份冻结意图**，不是按 `projectId + sourcePath`
+   * 重新找一次"最新意图"——同一行先后开两个会话时，后者会把前者顶掉，
+   * 于是核验的根本不是要提交的那一个（R2.1 / B04）。
+   */
+  const structureSessionCurrent = useCallback((intent: StructureIntent): boolean => {
     const naming = namingRef.current;
-    if (
-      naming &&
-      naming.mode === 'rename' &&
-      naming.projectId === projectId &&
-      naming.sourcePath === sourcePath &&
-      naming.intent
-    ) {
-      return naming.intent;
-    }
-    const move = moveRef.current;
-    if (move && move.projectId === projectId && move.sourcePath === sourcePath) return move.intent;
-    return null;
+    const namingSessionId =
+      naming && naming.mode === 'rename' && naming.intent ? naming.intent.sessionId : null;
+    const moveSessionId = moveRef.current?.intent.sessionId ?? null;
+    return (
+      structureSessionApplies({ sessionId: intent.sessionId, currentSessionId: namingSessionId }) ||
+      structureSessionApplies({ sessionId: intent.sessionId, currentSessionId: moveSessionId })
+    );
   }, []);
 
-  const structureRunner = useMemo(
-    () =>
-      createStructureRunner({
-        rename: (projectId, sourcePath, name, sourceAnchor) =>
-          actions.renameEntry(projectId, sourcePath, name, sourceAnchor),
-        move: (projectId, sourcePath, targetParentDir, name, sourceAnchor) =>
-          actions.moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor),
-        // Host 重启后内存会话表归零，Shell 本地标签/草稿这道门必须独立存在
-        localBlockers: (projectId, sourcePath, entryKind) =>
-          localStructureBlockers(stateRef.current.tabs, projectId, sourcePath, entryKind),
-        verifySource: ({ projectId, sourcePath }) => {
-          const intent = intentOf(projectId, sourcePath);
-          if (!intent) {
-            // 没有意图就不该走到这里：宁可拒绝，也不要发一次"不知道改谁"的请求
-            return '这一行对应的对象已经变化，命令没有执行';
-          }
-          return structureIntentProblem({ intent, current: currentIdentityOf(projectId, sourcePath) });
-        },
-        checkLocations: (projectId, sourceParentDir, targetParentDir) =>
-          actions.checkStructureLocations(projectId, sourceParentDir, targetParentDir),
-        onApplied: (outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>) => {
-          void actions.applyStructureChange(outcome);
-        },
-        /**
-         * 拒绝即"这一层关于源对象的缓存已经过期"（UX-02C-02-R2）。
-         *
-         * `ERR_ENTRY_SOURCE_CHANGED` / `ERR_RESOURCE_NOT_FOUND` 是 Host 给出的磁盘事实，
-         * 而层表里那一行还挂着**替换前**的锚。此时只重取源父层（不递归、不动其它层、
-         * 不清草稿），行上的锚随之更新；用户重新选中当前对象就能正常改名/移动。
-         *
-         * 没有这一步，嵌套文件被外部替换后旧锚会永久留在缓存层里：工具栏的
-         * 「刷新当前目录」只重取项目根层（`toolbarTargetOf` 不带路径），
-         * 用户没有任何界面途径把它刷掉。
-         */
-        onRejected: (outcome, target) => {
-          if (
-            outcome.errorCode !== 'ERR_ENTRY_SOURCE_CHANGED' &&
-            outcome.errorCode !== 'ERR_RESOURCE_NOT_FOUND'
-          ) {
-            return;
-          }
-          const slash = target.sourcePath.lastIndexOf('/');
-          void actions.refreshTreeLevel(
-            target.projectId,
-            slash >= 0 ? target.sourcePath.slice(0, slash) : '',
-          );
-        },
-        onNotice,
+  const verifyStructureIntent = useCallback(
+    (intent: StructureIntent): string | null =>
+      structureSubmitIntentProblem({
+        intent,
+        sessionCurrent: structureSessionCurrent(intent),
+        world: actionsRef.current.structureWorld(),
+        current: currentIdentityOf(intent.projectId, intent.sourcePath),
       }),
-    [actions, currentIdentityOf, intentOf, onNotice],
+    [currentIdentityOf, structureSessionCurrent],
   );
+  verifyIntentRef.current = verifyStructureIntent;
+
+  /**
+   * 单飞锁必须**跨重渲染**存活（R2.1 / B04）。
+   *
+   * 之前用 `useMemo` 装配：只要 `actions` / 提示回调换了引用就会重建一个 runner，
+   * 而"在途"标记是 runner 的内部变量——重建即丢失，用户连按两次就产生两条并发
+   * 结构变更。这里改为**只装配一次**，所有依赖通过 ref 读取实时值。
+   */
+  const structureRunnerRef = useRef<ReturnType<typeof createStructureRunner> | null>(null);
+  if (structureRunnerRef.current === null) {
+    structureRunnerRef.current = createStructureRunner({
+      rename: (projectId, sourcePath, name, sourceAnchor) =>
+        actionsRef.current.renameEntry(projectId, sourcePath, name, sourceAnchor),
+      move: (projectId, sourcePath, targetParentDir, name, sourceAnchor, targetAnchor) =>
+        actionsRef.current.moveEntry(
+          projectId,
+          sourcePath,
+          targetParentDir,
+          name,
+          sourceAnchor,
+          targetAnchor,
+        ),
+      // Host 重启后内存会话表归零，Shell 本地标签/草稿这道门必须独立存在
+      localBlockers: (projectId, sourcePath, entryKind) =>
+        localStructureBlockers(stateRef.current.tabs, projectId, sourcePath, entryKind),
+      verifyIntent: ({ intent }) => verifyIntentRef.current(intent),
+      checkLocations: async (projectId, sourceParentDir, targetParentDir, intent) => {
+        await actionsRef.current.checkStructureLocations(
+          projectId,
+          sourceParentDir,
+          targetParentDir,
+          intent,
+        );
+      },
+      onApplied: (outcome, intent) => {
+        void actionsRef.current.applyStructureChange(outcome, intent);
+      },
+      /**
+       * 拒绝即"这一层关于源对象的缓存已经过期"（UX-02C-02-R2）。
+       *
+       * `ERR_ENTRY_SOURCE_CHANGED` / `ERR_RESOURCE_NOT_FOUND` 是 Host 给出的磁盘事实，
+       * 而层表里那一行还挂着**替换前**的锚。此时只重取源父层（不递归、不动其它层、
+       * 不清草稿），行上的锚随之更新；用户重新选中当前对象就能正常改名/移动。
+       *
+       * R2.1：重取本身也按意图核验归属——旧世界的拒绝不得让新工作区去读旧路径。
+       */
+      onRejected: (outcome, target, intent) => {
+        if (!structureRejectionInvalidatesSource(outcome.errorCode)) return;
+        void actionsRef.current.refreshStructureSourceParent(
+          target.projectId,
+          target.sourcePath,
+          intent,
+        );
+      },
+      onNotice: (message, sessionId) => noticeRef.current(message, sessionId),
+    });
+  }
+  const structureRunner = structureRunnerRef.current;
 
   const resolve = useCallback(
     (target: TreeTarget): ReturnType<typeof resolveCreateTarget> =>
@@ -569,6 +670,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       const draft = initialNamingDraft(presetExtension);
       setNaming({
         mode: 'create',
+        sessionId: (structureSeq.current += 1),
         projectId: resolved.projectId,
         parentDir: resolved.parentDir,
         kind,
@@ -639,6 +741,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         entryKind: source.entryKind,
         anchor,
         verification,
+        world: actions.structureWorld(),
         sessionId: (structureSeq.current += 1),
       });
       if (!captured.ok) {
@@ -647,6 +750,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       }
       setNaming({
         mode: 'rename',
+        sessionId: captured.intent.sessionId,
         projectId: source.projectId,
         parentDir: draft.parentDir,
         kind: source.entryKind === 'directory' ? 'directory' : 'file',
@@ -659,7 +763,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         intent: captured.intent,
       });
     },
-    [dispatch, ensureRootOpen, structureSource, targetProblem],
+    [actions, dispatch, ensureRootOpen, structureSource, targetProblem],
   );
 
   const openMove = useCallback(
@@ -690,32 +794,54 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         entryKind: source.entryKind,
         anchor,
         verification,
+        world: actions.structureWorld(),
         sessionId: (structureSeq.current += 1),
       });
       if (!captured.ok) {
         dispatch({ type: 'NOTICE', message: captured.reason });
         return;
       }
+      const initialTarget = options[0] ?? '';
+      const targetIdentity = targetIdentityOf(source.projectId, initialTarget);
       setMoveDialog({
         projectId: source.projectId,
         sourcePath: source.sourcePath,
         targetName: entryNameOf(source.sourcePath),
         entryKind: source.entryKind,
-        targetParentDir: options[0] ?? '',
+        targetParentDir: initialTarget,
+        targetAnchor: targetIdentity.anchor,
+        targetVerification: targetIdentity.verification,
         options,
         error: null,
         submitting: false,
         intent: captured.intent,
       });
     },
-    [dispatch, state.treeByProject, structureSource, targetProblem],
+    [actions, dispatch, state.treeByProject, structureSource, targetIdentityOf, targetProblem],
   );
 
-  const setMoveTarget = useCallback((dir: string) => {
-    setMoveDialog((current) =>
-      current && current.options.includes(dir) ? { ...current, targetParentDir: dir, error: null } : current,
-    );
-  }, []);
+  /**
+   * 重新选择目标 = 重新捕获目标身份。
+   *
+   * 不在提交时现算：那等于承认"搬到哪个目录都行"。用户选中哪个目录，
+   * 就锁定那一刻的那一个对象；它后来被删除重建，提交必须被拒。
+   */
+  const setMoveTarget = useCallback(
+    (dir: string) => {
+      setMoveDialog((current) => {
+        if (!current || !current.options.includes(dir)) return current;
+        const identity = targetIdentityOf(current.projectId, dir);
+        return {
+          ...current,
+          targetParentDir: dir,
+          targetAnchor: identity.anchor,
+          targetVerification: identity.verification,
+          error: null,
+        };
+      });
+    },
+    [targetIdentityOf],
+  );
 
   const cancelMove = useCallback(() => setMoveDialog(null), []);
 
@@ -786,7 +912,9 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       targetParentDir: moveDialog.targetParentDir,
       targetName: moveDialog.targetName,
       entryKind: moveDialog.entryKind,
-      sourceAnchor: intent.anchor,
+      intent,
+      // 目标身份是用户在对话框里选中的那一个；`null` 会被本地拒绝（零请求）
+      targetAnchor: moveDialog.targetAnchor ?? '',
     });
     /**
      * 会话归属（UX-02C-02-R2）：`await` 期间用户可能已经关掉对话框、或对另一行
@@ -847,13 +975,14 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
             targetParentDir: naming.parentDir,
             targetName: naming.draft,
             entryKind: naming.entryKind ?? 'file',
-            sourceAnchor: intent.anchor,
+            intent,
           })
         : await runner.submit({
             projectId: naming.projectId,
             parentDir: naming.parentDir,
             name: naming.draft,
             kind: naming.kind,
+            sessionId: naming.sessionId,
             ...(naming.presetExtension ? { presetExtension: naming.presetExtension } : {}),
           });
     /**
@@ -861,13 +990,19 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
      * 或者已经被另一行的改名会话顶替。那条结果（尤其是"对象已变化"这类拒绝原因）
      * 绝不能写进别人的输入行。
      */
+    const currentNaming = namingRef.current;
     if (intent) {
-      const currentNaming = namingRef.current;
       const currentSessionId =
         currentNaming && currentNaming.mode === 'rename' && currentNaming.intent
           ? currentNaming.intent.sessionId
           : null;
       if (!structureSessionApplies({ sessionId: intent.sessionId, currentSessionId })) return;
+    } else if (currentNaming?.sessionId !== naming.sessionId) {
+      /**
+       * 创建会话的归属（R2.1 / B02）：结果回来时输入行可能已经被收起、或已经
+       * 被另一个创建会话顶替。旧结果不得把它重新打开，也不得写进别人的错误位。
+       */
+      return;
     }
     if (!inputSurvivesStructureResult(result)) {
       // applied / unknown：收起输入行（unknown 的提示由状态栏保持可辨认）

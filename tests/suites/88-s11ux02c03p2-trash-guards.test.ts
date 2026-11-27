@@ -163,6 +163,8 @@ test('P2-01l 保留路径在全部公开入口都被拒绝（不是靠"越界"�
      * 授权在"读源身份"之前，锚内容根本不会被用到。
      */
     const wellFormedAnchor = 'a'.repeat(32);
+    // 目标目录同样是形状合法的占位（保留路径守卫在前，锚内容不会被用到）
+    const wellFormedTargetAnchor = 'b'.repeat(32);
     cases.push({
       name: 'move.source',
       res: await h.api.post('/api/files/move', {
@@ -171,6 +173,7 @@ test('P2-01l 保留路径在全部公开入口都被拒绝（不是靠"越界"�
         targetParentDir: '',
         name: 'stolen.md',
         sourceAnchor: wellFormedAnchor,
+        targetAnchor: wellFormedTargetAnchor,
       }),
     });
     const guideAnchor = ((await h.api.get(`/api/tree?projectId=${PROJ}&dir=docs`)).body as {
@@ -185,6 +188,7 @@ test('P2-01l 保留路径在全部公开入口都被拒绝（不是靠"越界"�
         targetParentDir: '.weavespace/trash',
         name: 'guide.md',
         sourceAnchor: guideAnchor,
+        targetAnchor: wellFormedTargetAnchor,
       }),
     });
     cases.push({

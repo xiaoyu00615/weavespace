@@ -264,6 +264,15 @@ export const ERROR_CODES = {
    * 拒绝写入，绝不把旧草稿写到新对象上；也不自动重试（重试只会再撞一次）。
    */
   ERR_METADATA_TARGET_CHANGED: 'ERR_METADATA_TARGET_CHANGED',
+  /**
+   * 移动的**目标文件夹**已经不是用户选中的那一个（UX-02C-02-R2.1）。
+   *
+   * 用户在"移动到…"里选中的目录，在 Host 动手之前被删除重建（同名同结构），
+   * 或者目标锚与 Host 自己核验出的身份不符：此时把文件搬过去，等于搬进一个
+   * 用户从未确认过的目录。与 `ERR_ENTRY_SOURCE_CHANGED` 分开，因为用户要做的
+   * 事情不同——前者刷新源、后者重新选择目标。
+   */
+  ERR_ENTRY_TARGET_CHANGED: 'ERR_ENTRY_TARGET_CHANGED',
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
