@@ -1,0 +1,41 @@
+{
+  "generatedAt": "2026-11-27T00:22:43.761Z",
+  "file": "D:/Workspace/projects/weavespace/apps/shell/src/client/client-api.ts",
+  "suite": "tests/suites/100-s11ux02c03p2r3-send-boundary.test.ts",
+  "baselineSha256": "b7d19eda53f86744376eddb22cefe3c532eb9edaf9ded50f5017604b3b4c6333",
+  "results": [
+    {
+      "id": "RV-A",
+      "desc": "移除属性读取异常保护：只有 gate() 调用在 try 里，ok/kind/message/reasons 的读取全部移到保护之外",
+      "baselineSha256": "b7d19eda53f86744376eddb22cefe3c532eb9edaf9ded50f5017604b3b4c6333",
+      "mutatedSha256": "1a25352f01efd983a37f03e44a0ed5cfea21fc1aa7cca607d2eef1b28321ab3b",
+      "mutatedDiffersFromBaseline": true,
+      "restoredSha256": "b7d19eda53f86744376eddb22cefe3c532eb9edaf9ded50f5017604b3b4c6333",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "H1-RV-T01 ok getter 抛异常：NOT_SENT/blocked，零 POST",
+        "H1-RV-T02 kind getter 抛异常：NOT_SENT/blocked，零 POST",
+        "H1-RV-T03 message getter 抛异常：NOT_SENT/blocked，零 POST",
+        "H1-RV-T04 reasons getter 抛异常：NOT_SENT/blocked，零 POST",
+        "H1-RV-T04b Proxy 的 ok 访问抛异常：同样 NOT_SENT/blocked，零 POST"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "RV-B",
+      "desc": "移除 kind 合法性验证：非法/缺失的 kind 直接当成 blocked 放行",
+      "baselineSha256": "b7d19eda53f86744376eddb22cefe3c532eb9edaf9ded50f5017604b3b4c6333",
+      "mutatedSha256": "d2687a380fee6f228dce48db810bd2f7a553d8835ac2bc447c03550a6056ac8f",
+      "mutatedDiffersFromBaseline": true,
+      "restoredSha256": "b7d19eda53f86744376eddb22cefe3c532eb9edaf9ded50f5017604b3b4c6333",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "H1-RV-T05 kind 不在允许范围：NOT_SENT/blocked（invalid 文案），零 POST",
+        "H1-RV-T05b 其余无法识别的形状：一律 NOT_SENT/blocked，零 POST"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

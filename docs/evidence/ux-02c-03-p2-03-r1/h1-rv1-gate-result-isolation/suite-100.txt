@@ -1,0 +1,160 @@
+TAP version 13
+# Subtest: R1-02A 会话令牌在途时切换项目：零恢复 POST，静默返回 stale
+ok 1 - R1-02A 会话令牌在途时切换项目：零恢复 POST，静默返回 stale
+  ---
+  duration_ms: 17.893
+  type: 'test'
+  ...
+# Subtest: R1-02A 会话令牌在途时换工作区（同项目 id、代次 +1）：零恢复 POST
+ok 2 - R1-02A 会话令牌在途时换工作区（同项目 id、代次 +1）：零恢复 POST
+  ---
+  duration_ms: 3.4575
+  type: 'test'
+  ...
+# Subtest: R1-02B 会话令牌在途时台账被外部删除：零恢复 POST，待核对记录保留
+ok 3 - R1-02B 会话令牌在途时台账被外部删除：零恢复 POST，待核对记录保留
+  ---
+  duration_ms: 3.598
+  type: 'test'
+  ...
+# Subtest: R1-02C 身份不变、台账有效：恰好一次恢复 POST，且请求体只带项目内相对身份
+ok 4 - R1-02C 身份不变、台账有效：恰好一次恢复 POST，且请求体只带项目内相对身份
+  ---
+  duration_ms: 1.8124
+  type: 'test'
+  ...
+# Subtest: R1-02C 调用顺序：令牌请求 → 最终裁决 → 真实 POST
+ok 5 - R1-02C 调用顺序：令牌请求 → 最终裁决 → 真实 POST
+  ---
+  duration_ms: 0.9113
+  type: 'test'
+  ...
+# Subtest: R1-02D 预留恰好占满第 64 格：最终复核仍然放行，POST 恰好一次
+ok 6 - R1-02D 预留恰好占满第 64 格：最终复核仍然放行，POST 恰好一次
+  ---
+  duration_ms: 14.1785
+  type: 'test'
+  ...
+# Subtest: H1-T01 正常传入有效 gate：恢复成功，恰好一次 POST
+ok 7 - H1-T01 正常传入有效 gate：恢复成功，恰好一次 POST
+  ---
+  duration_ms: 0.9535
+  type: 'test'
+  ...
+# Subtest: H1-T02 运行时缺少 gate（JS 调用方/旧适配层）：NOT_SENT，零恢复 POST
+ok 8 - H1-T02 运行时缺少 gate（JS 调用方/旧适配层）：NOT_SENT，零恢复 POST
+  ---
+  duration_ms: 0.3874
+  type: 'test'
+  ...
+# Subtest: H1-T02b 运行时 gate 不是函数：同样 NOT_SENT，零恢复 POST
+ok 9 - H1-T02b 运行时 gate 不是函数：同样 NOT_SENT，零恢复 POST
+  ---
+  duration_ms: 0.5877
+  type: 'test'
+  ...
+# Subtest: H1-T03 gate 抛出异常：NOT_SENT（不是 UNKNOWN），零恢复 POST
+ok 10 - H1-T03 gate 抛出异常：NOT_SENT（不是 UNKNOWN），零恢复 POST
+  ---
+  duration_ms: 1.4719
+  type: 'test'
+  ...
+# Subtest: H1-T03b gate 返回无法识别的形状：fail-closed，零恢复 POST
+ok 11 - H1-T03b gate 返回无法识别的形状：fail-closed，零恢复 POST
+  ---
+  duration_ms: 0.554
+  type: 'test'
+  ...
+# Subtest: H1-T04 gate 明确拒绝：NOT_SENT 带原样原因，零恢复 POST
+ok 12 - H1-T04 gate 明确拒绝：NOT_SENT 带原样原因，零恢复 POST
+  ---
+  duration_ms: 0.3533
+  type: 'test'
+  ...
+# Subtest: H1-T05 gate 拒绝后不进入 UNKNOWN 核对，也不标"待核对"
+ok 13 - H1-T05 gate 拒绝后不进入 UNKNOWN 核对，也不标"待核对"
+  ---
+  duration_ms: 0.4545
+  type: 'test'
+  ...
+# Subtest: H1-T06 最终裁决内部抛异常：预留正常释放，不遗留待核对
+ok 14 - H1-T06 最终裁决内部抛异常：预留正常释放，不遗留待核对
+  ---
+  duration_ms: 0.6495
+  type: 'test'
+  ...
+# Subtest: H1-T07 Demo 恢复：仍返回不支持，零请求、零磁盘副作用
+ok 15 - H1-T07 Demo 恢复：仍返回不支持，零请求、零磁盘副作用
+  ---
+  duration_ms: 0.333
+  type: 'test'
+  ...
+# Subtest: H1-T08 最终发送顺序仍是：令牌 → 裁决 → POST
+ok 16 - H1-T08 最终发送顺序仍是：令牌 → 裁决 → POST
+  ---
+  duration_ms: 0.9169
+  type: 'test'
+  ...
+# Subtest: H1-RV-T01 ok getter 抛异常：NOT_SENT/blocked，零 POST
+ok 17 - H1-RV-T01 ok getter 抛异常：NOT_SENT/blocked，零 POST
+  ---
+  duration_ms: 1.013
+  type: 'test'
+  ...
+# Subtest: H1-RV-T02 kind getter 抛异常：NOT_SENT/blocked，零 POST
+ok 18 - H1-RV-T02 kind getter 抛异常：NOT_SENT/blocked，零 POST
+  ---
+  duration_ms: 0.3403
+  type: 'test'
+  ...
+# Subtest: H1-RV-T03 message getter 抛异常：NOT_SENT/blocked，零 POST
+ok 19 - H1-RV-T03 message getter 抛异常：NOT_SENT/blocked，零 POST
+  ---
+  duration_ms: 0.3834
+  type: 'test'
+  ...
+# Subtest: H1-RV-T04 reasons getter 抛异常：NOT_SENT/blocked，零 POST
+ok 20 - H1-RV-T04 reasons getter 抛异常：NOT_SENT/blocked，零 POST
+  ---
+  duration_ms: 0.2876
+  type: 'test'
+  ...
+# Subtest: H1-RV-T04b Proxy 的 ok 访问抛异常：同样 NOT_SENT/blocked，零 POST
+ok 21 - H1-RV-T04b Proxy 的 ok 访问抛异常：同样 NOT_SENT/blocked，零 POST
+  ---
+  duration_ms: 0.5882
+  type: 'test'
+  ...
+# Subtest: H1-RV-T05 kind 不在允许范围：NOT_SENT/blocked（invalid 文案），零 POST
+ok 22 - H1-RV-T05 kind 不在允许范围：NOT_SENT/blocked（invalid 文案），零 POST
+  ---
+  duration_ms: 0.2958
+  type: 'test'
+  ...
+# Subtest: H1-RV-T05b 其余无法识别的形状：一律 NOT_SENT/blocked，零 POST
+ok 23 - H1-RV-T05b 其余无法识别的形状：一律 NOT_SENT/blocked，零 POST
+  ---
+  duration_ms: 0.8501
+  type: 'test'
+  ...
+# Subtest: H1-RV-T05c 合法拒绝的字段原样保留，且裁决是拷贝而不是 gate 的对象
+ok 24 - H1-RV-T05c 合法拒绝的字段原样保留，且裁决是拷贝而不是 gate 的对象
+  ---
+  duration_ms: 0.7168
+  type: 'test'
+  ...
+# Subtest: H1-RV-T06 ok 为 true：恰好一次 POST，且不去读 kind/message/reasons
+ok 25 - H1-RV-T06 ok 为 true：恰好一次 POST，且不去读 kind/message/reasons
+  ---
+  duration_ms: 2.6491
+  type: 'test'
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 94.3964

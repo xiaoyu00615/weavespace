@@ -25,6 +25,7 @@ import {
   type TrashEntryDto,
   type TrashListOutcome,
   type TrashOpQueryOutcome,
+  type TrashSendDecision,
   type TrashSendGate,
   type WeaveSpaceClient,
 } from '../../apps/shell/src/client/client-api.ts';
@@ -659,6 +660,226 @@ test('H1-T08 最终发送顺序仍是：令牌 → 裁决 → POST', async () =>
     // 早先那次快速失败 + 最终裁决 = 两次；最后三件事必须是 令牌解析 → 最终裁决 → POST
     assert.equal(order.filter((event) => event === 'gate:verify').length, 2);
     assert.deepEqual(order.slice(-3), ['token:resolve', 'gate:verify', 'post:restore']);
+  } finally {
+    h.uninstall();
+  }
+});
+
+/* ================================================================== */
+/* H1-RV1：裁决结果的完整运行时隔离                                      */
+/* ================================================================== */
+/*
+ * `evaluateSendGate` 上一版只把 `gate()` 这一次调用包进了 try：返回值是不是对象、
+ * `ok` 是什么、`kind` / `message` / `reasons` 各是什么，全都在 try 之外读。
+ * 于是 gate 只要返回一个带 getter（或 Proxy）的对象，属性访问一抛异常就直接冒到
+ * Controller 的 `catch`，被当成"网络中断"——一笔**根本没发出去**的恢复被记成待核对。
+ *
+ * 下面每条都走真实链路：直达真实 Client API（`postTrashAction` → `sessionToken()`
+ * → 裁决 → `fetch()`，只有 `fetch` 是桩），再走一遍真实 Controller 看结算结果。
+ */
+
+/**
+ * 造一个"某一个字段一读就炸"的 gate 返回值。
+ *
+ * 用 `Object.defineProperty` 而不是对象字面量的 getter，是为了让异常点在字段上可控：
+ * `ok` / `kind` / `message` / `reasons` 逐个试。
+ */
+function throwingFieldGate(field: 'ok' | 'kind' | 'message' | 'reasons'): TrashSendGate {
+  return () => {
+    const value: Record<string, unknown> = { ok: false, kind: 'blocked', message: '注入' };
+    Object.defineProperty(value, field, {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error(`注入：读取 ${field} 时抛异常`);
+      },
+    });
+    return value as unknown as TrashSendDecision;
+  };
+}
+
+/**
+ * RV 用例的共用断言：既证明"没发出去"，也证明"没有被当成 UNKNOWN 收尾"。
+ *
+ * 两段都跑：①直达 Client API（能直接看到 `NOT_SENT` + `reason`）；
+ * ②真实 Controller（能验证预留释放 / 不标待核对 / 不做只读核对）。
+ */
+async function expectGateRefused(
+  h: Harness,
+  gate: TrashSendGate,
+  expectedMessage: string,
+  label: string,
+): Promise<void> {
+  // ① 直达真实 Client API：拒绝必须发生在发送边界上
+  const direct = await h.client.restoreTrash(PROJ, OP, gate);
+  assert.equal(direct.status, 'NOT_SENT', `${label}（直达 Client API）：${JSON.stringify(direct)}`);
+  if (direct.status !== 'NOT_SENT') return;
+  assert.equal(direct.reason, 'blocked', `${label}：fail-closed 归到 blocked`);
+  assert.equal(direct.message, expectedMessage, `${label}：文案必须是固定的一条`);
+  assert.equal(h.net.posts, 0, `${label}：真实恢复 POST 必须是 0`);
+  assert.equal(h.net.events.includes('post:restore'), false, `${label}：连 POST 请求都不该发出`);
+
+  // ② 真实 Controller：零副作用，所以预留可以安全释放
+  const result = await h.controller.restore(PROJ, entry());
+  assert.equal(result.status, 'rejected', `${label}（Controller）：${JSON.stringify(result)}`);
+  if (result.status === 'rejected') assert.equal(result.message, expectedMessage);
+  assert.equal(h.net.posts, 0, `${label}：Controller 路径同样零 POST`);
+  assert.equal(h.calls.query, 0, `${label}：NOT_SENT 不是 UNKNOWN，不许调用 queryTrashOp`);
+  assert.equal(h.net.events.includes('query:op'), false, `${label}：不许做只读核对`);
+  assert.equal(h.actions.includes('TRASH_UNCONFIRMED'), false, `${label}：不许把记录标成待核对`);
+  assert.deepEqual(h.ledger().map((record) => record.opId), [], `${label}：预留必须被释放`);
+}
+
+test('H1-RV-T01 ok getter 抛异常：NOT_SENT/blocked，零 POST', async () => {
+  const gate = throwingFieldGate('ok');
+  const h = makeHarness(false, { gateOverride: gate });
+  try {
+    await expectGateRefused(h, gate, TRASH_SEND_GATE_MESSAGES.threw, 'ok getter 抛异常');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-RV-T02 kind getter 抛异常：NOT_SENT/blocked，零 POST', async () => {
+  const gate = throwingFieldGate('kind');
+  const h = makeHarness(false, { gateOverride: gate });
+  try {
+    await expectGateRefused(h, gate, TRASH_SEND_GATE_MESSAGES.threw, 'kind getter 抛异常');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-RV-T03 message getter 抛异常：NOT_SENT/blocked，零 POST', async () => {
+  const gate = throwingFieldGate('message');
+  const h = makeHarness(false, { gateOverride: gate });
+  try {
+    await expectGateRefused(h, gate, TRASH_SEND_GATE_MESSAGES.threw, 'message getter 抛异常');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-RV-T04 reasons getter 抛异常：NOT_SENT/blocked，零 POST', async () => {
+  const gate = throwingFieldGate('reasons');
+  const h = makeHarness(false, { gateOverride: gate });
+  try {
+    await expectGateRefused(h, gate, TRASH_SEND_GATE_MESSAGES.threw, 'reasons getter 抛异常');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-RV-T04b Proxy 的 ok 访问抛异常：同样 NOT_SENT/blocked，零 POST', async () => {
+  // Proxy 与 getter 是两条不同的路径：`in` / `get` 陷阱都可能在读属性时抛
+  const proxy = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error('注入：Proxy get 陷阱抛出');
+      },
+      has() {
+        throw new Error('注入：Proxy has 陷阱抛出');
+      },
+    },
+  );
+  const gate: TrashSendGate = () => proxy as unknown as TrashSendDecision;
+  const h = makeHarness(false, { gateOverride: gate });
+  try {
+    await expectGateRefused(h, gate, TRASH_SEND_GATE_MESSAGES.threw, 'Proxy 属性访问抛异常');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-RV-T05 kind 不在允许范围：NOT_SENT/blocked（invalid 文案），零 POST', async () => {
+  const gate: TrashSendGate = () => ({ ok: false, kind: 'nope' }) as unknown as TrashSendDecision;
+  const h = makeHarness(false, { gateOverride: gate });
+  try {
+    await expectGateRefused(h, gate, TRASH_SEND_GATE_MESSAGES.invalid, 'kind 非法');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-RV-T05b 其余无法识别的形状：一律 NOT_SENT/blocked，零 POST', async () => {
+  const h = makeHarness(false);
+  try {
+    const shapes: Array<{ label: string; value: unknown }> = [
+      { label: 'null', value: null },
+      { label: 'undefined', value: undefined },
+      { label: 'number', value: 42 },
+      { label: 'string', value: 'ok' },
+      { label: 'Promise', value: Promise.resolve({ ok: true }) },
+      { label: '空对象（ok 缺失）', value: {} },
+      { label: "ok 是字符串 'true'", value: { ok: 'true' } },
+      { label: 'ok 是数字 1', value: { ok: 1 } },
+      { label: 'ok:false 但 kind 缺失', value: { ok: false } },
+      { label: 'ok:false + kind:null', value: { ok: false, kind: null } },
+      { label: 'ok:false + message 非字符串', value: { ok: false, kind: 'blocked', message: 42 } },
+      { label: 'ok:false + reasons 非数组', value: { ok: false, kind: 'blocked', reasons: 'x' } },
+      { label: 'ok:false + reasons 含非字符串', value: { ok: false, kind: 'blocked', reasons: [1] } },
+    ];
+    for (const shape of shapes) {
+      const outcome = await h.client.restoreTrash(PROJ, OP, (() => shape.value) as unknown as TrashSendGate);
+      assert.equal(outcome.status, 'NOT_SENT', `${shape.label}：${JSON.stringify(outcome)}`);
+      if (outcome.status !== 'NOT_SENT') continue;
+      assert.equal(outcome.reason, 'blocked', `${shape.label}：必须 fail-closed`);
+      assert.equal(outcome.message, TRASH_SEND_GATE_MESSAGES.invalid, `${shape.label}：用 invalid 文案`);
+    }
+    assert.equal(h.net.posts, 0, '13 种形状一个请求都不许发');
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-RV-T05c 合法拒绝的字段原样保留，且裁决是拷贝而不是 gate 的对象', async () => {
+  const h = makeHarness(false);
+  try {
+    const original = { ok: false as const, kind: 'invalidated' as const, message: '注入：已失效', reasons: ['ERR_A'] };
+    const outcome = await h.client.restoreTrash(PROJ, OP, () => original);
+    assert.equal(outcome.status, 'NOT_SENT', JSON.stringify(outcome));
+    if (outcome.status !== 'NOT_SENT') return;
+    assert.equal(outcome.reason, 'invalidated');
+    assert.equal(outcome.message, '注入：已失效');
+    assert.deepEqual(outcome.reasons, ['ERR_A']);
+
+    // gate 之后改自己的数组，不得影响已经做出的裁决
+    original.reasons.push('ERR_LATE');
+    assert.deepEqual(outcome.reasons, ['ERR_A'], '裁决里的 reasons 必须是拷贝');
+    assert.equal(h.net.posts, 0);
+  } finally {
+    h.uninstall();
+  }
+});
+
+test('H1-RV-T06 ok 为 true：恰好一次 POST，且不去读 kind/message/reasons', async () => {
+  /*
+   * 允许路径只认 `ok === true`。其余字段哪怕是"一读就炸"的 getter 也不该被碰——
+   * 这条既证明正常路径没被规范化改坏，也证明我们不会因为多余字段而误拒。
+   */
+  const trap = {
+    get ok() {
+      return true;
+    },
+    get kind(): string {
+      throw new Error('注入：允许路径不该读 kind');
+    },
+    get message(): string {
+      throw new Error('注入：允许路径不该读 message');
+    },
+    get reasons(): string[] {
+      throw new Error('注入：允许路径不该读 reasons');
+    },
+  };
+  const gate: TrashSendGate = () => trap as unknown as TrashSendDecision;
+  const h = makeHarness(false, { gateOverride: gate });
+  try {
+    const result = await h.controller.restore(PROJ, entry());
+    assert.equal(result.status, 'applied', JSON.stringify(result));
+    assert.equal(h.net.posts, 1, '恰好一次');
+    assert.deepEqual(h.net.restoreBodies, [{ projectId: PROJ, opId: OP }]);
+    assert.equal(h.actions.includes('TRASH_UNCONFIRMED'), false);
   } finally {
     h.uninstall();
   }

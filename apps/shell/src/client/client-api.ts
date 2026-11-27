@@ -876,6 +876,12 @@ const TRASH_GATE_THREW_MESSAGE = '发送前授权检查执行失败，已取消�
 /** gate 返回了无法识别的形状：同样按拒绝处理（fail-closed）。 */
 const TRASH_GATE_INVALID_MESSAGE = '发送前授权检查返回了无法识别的结果，已取消恢复（未发送请求）。';
 
+/** 拒绝裁决里允许的三个 `kind`，与 `TrashSendDecision` 的联合类型一一对应。 */
+const TRASH_SEND_DECISION_KINDS: ReadonlySet<string> = new Set(['stale', 'blocked', 'invalidated']);
+
+/** 构造一条"检查坏了"的拒绝裁决：统一走 `blocked`，只有文案不同。 */
+const refuseSend = (message: string): TrashSendDecision => ({ ok: false, kind: 'blocked', message });
+
 /**
  * 同步执行发送前裁决，并把三类"检查本身坏了"的情况收敛成**拒绝**（R1-H1-02 / H1-03）。
  *
@@ -887,23 +893,66 @@ const TRASH_GATE_INVALID_MESSAGE = '发送前授权检查返回了无法识别�
  *    用户看到「待核对」而磁盘其实什么都没发生；
  * 3. **fail-closed**：漏传 / 非函数 / 返回垃圾 → 一律拒绝（`blocked`，零请求）。
  *
+ * R1-H1-RV1：受保护的不只是 `gate()` 这一次调用，而是**整段**取值与规范化——
+ * 判断返回值是不是对象、读 `ok` / `kind` / `message` / `reasons`、逐字段校验、
+ * 生成新裁决，全在同一个 `try` 里。理由：gate 的返回值不是可信数据，
+ * 四个字段都可能是 getter，整个对象还可能是 `Proxy`；只包住 `gate()` 的话，
+ * 一次属性访问抛异常照样会冒到调用方的 `catch`，被误判成 UNKNOWN。
+ *
+ * 同样地，**不把 gate 的原始对象传下去**：裁决一律是新构造的普通对象，
+ * 免得调用方读到的字段与这里校验时看到的不是同一份值（或者干脆读到别的东西）。
+ *
  * 只把"检查坏了"和"检查说不行"归到同一个 `blocked`：两者对调用方的处理完全相同
  * （零请求、可读原因、预留可安全释放），区别只在文案。
  */
 function evaluateSendGate(gate: TrashSendGate | undefined): TrashSendDecision {
   if (typeof gate !== 'function') {
-    return { ok: false, kind: 'blocked', message: TRASH_GATE_UNAVAILABLE_MESSAGE };
+    return refuseSend(TRASH_GATE_UNAVAILABLE_MESSAGE);
   }
-  let raw: unknown;
   try {
-    raw = gate();
+    const raw: unknown = gate();
+    // 非对象（null / number / string / boolean / function / undefined）一律无法识别
+    if (typeof raw !== 'object' || raw === null) return refuseSend(TRASH_GATE_INVALID_MESSAGE);
+    const source = raw as { ok?: unknown; kind?: unknown; message?: unknown; reasons?: unknown };
+
+    // 允许：只认 `ok === true`，其余字段一个都不读（它们可能是会抛异常的 getter）
+    if (source.ok === true) return { ok: true };
+
+    // 拒绝：`ok` 必须严格为 `false`；缺失或非布尔都算无法识别
+    if (source.ok !== false) return refuseSend(TRASH_GATE_INVALID_MESSAGE);
+
+    const kind = source.kind;
+    if (typeof kind !== 'string' || !TRASH_SEND_DECISION_KINDS.has(kind)) {
+      return refuseSend(TRASH_GATE_INVALID_MESSAGE);
+    }
+
+    const message = source.message;
+    if (message !== undefined && typeof message !== 'string') {
+      return refuseSend(TRASH_GATE_INVALID_MESSAGE);
+    }
+
+    const reasons = source.reasons;
+    let normalizedReasons: string[] | undefined;
+    if (reasons !== undefined) {
+      // 逐项检查并**拷贝**：gate 之后改数组不能影响已经做出的裁决
+      if (!Array.isArray(reasons)) return refuseSend(TRASH_GATE_INVALID_MESSAGE);
+      const copy: string[] = [];
+      for (const item of reasons as unknown[]) {
+        if (typeof item !== 'string') return refuseSend(TRASH_GATE_INVALID_MESSAGE);
+        copy.push(item);
+      }
+      normalizedReasons = copy;
+    }
+
+    return {
+      ok: false,
+      kind: kind as 'stale' | 'blocked' | 'invalidated',
+      ...(message !== undefined ? { message } : {}),
+      ...(normalizedReasons !== undefined ? { reasons: normalizedReasons } : {}),
+    };
   } catch {
-    return { ok: false, kind: 'blocked', message: TRASH_GATE_THREW_MESSAGE };
+    return refuseSend(TRASH_GATE_THREW_MESSAGE);
   }
-  if (typeof raw !== 'object' || raw === null || typeof (raw as { ok?: unknown }).ok !== 'boolean') {
-    return { ok: false, kind: 'blocked', message: TRASH_GATE_INVALID_MESSAGE };
-  }
-  return raw as TrashSendDecision;
 }
 
 /** 仅供测试与文档引用：三条固定文案。 */

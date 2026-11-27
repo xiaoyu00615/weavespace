@@ -1,0 +1,42 @@
+=== npx tsc -p tsconfig.json (root typecheck) ===
+exit=0
+
+=== npm run typecheck:apps ===
+
+> weavespace@0.0.0-p0 typecheck:apps
+> npm --prefix apps/shell run typecheck && npm --prefix apps/server run typecheck
+
+
+> weavespace-shell@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+
+> weavespace-server@0.0.0-s9b typecheck
+> tsc -p tsconfig.json
+
+exit=0
+
+=== npm run build:shell ===
+
+> weavespace@0.0.0-p0 build:shell
+> npm --prefix apps/shell run build
+
+
+> weavespace-shell@0.0.0-s9b build
+> vite build
+
+[36mvite v8.3.8 [32mbuilding client environment for production...[36m[39m
+transforming...
+✓ 94 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.44 kB │ gzip:   0.33 kB
+dist/assets/index-BZQ0k3_1.css   23.51 kB │ gzip:   4.91 kB
+dist/assets/index-CBlbbzY1.js   455.51 kB │ gzip: 138.33 kB
+
+[32m✓ built in 2.87s[39m
+exit=0
+
+=== git diff --check ===
+warning: in the working copy of 'apps/shell/src/client/client-api.ts', CRLF will be replaced by LF the next time Git touches it
+exit=0
