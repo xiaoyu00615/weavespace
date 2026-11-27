@@ -54,16 +54,11 @@ import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useResourceMetadata } from '../state/MetadataContext.tsx';
 import { useTrash } from '../state/TrashContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
-import { validateProjectName } from '../state/add-project.ts';
 import {
   menuIdentityOf,
-  projectRenameGateMessage,
-  projectRenameGateOf,
-  projectRenameResultEffect,
   toolbarTargetOf,
   treeCommandMatrix,
   identityVerificationOf,
-  projectRenameSessionStillCurrent,
   treeKeyIntentOf,
   treeTargetProblemOf,
   menuOrderOf,
@@ -76,6 +71,7 @@ import { ContextMenu, type MenuItem } from './ContextMenu.tsx';
 import { MoveEntryDialog } from './MoveEntryDialog.tsx';
 import { RemoveProjectDialog } from './RemoveProjectEntry.tsx';
 import { findEntryByPath } from './tree-model.ts';
+import { createProjectRenameFlow } from '../state/project-rename.ts';
 
 export interface TreeTarget extends TreeCommandTarget {
   readonly origin: CreateOrigin;
@@ -278,6 +274,9 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
     },
     [state.mode, state.workspaceMode, state.projects],
   );
+  /** `isSupported` 的同步镜像：改名编排在 await 之后要用"这一刻"的结论。 */
+  const supportedRef = useRef(isSupported);
+  supportedRef.current = isSupported;
 
   /**
    * 菜单所属的"世界"。切换模式 / 工作区 / 当前项目都会让它变化，
@@ -318,6 +317,12 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
   scopeRef.current = workspaceScope;
   const activeProjectRef = useRef(state.activeProjectId);
   activeProjectRef.current = state.activeProjectId;
+  /**
+   * 同一套同步镜像里的"状态与能力"：改名编排在 await 之后要读实时值，
+   * 而它的 useMemo 依赖刻意保持稳定（否则每次渲染都重建编排器与单飞锁）。
+   */
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   /** 两个编排器共用的提示落地：状态栏 + 当前输入行/对话框的行内错误。 */
   const onNotice = useCallback(
@@ -834,100 +839,65 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
 
   const cancelProjectRename = useCallback(() => setProjectRename(null), []);
 
+  /**
+   * 项目改名会话的编排（UX-02C-05-R1.2）：会话层归属判定全在
+   * `state/project-rename.ts`，这里只注入宿主依赖。
+   *
+   * 读的一律是 **ref 里的实时值**：`await` 之后要判断"这一刻的世界"，闭包里的
+   * `state` / `isSupported` 都可能已经过期。
+   */
+  const renameFlow = useMemo(
+    () =>
+      createProjectRenameFlow({
+        session: () => {
+          const current = renameRef.current;
+          return current
+            ? {
+                sessionId: current.sessionId,
+                scope: current.scope,
+                activeProjectAtStart: current.activeProjectAtStart,
+                projectId: current.projectId,
+                draft: current.draft,
+                saving: current.saving,
+              }
+            : null;
+        },
+        currentScope: () => scopeRef.current,
+        currentActiveProject: () => activeProjectRef.current,
+        projects: () => stateRef.current.projects,
+        supported: (projectId) => supportedRef.current(projectId),
+        // 唯一一条真实链路；全局归属回填在 DocumentActions 里（R1.2 / F03）
+        rename: (projectId, name) => actions.renameProject(projectId, name),
+        tryLock: () => {
+          if (projectRenameBusy.current) return false;
+          projectRenameBusy.current = true;
+          return true;
+        },
+        unlock: () => {
+          projectRenameBusy.current = false;
+        },
+        setSaving: (sessionId) =>
+          setProjectRename((current) =>
+            current && current.sessionId === sessionId
+              ? { ...current, saving: true, error: null }
+              : current,
+          ),
+        close: (sessionId) =>
+          setProjectRename((current) => (current && current.sessionId === sessionId ? null : current)),
+        fail: (sessionId, message) =>
+          setProjectRename((current) =>
+            current && current.sessionId === sessionId
+              ? { ...current, saving: false, error: message }
+              : current,
+          ),
+        notice: (message) => dispatch({ type: 'NOTICE', message }),
+      }),
+    [actions, dispatch],
+  );
+
   const submitProjectRename = useCallback(async (): Promise<void> => {
-    const session = projectRename;
-    if (!session || session.saving || projectRenameBusy.current) return;
-    /*
-     * 提交前复核归属（R1-04）：会话可能是在另一个工作区打开的，也可能项目
-     * 在这期间被移除或变成不可用。任何一条不成立都不发请求。
-     */
-    const gate = projectRenameGateOf({
-      sessionScope: session.scope,
-      currentScope: workspaceScope,
-      projectExists: state.projects.some((item) => item.projectId === session.projectId),
-      projectSupported: isSupported(session.projectId),
-    });
-    if (gate !== 'ok') {
-      setProjectRename(null);
-      dispatch({ type: 'NOTICE', message: projectRenameGateMessage(gate) ?? '旧的改名会话已失效' });
-      return;
-    }
-    const checked = validateProjectName(session.draft);
-    // 本地预检只挡"注定失败"的请求；权威判断仍在 Host
-    if (!checked.ok) {
-      setProjectRename((current) =>
-        current && current.sessionId === session.sessionId ? { ...current, error: checked.message } : current,
-      );
-      return;
-    }
-    const project = state.projects.find((item) => item.projectId === session.projectId);
-    if (!project) {
-      setProjectRename(null);
-      dispatch({ type: 'NOTICE', message: '该项目已不在工作区里' });
-      return;
-    }
-    // 名称没变：不发请求、不制造"已保存"的假象
-    if (project.name === checked.name) {
-      setProjectRename((current) => (current && current.sessionId === session.sessionId ? null : current));
-      return;
-    }
-    projectRenameBusy.current = true;
-    setProjectRename((current) =>
-      current && current.sessionId === session.sessionId ? { ...current, saving: true, error: null } : current,
-    );
-    try {
-      // 请求只发一次：结果回来时按票据落地，绝不重发
-      const outcome = await actions.renameProject(session.projectId, checked.name);
-      const applied = outcome.status === 'APPLIED';
-      // 成功分支没有 message，这里先窄化，避免把"未应用"的文案用在成功上
-      const failureMessage = outcome.status === 'APPLIED' ? null : outcome.message;
-      const stillCurrent = projectRenameSessionStillCurrent({
-        session: renameRef.current,
-        sessionId: session.sessionId,
-        currentScope: scopeRef.current,
-        activeProjectId: activeProjectRef.current,
-      });
-      const effect = projectRenameResultEffect({ applied, sessionStillCurrent: stillCurrent });
-      if (effect === 'close') {
-        setProjectRename(null);
-        return;
-      }
-      if (effect === 'keep-error') {
-        // 失败：界面保持原名（未派发任何改名），输入保留供修正
-        setProjectRename((latest) =>
-          latest && latest.sessionId === session.sessionId && latest.scope === session.scope
-            ? { ...latest, saving: false, error: failureMessage ?? '重命名失败' }
-            : latest,
-        );
-        return;
-      }
-      // notice-only：请求确实发出去了，不能假装"什么都没发生"，也不自动重试
-      dispatch({
-        type: 'NOTICE',
-        message: applied
-          ? `「${checked.name}」的显示名称已更新（原编辑会话已收起）`
-          : `重命名没有完成：${failureMessage ?? '未知原因'}`,
-      });
-    } catch {
-      const stillCurrent = projectRenameSessionStillCurrent({
-        session: renameRef.current,
-        sessionId: session.sessionId,
-        currentScope: scopeRef.current,
-        activeProjectId: activeProjectRef.current,
-      });
-      if (stillCurrent) {
-        setProjectRename((latest) =>
-          latest && latest.sessionId === session.sessionId
-            ? { ...latest, saving: false, error: '重命名失败：网络或本地服务不可用' }
-            : latest,
-        );
-      } else {
-        dispatch({ type: 'NOTICE', message: '重命名失败：网络或本地服务不可用（原编辑会话已收起）' });
-      }
-    } finally {
-      projectRenameBusy.current = false;
-    }
-  }, [actions, dispatch, isSupported, projectRename, state.projects, workspaceScope]);
+    await renameFlow.submit();
+  }, [renameFlow]);
 
   const requestRemoveProject = useCallback(
     (projectId: string) => {

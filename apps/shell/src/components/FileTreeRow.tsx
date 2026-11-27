@@ -335,6 +335,15 @@ export function TreeRow({
             .join(' ')}
           aria-expanded={isFolder ? expanded : undefined}
           title={rowTitle}
+          /*
+           * 把这一行**当前**的身份状态与锚暴露成数据属性（UX-02C-05-R1.2）。
+           *
+           * 只有一个用途：让真实浏览器验证能看见"刷新响应到底有没有被这一行消费"。
+           * 锚本来就是不透明的 32 位摘要、已经在 `/api/tree` 响应里发给浏览器，
+           * 这里不泄露任何额外信息；它**不是**授权凭据，也不被任何判定读取。
+           */
+          data-resource-identity={activationIdentity?.verification}
+          data-resource-anchor={activationIdentity?.anchor ?? undefined}
           onClick={(event) => {
             const identity = latest.current.identity;
             if (!arbiter || identity === undefined || !onNameArea(event.target)) {

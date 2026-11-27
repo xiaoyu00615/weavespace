@@ -263,8 +263,12 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_ENTRY_EXISTS':
     // 目录在本轮分页期间发生变化：客户端必须刷新整层，不能拿旧游标续页
     case 'ERR_DIR_CHANGED':
+    // 同一层的身份能力声明在分页途中改口：同样只能整层作废后刷新（R1.2）
+    case 'ERR_IDENTITY_STATE_CHANGED':
     // 结构变更：源路径下仍有活动 View / 危险会话，或屏障正忙（零磁盘副作用）
     case 'ERR_STRUCTURE_SESSION_BUSY':
+    // 源对象身份无法核验：与"确实换了"同样必须零副作用拒绝（UX-02C-02-R2）
+    case 'ERR_ENTRY_IDENTITY_UNVERIFIED':
     // Windows 上目录被占用，无法完成改名/移动
     case 'ERR_ENTRY_DIR_BUSY':
       return 409;
@@ -324,6 +328,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_ENTRY_NAME_INVALID':
     case 'ERR_ENTRY_PARENT_INVALID':
     case 'ERR_ENTRY_SOURCE_INVALID':
+    // 结构变更缺少资源身份预期：请求形状不完整（零 IO、零副作用），不是服务端故障
+    case 'ERR_STRUCTURE_INTENT_MISSING':
     case 'ERR_MOVE_INTO_DESCENDANT':
       return 400;
     // 跨卷移动首版不支持（不做"复制 + 删除"的部分成功链路）
@@ -500,6 +506,9 @@ const PUBLIC_ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   ERR_TRASH_RECORD_NOT_FOUND: '回收记录不存在',
   ERR_TRASH_STATE_CONFLICT: '该回收记录当前不可执行此操作，需要人工核对',
   ERR_ENTRY_SOURCE_CHANGED: '该路径上的文件已被外部替换，未执行任何移动',
+  ERR_ENTRY_IDENTITY_UNVERIFIED: '无法确认源文件的身份，未执行任何移动（请刷新文件树后重试）',
+  ERR_STRUCTURE_INTENT_MISSING: '缺少源文件的身份信息：请刷新文件树后重新发起操作',
+  ERR_IDENTITY_STATE_CHANGED: '该目录的身份核验状态已变化，已作废本次加载，请刷新',
   ERR_METADATA_LIMIT: '资源标注已达上限，请先清理部分标注再保存',
   ERR_METADATA_TARGET_CHANGED: '目标资源已被替换或已不存在，标注未保存（请对当前文件重新设置）',
 };

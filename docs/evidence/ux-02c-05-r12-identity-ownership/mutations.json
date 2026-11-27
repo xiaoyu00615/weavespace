@@ -1,0 +1,101 @@
+{
+  "at": "2026-11-27T14:41:57.815Z",
+  "suite": "tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts",
+  "results": [
+    {
+      "id": "C05R12-M12",
+      "desc": "旧 unsupported 无条件放行（不核验当前身份状态，F01）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "132098b0329716aece4a3c9e1551f8c8c4b976534c9d75bff52299d50ba66b31",
+      "mutatedSha256": "e3c62b56e20221d2f17b8727cd0d845df698a983cf0e15600d2f0c74e8e65d96",
+      "sourceChanged": true,
+      "restoredSha256": "132098b0329716aece4a3c9e1551f8c8c4b976534c9d75bff52299d50ba66b31",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "A01 unsupported → unverified：当前无法确认，不得按路径放行",
+        "A02 unsupported → verified：当前已有锚，能力声明矛盾，不得放行",
+        "A07 目标自称 unsupported 却带着锚：声明自相矛盾，不得当成降级凭据",
+        "A08 当前声明 unsupported 却仍能给出锚：同样矛盾，不得放行"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R12-M13",
+      "desc": "首屏整层替换仍继承旧的能力声明（F02）",
+      "file": "apps/shell/src/components/tree-model.ts",
+      "baselineSha256": "46420cb491060b04ddd677284da015f07b68630243024e27e2c29b6201f95df8",
+      "mutatedSha256": "9e68dee95a0e87c480c871a98d65124f4bdbc35d002974bdecc4b6bc8527456b",
+      "sourceChanged": true,
+      "restoredSha256": "46420cb491060b04ddd677284da015f07b68630243024e27e2c29b6201f95df8",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "B01 首屏（cursor=null）响应没有能力声明：不得继承上一轮的 unsupported"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R12-M17",
+      "desc": "首屏整层替换仍继承旧的根锚（F02 第二处）",
+      "file": "apps/shell/src/components/tree-model.ts",
+      "baselineSha256": "46420cb491060b04ddd677284da015f07b68630243024e27e2c29b6201f95df8",
+      "mutatedSha256": "edc7df542e3ee9293b9f165a8a5116da1c32c6bec29206db0ca953cf295ba0ae",
+      "sourceChanged": true,
+      "restoredSha256": "46420cb491060b04ddd677284da015f07b68630243024e27e2c29b6201f95df8",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "B05 首屏没有根锚：不得继承上一轮的旧根锚（F02 第二处）"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R12-M14",
+      "desc": "删除底层工作区归属检查（切了工作区，旧结果仍回填新列表）",
+      "file": "apps/shell/src/state/project-rename.ts",
+      "baselineSha256": "789a1874ca6e7f98fca877d49dc61093fbc460b86db7ea6373c19dd569eb85b2",
+      "mutatedSha256": "6b6f4f35285e531d489c3e191dfae37522ac5c315ee306784218df4e8c93051e",
+      "sourceChanged": true,
+      "restoredSha256": "789a1874ca6e7f98fca877d49dc61093fbc460b86db7ea6373c19dd569eb85b2",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "C05 切换工作区：旧响应不得回填，但 Host 的 APPLIED 保持 APPLIED",
+        "C13 在途时切换工作区：旧结果 notice，且不回填列表"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R12-M15",
+      "desc": "删除加载代次检查（Live→Demo→Live 之后旧结果仍回填）",
+      "file": "apps/shell/src/state/project-rename.ts",
+      "baselineSha256": "789a1874ca6e7f98fca877d49dc61093fbc460b86db7ea6373c19dd569eb85b2",
+      "mutatedSha256": "5f8ef50ece8ddafdfe6361d489666b2cd1a919796918f1d0c9b387b1f419040d",
+      "sourceChanged": true,
+      "restoredSha256": "789a1874ca6e7f98fca877d49dc61093fbc460b86db7ea6373c19dd569eb85b2",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "C06b 只推进加载代次（重新连接）：旧结果同样不得回填"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R12-M16",
+      "desc": "旧结果无条件当成当前会话（切了活动项目/开了新会话也照样写）",
+      "file": "apps/shell/src/state/project-rename.ts",
+      "baselineSha256": "789a1874ca6e7f98fca877d49dc61093fbc460b86db7ea6373c19dd569eb85b2",
+      "mutatedSha256": "34c7886fef9493a5384f205e970a891692e48b3e30b085106b3095182b446204",
+      "sourceChanged": true,
+      "restoredSha256": "789a1874ca6e7f98fca877d49dc61093fbc460b86db7ea6373c19dd569eb85b2",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "C12 在途时打开新会话：旧结果只能 notice，绝不关闭或污染新会话",
+        "C13 在途时切换工作区：旧结果 notice，且不回填列表"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

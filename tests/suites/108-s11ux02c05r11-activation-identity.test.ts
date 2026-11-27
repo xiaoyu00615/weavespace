@@ -283,14 +283,25 @@ test('B07 菜单失效检测区分三种身份状态', () => {
     /无法确认/,
   );
 
-  // UNSUPPORTED（Provider 明确无身份能力）→ 按已批准降级放行
+  // UNSUPPORTED（Provider 明确无身份能力）→ 按已批准降级放行（R1.2 起两侧都要声明）
   assert.equal(
     tc.treeTargetProblemOf({
       ...base,
       target: fileTarget({ nodeIdentity: 'unsupported' }),
       currentAnchor: null,
+      currentIdentity: 'unsupported',
     }),
     null,
+  );
+  // R1.2：目标说"无能力"、当前却已经有锚 → 能力声明矛盾，不得当成"还是它"
+  assert.match(
+    tc.treeTargetProblemOf({
+      ...base,
+      target: fileTarget({ nodeIdentity: 'unsupported' }),
+      currentAnchor: 'anchor-a1',
+      currentIdentity: 'verified',
+    }) ?? '',
+    /身份状态已经变化/,
   );
 });
 
@@ -306,6 +317,7 @@ test('B08 目标声称有锚、当前状态却不是已核验：拒绝（不得�
     /无法确认/,
   );
   // 当前 Provider 变成"不支持身份"也不能把旧锚当成匹配成功
+  // （R1.2：这一条是"两侧状态矛盾"，与上面"无法确认"是两种不同的拒绝）
   assert.match(
     tc.treeTargetProblemOf({
       ...base,
@@ -313,7 +325,7 @@ test('B08 目标声称有锚、当前状态却不是已核验：拒绝（不得�
       currentAnchor: null,
       currentIdentity: 'unsupported',
     }) ?? '',
-    /无法确认/,
+    /身份状态已经变化/,
   );
 });
 
@@ -393,15 +405,24 @@ test('C04 旧票据不得写进新会话，会话已收起也不得复活', () =
 });
 
 test('C05 源码守卫：提交结果按"票据 + 世界 + 活动项目"核对，且 notice-only 不写状态', async () => {
-  const source = await readFile(join(process.cwd(), 'apps/shell/src/components/TreeCommandsContext.tsx'), 'utf8');
+  /*
+   * R1.2 把会话归属编排搬进了 `state/project-rename.ts`（为了能跑真实异步测试）。
+   * 断言随实现移动，强度不减：票据核对、活动项目核对、notice-only 不写会话三条都在。
+   */
+  const source = await readFile(join(process.cwd(), 'apps/shell/src/state/project-rename.ts'), 'utf8');
   assert.match(source, /projectRenameSessionStillCurrent\(/, '在途结果必须用同一判定核对');
   assert.match(source, /activeProjectAtStart/, '会话必须记住开始时的活动项目');
-  assert.match(source, /scopeRef/, '工作区归属必须同步核对，不能只依赖 effect');
-  // notice-only 分支只允许提示，绝不能再 setProjectRename
-  const notice = source.slice(source.indexOf("// notice-only"));
+  const context = await readFile(
+    join(process.cwd(), 'apps/shell/src/components/TreeCommandsContext.tsx'),
+    'utf8',
+  );
+  assert.match(context, /scopeRef/, '工作区归属必须同步核对，不能只依赖 effect');
+  assert.match(context, /activeProjectRef/, '活动项目归属必须同步核对，不能只依赖 effect');
+  // notice-only 分支只允许提示，绝不能再写回会话
+  const notice = source.slice(source.indexOf('notice-only'));
   assert.ok(notice.length > 0, '必须有 notice-only 分支');
-  const tail = notice.slice(0, notice.indexOf('} catch'));
-  assert.doesNotMatch(tail, /setProjectRename\(/, 'notice-only 不得写回任何编辑会话');
+  const tail = notice.slice(0, notice.indexOf('} finally'));
+  assert.doesNotMatch(tail, /port\.(close|fail|setSaving)\(/, 'notice-only 不得写回任何编辑会话');
 });
 
 /* ================================================================== */

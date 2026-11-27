@@ -1,0 +1,254 @@
+{
+  "run": "ux-02c-05-r1.2",
+  "at": "2026-11-27T14:38:36.415Z",
+  "checks": {
+    "R0-01 fixture 就绪（两个真实项目 / 零隐藏 / 零回收 / 零元数据）": true,
+    "V-01 Host 声明了身份能力（identitySupport=supported）": true,
+    "V-02 替换前 note.md 有锚（已核验身份）": true,
+    "V-02b 行上已消费同一个锚（组件真的拿到了身份）": true,
+    "V-03 找到 note.md 的名称文字": true,
+    "V-04 开始前 note.md 未被打开": true,
+    "V-05 找到工具栏刷新按钮": true,
+    "V-06 Host 已返回新锚（刷新真的走了真实目录）": true,
+    "V-07 Shell 已把新锚消费进这一行（行的身份 == Host 的新锚，且 != 旧锚）": true,
+    "V-08 重建确实换了对象（inode 与内容摘要都变了）": true,
+    "V-09 浏览器确实报出 click(detail=1) → click(detail=2) → dblclick": true,
+    "V-10 两次点击的间隔在真实双击窗口内（页面计时 < 500ms）": true,
+    "V-11 残响没有打开新对象（未进入活动 View）": true,
+    "V-12 残响没有进入改名": true,
+    "V-13 残响没有发出改名请求": true,
+    "V-14 残响没有发出打开请求": true,
+    "V-15 残响没有改动磁盘文件（SHA-256 / size / inode 三项逐项一致）": true,
+    "W-01 正常双击进入改名": true,
+    "W-02 正常双击没有先把文件打开": true,
+    "W-03 Escape 收起改名且零写入": true,
+    "X-01 单击照常打开文件": true,
+    "X-02 单击不会误开改名": true,
+    "X-03 单击确实发出了 open 请求": true,
+    "Y-00 找到项目B的根行名称": true,
+    "Y-00b 点击前活动项目确实是 B": true,
+    "Y-02 项目根双击进入显示名编辑": true,
+    "Y-03 项目根单击把活动项目从 B 切到 A（不接受 null）": true,
+    "Z-00 改名开始时活动项目是 A": true,
+    "Z-01 找到项目A的改名入口": true,
+    "Z-02 改名输入行已打开": true,
+    "Z-03 输入了新名称": true,
+    "Z-04 请求已发出并被按住（真实在途，不是伪造顺序）": true,
+    "Z-05 在途期间活动项目已从 A 切成 B": true,
+    "Z-06 会话已按归属收起（不再显示输入行）": true,
+    "Z-07 Host 的新名称已回填到项目列表（界面的活动项目切换不影响真实改名）": true,
+    "Z-08 旧结果只提示，不重新打开/污染会话": true,
+    "Z-09 全程只发了一次改名请求（绝不自动重发）": true,
+    "Z-10 顺序是\"请求在途 → 切换活动项目 → 放行响应\"": true
+  },
+  "detail": {
+    "R0-01 fixture 就绪（两个真实项目 / 零隐藏 / 零回收 / 零元数据）": [
+      "项目A",
+      "项目B"
+    ],
+    "V-01 Host 声明了身份能力（identitySupport=supported）": {
+      "support": "supported",
+      "anchor": "23d04565de2cba5c0b82ea8293269f1e"
+    },
+    "V-02 替换前 note.md 有锚（已核验身份）": "23d04565de2cba5c0b82ea8293269f1e",
+    "V-02b 行上已消费同一个锚（组件真的拿到了身份）": {
+      "row": "23d04565de2cba5c0b82ea8293269f1e",
+      "host": "23d04565de2cba5c0b82ea8293269f1e"
+    },
+    "V-03 找到 note.md 的名称文字": {
+      "x": 262,
+      "y": 148.25
+    },
+    "V-05 找到工具栏刷新按钮": {
+      "x": 350.296875,
+      "y": 22
+    },
+    "V-06 Host 已返回新锚（刷新真的走了真实目录）": {
+      "treesBefore": 0,
+      "treesAfter": 1,
+      "before": "23d04565de2cba5c0b82ea8293269f1e",
+      "after": "6402dd4d90d4b39a99c7e3bc74e3d62b"
+    },
+    "V-07 Shell 已把新锚消费进这一行（行的身份 == Host 的新锚，且 != 旧锚）": {
+      "row": "6402dd4d90d4b39a99c7e3bc74e3d62b",
+      "host": "6402dd4d90d4b39a99c7e3bc74e3d62b",
+      "old": "23d04565de2cba5c0b82ea8293269f1e"
+    },
+    "V-08 重建确实换了对象（inode 与内容摘要都变了）": {
+      "inodeBefore": 1407374884766556,
+      "inodeAfter": 1407374884767024,
+      "shaBefore": "5c8360847cfd",
+      "shaAfter": "93e79082a262"
+    },
+    "V-09 浏览器确实报出 click(detail=1) → click(detail=2) → dblclick": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "note.md",
+        "at": 3457
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "note.md",
+        "at": 3849
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "note.md",
+        "at": 3849
+      }
+    ],
+    "V-10 两次点击的间隔在真实双击窗口内（页面计时 < 500ms）": 392,
+    "V-13 残响没有发出改名请求": {
+      "before": 0,
+      "after": 0
+    },
+    "V-14 残响没有发出打开请求": {
+      "before": 0,
+      "after": 0
+    },
+    "V-15 残响没有改动磁盘文件（SHA-256 / size / inode 三项逐项一致）": {
+      "sha256": "93e79082a2622b45a6c3943064f2c283f3080ab3b39eea101c05e3f20b422059",
+      "size": 82,
+      "ino": 1407374884767024
+    },
+    "Y-00 找到项目B的根行名称": {
+      "x": 244,
+      "y": 194.25
+    },
+    "Y-00b 点击前活动项目确实是 B": "项目B",
+    "Y-03 项目根单击把活动项目从 B 切到 A（不接受 null）": {
+      "expected": "项目A",
+      "actual": "项目A",
+      "requestsBefore": 4,
+      "requestsAfter": 6
+    },
+    "Z-00 改名开始时活动项目是 A": "项目A",
+    "Z-01 找到项目A的改名入口": {
+      "x": 396,
+      "y": 71.75
+    },
+    "Z-04 请求已发出并被按住（真实在途，不是伪造顺序）": {
+      "pausedRequests": 1
+    },
+    "Z-05 在途期间活动项目已从 A 切成 B": "项目B",
+    "Z-07 Host 的新名称已回填到项目列表（界面的活动项目切换不影响真实改名）": [
+      "项目A-新名",
+      "项目B"
+    ],
+    "Z-08 旧结果只提示，不重新打开/污染会话": "「项目A-新名」的显示名称已更新（原编辑会话已收起）",
+    "Z-09 全程只发了一次改名请求（绝不自动重发）": {
+      "before": 0,
+      "after": 1
+    },
+    "Z-10 顺序是\"请求在途 → 切换活动项目 → 放行响应\"": [
+      "paused",
+      "switched",
+      "released"
+    ]
+  },
+  "facts": {
+    "identityBefore": {
+      "support": "supported",
+      "anchor": "23d04565de2cba5c0b82ea8293269f1e"
+    },
+    "rowIdentityBefore": {
+      "identity": "verified",
+      "anchor": "23d04565de2cba5c0b82ea8293269f1e"
+    },
+    "diskBefore": {
+      "sha256": "5c8360847cfda69cb3f5ce65d19bc6295dd51a439193d3dae9951b33dfb94546",
+      "size": 59,
+      "ino": 1407374884766556
+    },
+    "diskReplaced": {
+      "sha256": "93e79082a2622b45a6c3943064f2c283f3080ab3b39eea101c05e3f20b422059",
+      "size": 82,
+      "ino": 1407374884767024
+    },
+    "rowIdentityAfter": {
+      "identity": "verified",
+      "anchor": "6402dd4d90d4b39a99c7e3bc74e3d62b"
+    },
+    "clickSequenceReplace": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "note.md",
+        "at": 3457
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "note.md",
+        "at": 3849
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "note.md",
+        "at": 3849
+      }
+    ],
+    "identityAfter": {
+      "support": "supported",
+      "anchor": "6402dd4d90d4b39a99c7e3bc74e3d62b"
+    },
+    "gapMs": 392,
+    "gapWallClockMs": 511,
+    "diskAfter": {
+      "sha256": "93e79082a2622b45a6c3943064f2c283f3080ab3b39eea101c05e3f20b422059",
+      "size": 82,
+      "ino": 1407374884767024
+    },
+    "clickSequenceNormalDouble": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "note.md",
+        "at": 4732
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "note.md",
+        "at": 5046
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "note.md",
+        "at": 5046
+      }
+    ],
+    "activeAtStart": "项目A",
+    "activeBeforeY3": "项目B",
+    "activeProjectRow": "项目A",
+    "activeBeforeZ": "项目A",
+    "renameInFlight": {
+      "requestPaused": true,
+      "draft": "项目A-新名",
+      "activeProjectBeforeSwitch": "项目A"
+    },
+    "activeDuringRename": "项目B",
+    "renameAfterRelease": {
+      "projectNames": [
+        "项目A-新名",
+        "项目B"
+      ],
+      "notice": "「项目A-新名」的显示名称已更新（原编辑会话已收起）",
+      "order": [
+        "paused",
+        "switched",
+        "released"
+      ]
+    }
+  },
+  "summary": {
+    "total": 38,
+    "passed": 38,
+    "failed": []
+  }
+}

@@ -347,6 +347,10 @@ test('G09 原目标没有锚（Provider 明确无身份能力）：不误伤，�
    * R1.1：'没有锚'本身不足以证明'Provider 没有身份能力'——它也可能是探测失败。
    * 因此这条用例必须**显式声明** `nodeIdentity: 'unsupported'`（Host 的能力声明），
    * 才允许按路径身份降级。声明缺失或为 'unverified' 时不放行（见 108 B09）。
+   *
+   * R1.2 把这条降级改成**两侧对称**：当前侧也必须是明确的 `unsupported`。
+   * 这里补上 `currentIdentity`（由同一层的 `identitySupport` 推导），
+   * 断言本身没有放宽——下面新增的"当前侧无法确认"一条就是它的反面。
    */
   const unsupported = { ...fileTarget(), nodeIdentity: 'unsupported' as const };
   assert.equal(
@@ -356,6 +360,7 @@ test('G09 原目标没有锚（Provider 明确无身份能力）：不误伤，�
       projectReady: true,
       entryPresent: true,
       currentAnchor: null,
+      currentIdentity: 'unsupported',
     }),
     null,
   );
@@ -367,8 +372,21 @@ test('G09 原目标没有锚（Provider 明确无身份能力）：不误伤，�
       projectReady: true,
       entryPresent: true,
       currentAnchor: '',
+      currentIdentity: 'unsupported',
     }),
     null,
+  );
+  // R1.2：当前侧无法确认时，同一条路径身份降级**不再**放行
+  assert.equal(
+    typeof tc.treeTargetProblemOf({
+      target: unsupported,
+      projectExists: true,
+      projectReady: true,
+      entryPresent: true,
+      currentAnchor: null,
+      currentIdentity: 'unverified',
+    }),
+    'string',
   );
 });
 
@@ -509,13 +527,25 @@ test('M01 行组件把点击绑定到身份，而不是只调用"最新回调"',
 });
 
 test('M02 项目改名提交前复核会话归属，提交后按会话核对结果', async () => {
-  const source = await component('TreeCommandsContext.tsx');
+  /*
+   * R1.2：会话归属编排从组件搬进了 `state/project-rename.ts`（为了能跑真实异步测试），
+   * 所以断言改指向**实现所在的那个模块**，强度不变：
+   * 提交前必须复核并真的挡住、结果必须按票据核对、落地必须走同一判定。
+   * 同时守住组件只剩注入，不允许把判定抄回来两处各一份。
+   */
+  const source = await readFile(
+    join(process.cwd(), 'apps/shell/src/state/project-rename.ts'),
+    'utf8',
+  );
   assert.match(source, /projectRenameGateOf\(/, '提交前必须复核归属');
   // 光"调用了"不算：结论必须真的挡住提交，否则就只是算了一遍又放行
-  assert.match(source, /if \(gate !== 'ok'\) \{\s*setProjectRename\(null\)/, '不放行时必须收起会话并中止');
-  assert.match(source, /session\.sessionId/, '结果必须按会话票据核对');
+  assert.match(source, /if \(gate !== 'ok'\) \{\s*port\.close/, '不放行时必须收起会话并中止');
+  assert.match(source, /projectRenameSessionStillCurrent\(/, '结果必须按会话票据核对');
   assert.match(source, /projectRenameResultEffect\(/, '结果落地走同一判定');
-  assert.match(source, /workspaceScopeOf\(/, '工作区身份变化要让会话失效');
+  const context = await component('TreeCommandsContext.tsx');
+  assert.match(context, /workspaceScopeOf\(/, '工作区身份变化要让会话失效');
+  assert.match(context, /createProjectRenameFlow\(/, '组件只做注入，判定在纯模块里');
+  assert.doesNotMatch(context, /projectRenameGateOf\(/, '不得在组件里再抄一份提交前复核');
 });
 
 test('M03 改名链路仍然只有一条，且没有自动重试', async () => {

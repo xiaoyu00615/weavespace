@@ -58,12 +58,11 @@ import {
   createProjectAdder,
   createResyncRunner,
   createSupportProbe,
-  validateProjectName,
   type AddProjectHandle,
   type AddProjectPort,
   type ResyncOutcome,
 } from './add-project.ts';
-import type { RenameOutcome } from '../client/client-api.ts';
+import { performProjectRename, type ProjectRenameResult } from './project-rename.ts';
 import { refreshProject } from './refresh-project';
 import {
   createRemoveProjectAction,
@@ -138,12 +137,17 @@ export interface DocumentActions {
    */
   addProject: AddProjectHandle;
   /**
-   * 修改项目的**显示名称**（UX-02B-04A）。
+   * 修改项目的**显示名称**（UX-02B-04A / UX-02C-05-R1.2）。
    *
    * 只改名称：`projectId`、磁盘目录名、文件树、标签与草稿都不变，`workspaceKey` 也不变
    * （名称不是路径）。以 Host 返回的项目摘要为权威；失败时界面保持原名。
+   *
+   * 归属编排在 `project-rename.ts::performProjectRename`（纯 TS、可确定性测试）：
+   * 发请求前捕获加载代次 / 工作区摘要 / 项目行身份，返回后先核验"这一行还属不属于
+   * 当前界面"，再决定要不要派发 `PROJECT_RENAMED`。返回值把 **Host 的实际结果** 与
+   * **界面是否回填** 分开表达：Host 已应用而界面已切换时，不能把它伪装成失败。
    */
-  renameProject(projectId: string, name: string): Promise<RenameOutcome>;
+  renameProject(projectId: string, name: string): Promise<ProjectRenameResult>;
   /**
    * 只读移除前置检查（UX-02B-04B）：用于打开确认框时展示阻断原因。
    *
@@ -948,54 +952,29 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       addProject,
 
       /**
-       * 重命名显示名称（UX-02B-04A）。
+       * 重命名显示名称（UX-02B-04A / R1.2）。
        *
-       * 三条纪律：
+       * 四条纪律：
        * 1. 本地预检与 Host 同规则，但**权威仍是 Host**：这里只避免发出注定失败的请求；
        * 2. 只有 `APPLIED` 才写界面，且写的是 Host 返回的摘要（不做乐观改名）；
-       * 3. 不动 `workspaceKey` / 层表 / 标签 / 草稿 —— 名称是显示属性，不是路径。
+       * 3. 不动 `workspaceKey` / 层表 / 标签 / 草稿 —— 名称是显示属性，不是路径；
+       * 4. **回填前先核验归属**（R1.2 / F03）：加载代次、工作区摘要、项目行身份
+       *    任一变化都不写列表。此前只比 `modeRef`，而"切到 Demo 再切回 Live"会让
+       *    模式又变回 `live`，旧世界的结果照样落到新世界。
        */
-      async renameProject(projectId: string, rawName: string): Promise<RenameOutcome> {
-        const checked = validateProjectName(rawName);
-        if (!checked.ok) {
-          return {
-            status: 'REJECTED' as const,
-            errorCode: 'ERR_COMMAND_INVALID',
-            message: checked.message,
-            httpStatus: 400,
-          };
-        }
-        if (modeRef.current !== 'live') {
-          return {
-            status: 'REJECTED' as const,
-            errorCode: 'ERR_COMMAND_UNSUPPORTED',
-            message: '演示模式没有真实项目，无法重命名',
-            httpStatus: 501,
-          };
-        }
-        const current = stateRef.current.projects.find((item) => item.projectId === projectId);
-        if (!current) {
-          return { status: 'REJECTED' as const, errorCode: 'ERR_PROJECT_NOT_FOUND', message: '项目已不存在', httpStatus: 404 };
-        }
-        // 名字没变化就不发请求：避免一次无意义的写盘与状态变化
-        if (current.name === checked.name) {
-          return { status: 'APPLIED' as const, project: current };
-        }
-
-        let outcome: RenameOutcome;
-        try {
-          outcome = await clientFor('live').renameProject(projectId, checked.name);
-        } catch {
-          return { status: 'REJECTED' as const, errorCode: 'ERR_STORAGE_IO', message: '无法连接本地服务', httpStatus: 0 };
-        }
-        // 等到结果时工作区已经不是原来那个：不把旧工作区的名称写进当前界面
-        if (modeRef.current !== 'live') {
-          return { status: 'REJECTED' as const, errorCode: 'ERR_COMMAND_UNSUPPORTED', message: '工作区已切换，重命名结果已丢弃', httpStatus: 0 };
-        }
-        if (outcome.status === 'APPLIED') {
-          dispatch({ type: 'PROJECT_RENAMED', project: outcome.project });
-        }
-        return outcome;
+      async renameProject(projectId: string, rawName: string): Promise<ProjectRenameResult> {
+        return performProjectRename(
+          {
+            mode: () => modeRef.current,
+            workspaceKey: () => stateRef.current.workspaceKey,
+            epoch: () => loadEpoch.current.current(),
+            projects: () => stateRef.current.projects,
+            send: (id, name) => clientFor('live').renameProject(id, name),
+            dispatchRename: (project) => dispatch({ type: 'PROJECT_RENAMED', project }),
+          },
+          projectId,
+          rawName,
+        );
       },
 
       /**

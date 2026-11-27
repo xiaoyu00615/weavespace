@@ -247,6 +247,16 @@ export function toolbarCommandState(
 }
 
 /**
+ * 两条身份相关的拒绝文案（UX-02C-05-R1.2）。
+ *
+ * 必须分开：`UNCONFIRMED` 是"我们不知道它是不是原来那个"，
+ * `IDENTITY_STATE_CHANGED` 是"两边给出的身份声明互相矛盾 / 已经换了一种状态"。
+ * 合成一句会让用户以为只是又探测失败了一次，而实际上这一行可能已经被替换。
+ */
+const UNCONFIRMED = '无法确认这一行的身份，命令没有执行';
+const IDENTITY_STATE_CHANGED = '这一行的身份状态已经变化，命令没有执行';
+
+/**
  * 执行前的**失效检测**：菜单打开之后，目标可能已经被移除、项目可能已经不可用、
  * 文件可能已经被同名新对象替换。三者都不能执行旧命令。
  *
@@ -272,28 +282,40 @@ export function treeTargetProblemOf(input: {
   if (!input.entryPresent) return '这一行已经被移除或替换，命令没有执行';
 
   /*
-   * 身份核验必须 fail-closed（UX-02C-05-R1 / R1.1）：
+   * 身份核验必须 fail-closed，并且**两侧对称**（UX-02C-05-R1.2）。
    *
-   * 1. 目标声明 `unverified`（探测失败 / 对象消失 / 未声明）→ 拒绝。
-   *    本地真实项目里"缺锚"就是这个状态，绝不能因为路径相同就当成同一行；
-   * 2. 目标声明 `unsupported`（Provider 明确不具备身份能力）→ 这是**唯一**被批准的
-   *    路径身份降级，放行；它绝不会由"锚缺失"自动推导出来；
-   * 3. 目标声明 `verified` → 当前侧必须也是 `verified` 且锚完全一致，否则拒绝。
+   * R1.1 只判了目标侧：目标声称 `unsupported` 就直接放行。于是"目标说没有身份能力"
+   * 与"当前这一行已经有锚"之间的矛盾被忽略了——而能力声明本身是会变的（Provider
+   * 换了、首屏整层被替换、节点重新探测过）。路径相同并不能说明是同一个对象，
+   * 把能力变化解释成对象一致，正是"缺锚误放行"的下一个变种。
+   *
+   * 现在只有**两侧都是明确的 `unsupported`，且双方都没有任何锚信息**，才允许这条
+   * 唯一被批准的路径身份降级。其余组合一律拒绝：
+   * - `unsupported → unverified`：当前无法确认 → 拒绝；
+   * - `unsupported → verified`：当前有锚、目标声称无能力 → 状态矛盾 → 拒绝；
+   * - `verified → unsupported`：目标有锚、当前声明无能力 → 状态矛盾 → 拒绝；
+   * - `verified → unverified`：当前无法确认 → 拒绝；
+   * - `verified → verified`：锚必须完全一致，否则对象已经变化。
    */
   const targetIdentity =
     target.nodeIdentity ?? (target.nodeAnchor ? 'verified' : 'unverified');
-  if (targetIdentity === 'unverified') {
-    return '无法确认这一行的身份，命令没有执行';
+  if (targetIdentity === 'unverified') return UNCONFIRMED;
+  const currentIdentity =
+    input.currentIdentity ?? (input.currentAnchor ? 'verified' : 'unverified');
+
+  if (targetIdentity === 'unsupported') {
+    // 自称没有身份能力却带着锚：声明自相矛盾，不能当成"按路径降级"的凭据
+    if (target.nodeAnchor) return IDENTITY_STATE_CHANGED;
+    if (currentIdentity === 'unverified') return UNCONFIRMED;
+    if (currentIdentity !== 'unsupported') return IDENTITY_STATE_CHANGED;
+    // 当前侧同样不能有任何锚信息，否则"无能力"与"有锚"互相矛盾
+    if (input.currentAnchor) return IDENTITY_STATE_CHANGED;
+    return null;
   }
-  if (targetIdentity === 'unsupported') return null;
   // 声称已验证却拿不到锚：不是"没有锚所以不用比"，而是"我们无法证明还是它"
-  if (targetIdentity !== 'verified' || !target.nodeAnchor) {
-    return '无法确认这一行的身份，命令没有执行';
-  }
-  const currentIdentity = input.currentIdentity ?? (input.currentAnchor ? 'verified' : 'unverified');
-  if (currentIdentity !== 'verified' || !input.currentAnchor) {
-    return '无法确认这一行的身份，命令没有执行';
-  }
+  if (!target.nodeAnchor) return UNCONFIRMED;
+  if (currentIdentity === 'unsupported') return IDENTITY_STATE_CHANGED;
+  if (currentIdentity !== 'verified' || !input.currentAnchor) return UNCONFIRMED;
   if (target.nodeAnchor !== input.currentAnchor) {
     return '这一行对应的对象已经变化，命令没有执行';
   }

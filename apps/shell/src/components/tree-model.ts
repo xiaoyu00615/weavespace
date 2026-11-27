@@ -200,6 +200,35 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
   if (!first && page.snapshot != null && previous.snapshot != null && page.snapshot !== previous.snapshot) {
     return invalidateLevel(levels, dir, 'ERR_DIR_CHANGED');
   }
+  /*
+   * 身份能力声明的一致性（UX-02C-05-R1.2）。
+   *
+   * 能力是"这一层由谁提供"的属性，一页之内不该变。续页突然改口（例如首轮
+   * `unsupported`、续页 `supported`）说明这一轮分页其实跨了两个 Provider 视图，
+   * 继续把两页拼在一起会让同一层里一半的行按"路径身份"、另一半按"对象身份"判定，
+   * 而这种混合状态没有任何地方能正确解释。
+   *
+   * 这里不是"取最新值"，而是**明确作废整层**：调用方只能刷新，不能继承。
+   */
+  if (
+    !first &&
+    page.identitySupport !== undefined &&
+    previous.identitySupport !== undefined &&
+    page.identitySupport !== previous.identitySupport
+  ) {
+    return invalidateLevel(levels, dir, 'ERR_IDENTITY_STATE_CHANGED');
+  }
+  /*
+   * 能力声明的落地规则：
+   * - 第一页是**整层替换**，声明以本次响应为准；响应没给就是"未声明"，
+   *   绝不能继承上一轮的 `unsupported` —— 那会让一个已经具备身份能力的新 Provider
+   *   继续享受"按路径身份"的降级（F02）；
+   * - 续页沿用本层既有声明（同一轮分页、同一 Provider、同一快照基线）；
+   *   续页自己给了就以它为准（上面的矛盾检查已经挡掉"改口"）。
+   */
+  const identitySupport = first
+    ? page.identitySupport
+    : (page.identitySupport ?? previous.identitySupport);
   const merged = first ? incoming : [...previous.entries, ...incoming];
   const deduped: ResourceNodeState[] = [];
   const seen = new Set<string>();
@@ -222,25 +251,33 @@ export function applyPage(levels: TreeLevels, dir: string, page: AppliedPage): T
       // `0` 是真实值（这一层没有隐藏项），`undefined` 才是"没给"。用 `??` 或
       // 任何 truthy 判断都会把真实的 0 当成缺失，或把缺失当成 0（R1-01）。
       hiddenCount: typeof page.hiddenCount === 'number' ? page.hiddenCount : previous.hiddenCount,
-      // 根层元数据是"这个项目根"的属性：第一页带回、续页沿用（续页不带时不清空）
+      /*
+       * 根层展示元数据（标注名/标签/颜色）保持原语义：第一页带回、续页沿用。
+       *
+       * 刻意与下面的 `projectAnchor` / `identitySupport` **不同**：那两项参与身份与
+       * 可用性判定（旧值会让一次危险操作被放行），而这里只是展示文案，且它有自己的
+       * 权威来源（标注接口的 `applyMetadata` 会显式覆盖）。为了"看起来一致"去改它，
+       * 只会让首屏短暂丢掉已经生效的标注。
+       */
       ...(page.projectMeta !== undefined
         ? { projectMeta: page.projectMeta }
         : previous.projectMeta
           ? { projectMeta: previous.projectMeta }
           : {}),
-      // 资源锚同理：续页丢失不能让它消失，否则根行的编辑会话会全部变成"无法确认身份"
+      /*
+       * 项目根锚同理，但**续页才沿用**（UX-02C-05-R1.2）。
+       *
+       * 第一页是整层替换：响应没给根锚就是"这一屏没有根身份"，不能拿上一轮的旧锚
+       * 顶上——否则根行的改名/标注入口会绑在一个可能已经不存在的根令牌上。
+       */
       ...(page.projectAnchor !== undefined
         ? { projectAnchor: page.projectAnchor }
-        : previous.projectAnchor
+        : !first && previous.projectAnchor
           ? { projectAnchor: previous.projectAnchor }
           : {}),
       anchors: Object.freeze(anchors),
-      // 能力是"这个 Provider"的属性：给过一次就沿用，缺省保持"未声明"
-      ...(page.identitySupport !== undefined
-        ? { identitySupport: page.identitySupport }
-        : previous.identitySupport
-          ? { identitySupport: previous.identitySupport }
-          : {}),
+      // 能力是"这个 Provider"的属性：只有续页才沿用，首屏一律以新响应为准
+      ...(identitySupport !== undefined ? { identitySupport } : {}),
     },
   };
 }

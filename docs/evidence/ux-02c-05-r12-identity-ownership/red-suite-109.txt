@@ -1,0 +1,370 @@
+TAP version 13
+# Subtest: A01 unsupported → unverified：当前无法确认，不得按路径放行
+not ok 1 - A01 unsupported → unverified：当前无法确认，不得按路径放行
+  ---
+  duration_ms: 4.7373
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\109-s11ux02c05r12-identity-and-rename-ownership.test.ts:71:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    'object' !== 'string'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'string'
+  actual: 'object'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts:78:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: A02 unsupported → verified：当前已有锚，能力声明矛盾，不得放行
+not ok 2 - A02 unsupported → verified：当前已有锚，能力声明矛盾，不得放行
+  ---
+  duration_ms: 0.3482
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\109-s11ux02c05r12-identity-and-rename-ownership.test.ts:82:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    'object' !== 'string'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'string'
+  actual: 'object'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts:89:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: A03 verified → unsupported：目标有锚而当前声明无能力，不得放行
+not ok 3 - A03 verified → unsupported：目标有锚而当前声明无能力，不得放行
+  ---
+  duration_ms: 0.4004
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\109-s11ux02c05r12-identity-and-rename-ownership.test.ts:93:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /身份状态已经变化/. Input:
+
+    '无法确认这一行的身份，命令没有执行'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: '无法确认这一行的身份，命令没有执行'
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts:101:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: A04 verified → unverified：当前拿不到锚，不得退回路径身份
+ok 4 - A04 verified → unverified：当前拿不到锚，不得退回路径身份
+  ---
+  duration_ms: 0.2286
+  type: 'test'
+  ...
+# Subtest: A05 verified → verified：锚变了就是另一个对象
+ok 5 - A05 verified → verified：锚变了就是另一个对象
+  ---
+  duration_ms: 0.3791
+  type: 'test'
+  ...
+# Subtest: A06 两侧都明确 unsupported 且都没有锚：唯一被批准的降级，放行
+ok 6 - A06 两侧都明确 unsupported 且都没有锚：唯一被批准的降级，放行
+  ---
+  duration_ms: 0.1016
+  type: 'test'
+  ...
+# Subtest: A07 目标自称 unsupported 却带着锚：声明自相矛盾，不得当成降级凭据
+not ok 7 - A07 目标自称 unsupported 却带着锚：声明自相矛盾，不得当成降级凭据
+  ---
+  duration_ms: 0.2206
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\109-s11ux02c05r12-identity-and-rename-ownership.test.ts:136:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    'object' !== 'string'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'string'
+  actual: 'object'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts:143:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: A08 当前声明 unsupported 却仍能给出锚：同样矛盾，不得放行
+not ok 8 - A08 当前声明 unsupported 却仍能给出锚：同样矛盾，不得放行
+  ---
+  duration_ms: 0.1547
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\109-s11ux02c05r12-identity-and-rename-ownership.test.ts:146:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    'object' !== 'string'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'string'
+  actual: 'object'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts:153:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: A09 未声明身份状态时仍按"有锚=verified"推导，不放宽旧调用者
+ok 9 - A09 未声明身份状态时仍按"有锚=verified"推导，不放宽旧调用者
+  ---
+  duration_ms: 0.3628
+  type: 'test'
+  ...
+# Subtest: B01 首屏（cursor=null）响应没有能力声明：不得继承上一轮的 unsupported
+not ok 10 - B01 首屏（cursor=null）响应没有能力声明：不得继承上一轮的 unsupported
+  ---
+  duration_ms: 0.8097
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\109-s11ux02c05r12-identity-and-rename-ownership.test.ts:196:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    首屏是整层替换，旧声明必须消失
+    + actual - expected
+
+    + 'unsupported'
+    - undefined
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  actual: 'unsupported'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts:207:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: B02 首屏声明 supported：以新响应为准，覆盖旧 unsupported
+ok 11 - B02 首屏声明 supported：以新响应为准，覆盖旧 unsupported
+  ---
+  duration_ms: 0.2225
+  type: 'test'
+  ...
+# Subtest: B03 续页没有能力声明：沿用本层既有声明（同一轮分页）
+ok 12 - B03 续页没有能力声明：沿用本层既有声明（同一轮分页）
+  ---
+  duration_ms: 0.1357
+  type: 'test'
+  ...
+# Subtest: B04 续页能力声明与既有声明矛盾：整层作废，绝不混合使用
+not ok 13 - B04 续页能力声明与既有声明矛盾：整层作废，绝不混合使用
+  ---
+  duration_ms: 0.2769
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\109-s11ux02c05r12-identity-and-rename-ownership.test.ts:236:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + null
+    - 'ERR_IDENTITY_STATE_CHANGED'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'ERR_IDENTITY_STATE_CHANGED'
+  actual: ~
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts:248:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: B05 首屏没有根锚：不得继承上一轮的旧根锚（F02 第二处）
+not ok 14 - B05 首屏没有根锚：不得继承上一轮的旧根锚（F02 第二处）
+  ---
+  duration_ms: 0.2412
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\109-s11ux02c05r12-identity-and-rename-ownership.test.ts:254:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'old-root-anchor'
+    - undefined
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  actual: 'old-root-anchor'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/109-s11ux02c05r12-identity-and-rename-ownership.test.ts:263:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: B06 续页没有根锚：沿用（根是项目级属性，续页本来就不带）
+ok 15 - B06 续页没有根锚：沿用（根是项目级属性，续页本来就不带）
+  ---
+  duration_ms: 0.1128
+  type: 'test'
+  ...
+# Subtest: B07 正常分页语义不变：追加去重、游标与总数照旧
+ok 16 - B07 正常分页语义不变：追加去重、游标与总数照旧
+  ---
+  duration_ms: 1.2258
+  type: 'test'
+  ...
+# Subtest: B08 首屏仍然重建整层：上一轮的条目不会残留
+ok 17 - B08 首屏仍然重建整层：上一轮的条目不会残留
+  ---
+  duration_ms: 0.1848
+  type: 'test'
+  ...
+# Subtest: C01 正常成功：只派发一次 PROJECT_RENAMED，列表显示 Host 返回的名称
+ok 18 - C01 正常成功：只派发一次 PROJECT_RENAMED，列表显示 Host 返回的名称
+  ---
+  duration_ms: 1.2629
+  type: 'test'
+  ...
+# Subtest: C02 Host 拒绝：不派发、列表不变、请求次数仍是 1
+ok 19 - C02 Host 拒绝：不派发、列表不变、请求次数仍是 1
+  ---
+  duration_ms: 0.2087
+  type: 'test'
+  ...
+# Subtest: C03 传输异常：按 ERR_STORAGE_IO 拒绝，零回填、不重试
+ok 20 - C03 传输异常：按 ERR_STORAGE_IO 拒绝，零回填、不重试
+  ---
+  duration_ms: 0.1607
+  type: 'test'
+  ...
+# Subtest: C04 同工作区切换活动项目：不妨碍原项目真实名称更新
+ok 21 - C04 同工作区切换活动项目：不妨碍原项目真实名称更新
+  ---
+  duration_ms: 0.1444
+  type: 'test'
+  ...
+# Subtest: C05 切换工作区：旧响应不得回填，但 Host 的 APPLIED 保持 APPLIED
+ok 22 - C05 切换工作区：旧响应不得回填，但 Host 的 APPLIED 保持 APPLIED
+  ---
+  duration_ms: 0.1662
+  type: 'test'
+  ...
+# Subtest: C06 Live → Demo → Live：模式回到 live 也不算同一代，旧结果不得回填
+ok 23 - C06 Live → Demo → Live：模式回到 live 也不算同一代，旧结果不得回填
+  ---
+  duration_ms: 0.1788
+  type: 'test'
+  ...
+# Subtest: C07 旧项目已移除：旧响应不得回填，也不凭空插入一行
+ok 24 - C07 旧项目已移除：旧响应不得回填，也不凭空插入一行
+  ---
+  duration_ms: 0.1759
+  type: 'test'
+  ...
+# Subtest: C08 同 ID 项目已被别的操作改名：旧摘要不得覆盖新的那一行
+ok 25 - C08 同 ID 项目已被别的操作改名：旧摘要不得覆盖新的那一行
+  ---
+  duration_ms: 0.3032
+  type: 'test'
+  ...
+# Subtest: C09 预检失败不发请求：空名称 / 演示模式 / 项目不存在 / 名称未变
+ok 26 - C09 预检失败不发请求：空名称 / 演示模式 / 项目不存在 / 名称未变
+  ---
+  duration_ms: 0.2533
+  type: 'test'
+  ...
+# Subtest: C10 会话层正常成功：Host APPLIED → 关闭会话，且只有一次请求
+ok 27 - C10 会话层正常成功：Host APPLIED → 关闭会话，且只有一次请求
+  ---
+  duration_ms: 0.6583
+  type: 'test'
+  ...
+# Subtest: C11 会话层失败：保留会话写错误，列表不变，不重发
+ok 28 - C11 会话层失败：保留会话写错误，列表不变，不重发
+  ---
+  duration_ms: 0.2
+  type: 'test'
+  ...
+# Subtest: C12 在途时打开新会话：旧结果只能 notice，绝不关闭或污染新会话
+ok 29 - C12 在途时打开新会话：旧结果只能 notice，绝不关闭或污染新会话
+  ---
+  duration_ms: 0.1983
+  type: 'test'
+  ...
+# Subtest: C13 在途时切换工作区：旧结果 notice，且不回填列表
+ok 30 - C13 在途时切换工作区：旧结果 notice，且不回填列表
+  ---
+  duration_ms: 0.2194
+  type: 'test'
+  ...
+# Subtest: C14 在途时项目被移除：notice 而不是静默关闭
+ok 31 - C14 在途时项目被移除：notice 而不是静默关闭
+  ---
+  duration_ms: 0.147
+  type: 'test'
+  ...
+# Subtest: C15 提交前就失效的会话：不发请求，直接收起并说明原因
+ok 32 - C15 提交前就失效的会话：不发请求，直接收起并说明原因
+  ---
+  duration_ms: 0.1139
+  type: 'test'
+  ...
+# Subtest: C16 单飞：同一会话连按两次只发一次请求
+ok 33 - C16 单飞：同一会话连按两次只发一次请求
+  ---
+  duration_ms: 19.4358
+  type: 'test'
+  ...
+1..33
+# tests 33
+# suites 0
+# pass 25
+# fail 8
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 306.0038

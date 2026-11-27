@@ -52,6 +52,32 @@ export const ERROR_CODES = {
    * 绝不返回可能不完整的结果。它不是授权失败，也不是路径越界。
    */
   ERR_DIR_CHANGED: 'ERR_DIR_CHANGED',
+  /**
+   * 同一层的**身份能力声明**在分页途中改口（UX-02C-05-R1.2）。
+   *
+   * 首轮声明 `unsupported`（Provider 没有身份能力、按路径身份降级）、续页却声明
+   * `supported`（或反过来），说明这两页不是同一个 Provider 视图。把两页拼在一起会
+   * 让同一层里一半的行按路径、另一半按对象身份判定——没有任何地方能正确解释这种
+   * 混合状态。客户端必须整层作废并刷新，绝不取"最新值"继续用。
+   *
+   * 与 `ERR_DIR_CHANGED` 分开：那是"条目集合变了"，这是"判定依据变了"。
+   */
+  ERR_IDENTITY_STATE_CHANGED: 'ERR_IDENTITY_STATE_CHANGED',
+  /**
+   * 结构变更请求没有携带资源身份预期（UX-02C-02-R2）。
+   *
+   * 托管本地真实项目里，"改这个路径"必须同时是"改用户当初选中的那个对象"。
+   * 缺少锚一律在**零 IO**的情况下拒绝，绝不静默降级成按路径操作——那正是
+   * "外部替换后仍然照着旧路径改名"这一类事故的入口。
+   */
+  ERR_STRUCTURE_INTENT_MISSING: 'ERR_STRUCTURE_INTENT_MISSING',
+  /**
+   * 无法确认源对象的身份（UX-02C-02-R2）：`identityOf` 抛错、根连续性失效等。
+   *
+   * 与 `ERR_ENTRY_SOURCE_CHANGED` 分开：那个是"核验过了，确实不是同一个对象"，
+   * 这个是"我们没能力核验"。两者都必须零副作用地拒绝，但文案与后续动作不同。
+   */
+  ERR_ENTRY_IDENTITY_UNVERIFIED: 'ERR_ENTRY_IDENTITY_UNVERIFIED',
   ERR_DOCUMENT_NOT_FOUND: 'ERR_DOCUMENT_NOT_FOUND',
   ERR_DOCUMENT_DIRTY: 'ERR_DOCUMENT_DIRTY',
   ERR_DOCUMENT_VERSION_CONFLICT: 'ERR_DOCUMENT_VERSION_CONFLICT',
