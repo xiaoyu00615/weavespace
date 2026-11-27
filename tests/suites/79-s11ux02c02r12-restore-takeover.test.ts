@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { createLiveClient, setPageInstanceForTest } from '../../apps/shell/src/client/client-api.ts';
+import { withSourceAnchor, type StructureBody } from '../helpers/structure-intent.ts';
 import { createDocumentOpener, createEditEpochs } from '../../apps/shell/src/state/open-document.ts';
 import type { DocTab, ResourceNodeState, WorkspaceState } from '../../apps/shell/src/state/types.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
@@ -179,6 +180,11 @@ async function withShellHost(fn: (ctx: Ctx) => Promise<void>, options: HarnessOp
       body: JSON.stringify(body),
     });
 
+  const treeOf = (projectId: string, dir = ''): Promise<ApiResponse> =>
+    api(
+      `/api/tree?projectId=${encodeURIComponent(projectId)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
+    );
+
   const liveClient = createLiveClient(server.url);
   const identity = await liveClient.workspaceIdentity();
   assert.ok(identity.workspaceKey, 'Host 必须给出工作区摘要');
@@ -293,7 +299,9 @@ async function withShellHost(fn: (ctx: Ctx) => Promise<void>, options: HarnessOp
         `/api/document?sessionId=${encodeURIComponent(sessionId)}&viewId=${encodeURIComponent(viewId)}`,
       ),
     close: (sessionId, viewId) => post('/api/close', { sessionId, viewId }),
-    rename: (body) => post('/api/files/rename', body),
+    // 结构变更必须带源身份预期（UX-02C-02-R2）；锚从真实 `/api/tree` 取。
+    rename: async (body) =>
+      post('/api/files/rename', await withSourceAnchor(body as StructureBody, treeOf)),
     node: (path) => {
       const hit = nodes.find((node) => node.path === path);
       assert.ok(hit, `夹具缺少节点 ${path}`);

@@ -27,6 +27,7 @@ import {
 } from '../../apps/server/src/project-runtime.ts';
 import { inspectProjectRoot } from '../../packages/project-registry/index.ts';
 import { createLocalProvider, type StorageProvider } from '../../packages/storage/index.ts';
+import { withSourceAnchor, type StructureBody } from '../helpers/structure-intent.ts';
 
 const PROJ_A = 'project-a';
 const PROJ_B = 'project-b';
@@ -174,6 +175,11 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>, options: HarnessOptions
       body: JSON.stringify(body),
     });
 
+  const treeOf = (projectId: string, dir = ''): Promise<ApiResponse> =>
+    api(
+      `/api/tree?projectId=${encodeURIComponent(projectId)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
+    );
+
   const ctx: Ctx = {
     base,
     rootA,
@@ -200,12 +206,12 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>, options: HarnessOptions
     edit: (sessionId, viewId, buffer) =>
       post('/api/edit', { sessionId, viewId, buffer, expectedVersion: undefined }),
     close: (sessionId, viewId) => post('/api/close', { sessionId, viewId }),
-    rename: (body) => post('/api/files/rename', body),
-    move: (body) => post('/api/files/move', body),
-    tree: (projectId, dir = '') =>
-      api(
-        `/api/tree?projectId=${encodeURIComponent(projectId)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
-      ),
+    // 结构变更必须带源身份预期（UX-02C-02-R2）；锚从真实 `/api/tree` 取。
+    rename: async (body) =>
+      post('/api/files/rename', await withSourceAnchor(body as StructureBody, treeOf)),
+    move: async (body) =>
+      post('/api/files/move', await withSourceAnchor(body as StructureBody, treeOf)),
+    tree: treeOf,
   };
   try {
     await fn(ctx);

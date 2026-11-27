@@ -1,0 +1,187 @@
+{
+  "at": "2026-11-27T16:49:50.699Z",
+  "results": [
+    {
+      "id": "C02R2-M01",
+      "desc": "Shell 丢原始锚：核验过了，但发请求时把预期换成空串",
+      "file": "apps/shell/src/state/structure-change.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "7e949097f2acfad0b68aaa9032b5f9840cb5f39931044a849cf81d146e98f0c0",
+      "mutatedSha256": "94ea3d8d113a98f750bc50d2e3f070fccd52750824c303f6a88ffce2033505c0",
+      "sourceChanged": true,
+      "restoredSha256": "7e949097f2acfad0b68aaa9032b5f9840cb5f39931044a849cf81d146e98f0c0",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "S-13 正常提交：发出的请求带着同一个锚，成功才 onApplied"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M02",
+      "desc": "Shell 不拦无锚：没有身份预期也照发请求",
+      "file": "apps/shell/src/state/structure-change.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "7e949097f2acfad0b68aaa9032b5f9840cb5f39931044a849cf81d146e98f0c0",
+      "mutatedSha256": "a2e3877916b85faa3dba1c06f1300f28f863519ceece98ec8f5e8e52650b085e",
+      "sourceChanged": true,
+      "restoredSha256": "7e949097f2acfad0b68aaa9032b5f9840cb5f39931044a849cf81d146e98f0c0",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "S-11 提交时没有锚 → 本地拒绝，一个请求都不发"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M03",
+      "desc": "Host 容许无锚 / 非法锚：形状校验整段跳过",
+      "file": "apps/server/src/structure-change.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "5b6c3f6546f0208a308f67d7cba1591848d9981eccf9730c8ae922a6594874ba",
+      "mutatedSha256": "76ba3792c6bb8efa0c3eba37069f4af0b37814fc51d2917594a5e7e497d9aec9",
+      "sourceChanged": true,
+      "restoredSha256": "5b6c3f6546f0208a308f67d7cba1591848d9981eccf9730c8ae922a6594874ba",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "I-01 缺少 sourceAnchor（未提供或空串）：400 ERR_STRUCTURE_INTENT_MISSING，磁盘零变更",
+        "I-02 锚形状非法（长度 / 大写 / 非 hex）：400 ERR_COMMAND_INVALID，零副作用"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M04",
+      "desc": "Host 忽略锚不匹配：读了源身份却不比对",
+      "file": "apps/server/src/structure-change.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "5b6c3f6546f0208a308f67d7cba1591848d9981eccf9730c8ae922a6594874ba",
+      "mutatedSha256": "e2faa6f66a97b4a094307a76966e91d56845d74c195baca544747930892db091",
+      "sourceChanged": true,
+      "restoredSha256": "5b6c3f6546f0208a308f67d7cba1591848d9981eccf9730c8ae922a6594874ba",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "M-02 对象已被外部替换：改名被拒后，旧标注既不迁移也不继承到新对象",
+        "I-03 锚属于另一个文件：409 ERR_ENTRY_SOURCE_CHANGED，零副作用",
+        "I-04 外部删除重建同名文件：旧锚失效 → 拒绝，新对象原位且内容不变",
+        "I-09 大小写仅变化也必须核验源身份：锚不符时照样拒绝",
+        "R-04 客户端自述路径 / 根令牌 / 身份一律不被采信"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M05",
+      "desc": "Host 跳过 Provider 身份能力检查：声明不支持时退化成路径操作",
+      "file": "apps/server/src/structure-change.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "5b6c3f6546f0208a308f67d7cba1591848d9981eccf9730c8ae922a6594874ba",
+      "mutatedSha256": "69c5c73206e9924e50d0a0186c9c09667a770509f3bc67bfa8316b5a0bf8d4d3",
+      "sourceChanged": true,
+      "restoredSha256": "5b6c3f6546f0208a308f67d7cba1591848d9981eccf9730c8ae922a6594874ba",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "I-06 Provider 无身份能力：409 ERR_ENTRY_IDENTITY_UNVERIFIED，绝不降级为无锚操作"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M06",
+      "desc": "Provider 忽略预期源身份（第一处比对）",
+      "file": "packages/storage/local-provider.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "5a60302306fbf4700fc4a81e675d41c437561904d338176df7f05fb1ae934cbb",
+      "mutatedSha256": "7ad0f23b2e728f546d36e62ea6fba61a39bab7e56838cc185d84d21e379ac7bf",
+      "sourceChanged": true,
+      "restoredSha256": "5a60302306fbf4700fc4a81e675d41c437561904d338176df7f05fb1ae934cbb",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "I-10 绕开 Host 直接调 Provider：预期身份不符也拒绝（分层不互相顶替）"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M07",
+      "desc": "Provider 删掉 rename 前的最终复核（占位期间被替换也照搬）",
+      "file": "packages/storage/local-provider.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "5a60302306fbf4700fc4a81e675d41c437561904d338176df7f05fb1ae934cbb",
+      "mutatedSha256": "fc4b7c75f3a1847a4e39b684d12498365097cd814d4ea640559ebb3dd0b4043a",
+      "sourceChanged": true,
+      "restoredSha256": "5a60302306fbf4700fc4a81e675d41c437561904d338176df7f05fb1ae934cbb",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "I-07 占位建立后源被外部替换：rename 前复核拦下，占位清理干净",
+        "I-08 占位建立后源被删除：404，占位清理干净（不残留 0 字节文件）"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M08",
+      "desc": "Host 跳过会话保护（有活动 View / 危险草稿也照样搬）",
+      "file": "apps/server/src/structure-change.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "5b6c3f6546f0208a308f67d7cba1591848d9981eccf9730c8ae922a6594874ba",
+      "mutatedSha256": "849200dbef26c7807fc715344982c10dc43956ad7ce9abcdf6266d0159f860b1",
+      "sourceChanged": true,
+      "restoredSha256": "5b6c3f6546f0208a308f67d7cba1591848d9981eccf9730c8ae922a6594874ba",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R-01 有活动编辑 View：409 ERR_STRUCTURE_SESSION_BUSY，零磁盘变更"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M09",
+      "desc": "Shell 在 UNKNOWN 之后自动重发一次",
+      "file": "apps/shell/src/state/structure-change.ts",
+      "suite": "tests/suites/73-s11ux02c02-structure-shell.test.ts",
+      "baselineSha256": "7e949097f2acfad0b68aaa9032b5f9840cb5f39931044a849cf81d146e98f0c0",
+      "mutatedSha256": "b4d17224fd50dcb16dfc6b28a1b09f0e62fb685a6c8bfc16263dcc137c7fe07a",
+      "sourceChanged": true,
+      "restoredSha256": "7e949097f2acfad0b68aaa9032b5f9840cb5f39931044a849cf81d146e98f0c0",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "网络断开 / UNKNOWN：恰好一次只读核对，绝不重发、不据目标存在推断成功"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M10",
+      "desc": "Shell 不把\"源对象已变\"的拒绝上报给层表（旧锚永久留在缓存层里，用户无法重试）",
+      "file": "apps/shell/src/state/structure-change.ts",
+      "suite": "tests/suites/73-s11ux02c02-structure-shell.test.ts",
+      "baselineSha256": "7e949097f2acfad0b68aaa9032b5f9840cb5f39931044a849cf81d146e98f0c0",
+      "mutatedSha256": "8248e858cfc230ce1121ef7fdfebf9157707ef28341d0a1ae374c8114ba8ef9d",
+      "sourceChanged": true,
+      "restoredSha256": "7e949097f2acfad0b68aaa9032b5f9840cb5f39931044a849cf81d146e98f0c0",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "拒绝上报：源对象变了/不在了才上报，Shell 据此只重取源父层（UX-02C-02-R2）"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R2-M11",
+      "desc": "记录核验被绕过：路径上已经没有对象，也当作\"仍然成立\"（旧记录被当成新对象的）",
+      "file": "apps/server/src/hidden.ts",
+      "suite": "tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts",
+      "baselineSha256": "8a19dbede67fe81fbc751a3a28883b57f9daa2ffbbc29f1a7cdd1792d9ae4e49",
+      "mutatedSha256": "c608ac6df4299fdce7a92c103cdf5251d84a31cb5705983cf01bb4f592467e20",
+      "sourceChanged": true,
+      "restoredSha256": "8a19dbede67fe81fbc751a3a28883b57f9daa2ffbbc29f1a7cdd1792d9ae4e49",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "M-01 隐藏记录：隐藏前的锚仍可改名，旧记录变 missing 且不跟到新路径"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

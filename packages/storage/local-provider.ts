@@ -292,13 +292,22 @@ export interface StorageProvider {
    * 真实改名 / 移动（UX-02C-02）：同一授权项目内，`sourcePath` →
    * `targetParentDir/targetName`。排他、不覆盖、不跨项目、不递归建父目录。
    *
-   * 同样声明为可选：Demo / Legacy / 静态 Multi 不提供该能力，由 Host 明确拒绝。
+   * `expectedIdentity`（UX-02C-02-R2）是**必填**的源对象身份（`dev:ino`）：
+   * 调用方（Host）在屏障内自己读出来的那一个。Provider 在**两处**核对：
+   * 解析出源对象后立刻核对一次，`rename` 之前再核对一次。这样"外部删除后
+   * 重建同名文件"的替换不会被当成原对象搬走。
+   *
+   * 为什么必填而不是可选：可选参数等于留一条"不核验也能改"的旁路，
+   * 而那正是本轮要消灭的东西。
+   *
+   * 同样声明为可选能力：Demo / Legacy / 静态 Multi 不提供该能力，由 Host 明确拒绝。
    * 实现必须复用本 Provider 的固定 `RootBoundary` 与 C0/C1/C4 根连续性检查点。
    */
   moveEntry?(
     sourcePath: string,
     targetParentDir: string,
     targetName: string,
+    expectedIdentity: string,
   ): Promise<MoveEntryResult>;
   /**
    * 目录项事实（UX-02C-03-P2-01）：`lstat` 得到"这一项本身"是文件/目录/链接/重解析点，
@@ -2042,9 +2051,15 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
      * - 进程在"占位已建、rename 未执行"之间崩溃会留下一个 0 字节占位文件；
      * - `rename` 成功但之后根连续性/确认链失败一律 UNKNOWN，不回滚、不删除。
      */
-    async moveEntry(sourcePath, targetParentDir, targetName): Promise<MoveEntryResult> {
+    async moveEntry(sourcePath, targetParentDir, targetName, expectedIdentity): Promise<MoveEntryResult> {
       const reject = (errorCode: ErrorCode): MoveEntryResult => ({ status: 'REJECTED', errorCode });
       const unknown = (): MoveEntryResult => ({ status: 'UNKNOWN', errorCode: 'ERR_OUTCOME_UNKNOWN' });
+
+      // 0) 身份预期（零 IO）：没有它就不知道要搬的是哪个对象，直接拒绝。
+      //    空白串按"没提供"处理——否则它会走到下面的比对，被误报成"对象已变化"。
+      if (typeof expectedIdentity !== 'string' || expectedIdentity.trim() === '') {
+        return reject('ERR_ENTRY_IDENTITY_UNVERIFIED');
+      }
 
       // 1) 形状校验（零 IO）：所有路径都只是项目内相对路径
       const srcCheck = validateParentDir(sourcePath);
@@ -2080,14 +2095,27 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       const sourceAbs = resolvePath(boundary.canonicalRoot, normalize(source));
       if (!isPathInsideRoot(boundary.canonicalRoot, sourceAbs)) return reject('ERR_PATH_OUTSIDE_ROOT');
       let sourceIsDir: boolean;
+      let sourceIdentity: string;
       try {
         const info = await lstat(sourceAbs);
+        /**
+         * 链接 / 重解析点先拒（结构性错误优先于"身份不符"）：
+         * 沿链接改名会改到根外的对象，那是比"改错文件"更严重的事故。
+         */
         if (info.isSymbolicLink() || isUntrustedResolution(sourceAbs)) {
           return reject('ERR_ENTRY_SOURCE_INVALID');
         }
         if (info.isDirectory()) sourceIsDir = true;
         else if (info.isFile()) sourceIsDir = false;
         else return reject('ERR_ENTRY_SOURCE_INVALID');
+        /**
+         * 第一处身份核对（UX-02C-02-R2）：路径上是不是当初那个对象。
+         *
+         * 放在类型判定之后、任何副作用之前：此刻拒绝能证明"零副作用"，
+         * 可以放心让用户重试（刷新后重来）。
+         */
+        sourceIdentity = `${info.dev}:${info.ino}`;
+        if (sourceIdentity !== expectedIdentity) return reject('ERR_ENTRY_SOURCE_CHANGED');
       } catch (err) {
         if (isMissing(err)) return reject('ERR_RESOURCE_NOT_FOUND');
         return reject(mapStorageError(err) as ErrorCode);
@@ -2322,6 +2350,43 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
        * 放在这里而不是更早，是为了让"先复核、后动手"的顺序本身可被验证。
        */
       faults.beforeMoveRename?.();
+
+      /**
+       * 10c) 第二处身份核对（UX-02C-02-R2）：**接近副作用处**再确认一次源对象。
+       *
+       * 第一处核对与这里之间隔着目标父目录检查、目标不存在性检查、指纹计算、
+       * 以及排他占位的建立 —— 外部完全可能在这段时间里删掉源文件并放一个新对象。
+       * Windows 的 `rename` 不区分"搬走的是谁"，所以这一处不能省。
+       *
+       * 副作用状态：此刻磁盘上可能已有本次操作的 0 字节占位。
+       * - 占位仍属于我们 → 删掉它，能证明零副作用 → 按明确拒绝返回；
+       * - 占位已被别人占走 → 不能删（那是外部对象），也无法证明零副作用 → UNKNOWN。
+       */
+      const rejectSourceChanged = async (errorCode: ErrorCode): Promise<MoveEntryResult> => {
+        if (!reserved) return reject(errorCode);
+        const owned = await reservationState();
+        if (owned === 'foreign') return unknown();
+        if (owned === 'owned') {
+          try {
+            await unlink(targetAbs);
+          } catch (cleanupErr) {
+            if (!isMissing(cleanupErr)) return unknown();
+          }
+        }
+        // missing：占位已不在，无需清理
+        return reject(errorCode);
+      };
+
+      try {
+        const again = await lstat(sourceAbs);
+        if (`${again.dev}:${again.ino}` !== expectedIdentity) {
+          return await rejectSourceChanged('ERR_ENTRY_SOURCE_CHANGED');
+        }
+      } catch (err) {
+        if (isMissing(err)) return await rejectSourceChanged('ERR_RESOURCE_NOT_FOUND');
+        // 读不出来又不确定是什么错：磁盘可能已被动过，不能宣称零副作用
+        return await rejectSourceChanged('ERR_STORAGE_IO');
+      }
 
       // 11) 真正的路径变更：只覆盖我们自己的占位
       try {

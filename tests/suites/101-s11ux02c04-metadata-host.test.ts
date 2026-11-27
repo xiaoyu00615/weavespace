@@ -27,6 +27,7 @@ import { parseConfig, serializeConfig } from '../../apps/server/src/store/config
 import { createFileProjectStore } from '../../apps/server/src/store/index.ts';
 import { createNodeStoreIo } from '../../apps/server/src/store/io.ts';
 import { rootTokenOf } from '../../packages/storage/path-safety.ts';
+import { withSourceAnchor, type StructureBody } from '../helpers/structure-intent.ts';
 import { normalizeTags } from '../../apps/server/src/metadata.ts';
 
 interface ApiResponse {
@@ -124,7 +125,7 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>, options: Options = {}):
   const get = (path: string, opts: { token?: boolean } = {}): Promise<ApiResponse> =>
     api(path, { headers: opts.token === false ? {} : { 'x-ws-token': token } });
 
-  const post = (
+  const rawPost = (
     path: string,
     body: unknown,
     opts: { token?: boolean; origin?: boolean } = {},
@@ -138,6 +139,27 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>, options: Options = {}):
       },
       body: JSON.stringify(body),
     });
+
+  /*
+   * 结构变更请求必须在 body 里带源身份预期（UX-02C-02-R2）。本套件的主题是
+   * 元数据迁移，不是身份契约本身，所以在**传输层**统一补锚：取的是发请求那一刻
+   * 真实 `/api/tree` 给出的锚，也就是 UI 当时看到的那一行。
+   * 想测"缺锚/错锚"的负例请显式传 `sourceAnchor`（含空串），这里不会覆盖。
+   */
+  const STRUCTURE_PATHS = new Set(['/api/files/rename', '/api/files/move']);
+  const post = async (
+    path: string,
+    body: unknown,
+    opts: { token?: boolean; origin?: boolean } = {},
+  ): Promise<ApiResponse> => {
+    if (!STRUCTURE_PATHS.has(path)) return rawPost(path, body, opts);
+    const withAnchor = await withSourceAnchor(body as StructureBody, (projectId, dir) =>
+      get(
+        `/api/tree?projectId=${encodeURIComponent(projectId)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
+      ),
+    );
+    return rawPost(path, withAnchor, opts);
+  };
 
   const ctx: Ctx = {
     base,

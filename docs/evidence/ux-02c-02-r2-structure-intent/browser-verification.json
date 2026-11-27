@@ -1,0 +1,407 @@
+{
+  "run": "ux-02c-02-r2",
+  "at": "2026-11-27T16:43:43.981Z",
+  "checks": {
+    "R2-01 fixture 就绪（1 个真实项目 / 原始 a.md 已落盘）": true,
+    "A-01 Host 给出 a.md 的真实锚": true,
+    "A-02 行上已消费同一个锚（组件真的拿到了身份）": true,
+    "A-03 找到 a.md 的名称文字": true,
+    "A-04 右键菜单出现「重命名」": true,
+    "A-05 行内改名框已打开并预填原名": true,
+    "A-06 替换后 Host 的锚真的变了（换了对象）": true,
+    "A-07 界面不刷新：行上仍是旧锚（前提成立，不是刷过之后才点）": true,
+    "A-08 替换前后 inode 不同（不是原地覆盖写）": true,
+    "A-09 请求体带着旧锚（冻结的意图，不随外部变化）": true,
+    "A-10 请求里没有客户端自述路径/令牌/身份": true,
+    "A-11 Host 明确拒绝：409": true,
+    "A-12 拒绝码是 ERR_ENTRY_SOURCE_CHANGED（不是靠界面文案反推）": true,
+    "A-13 新 a.md 仍在原路径，且字节与替换后逐项一致": true,
+    "A-14 目标路径 renamed.md 没有被创建（零错误移动）": true,
+    "A-15 旧的 a.md 没有被搬走（源保持原位）": true,
+    "A-16 只发了一次改名请求（绝不自动重试）": true,
+    "A-17 全程零 move 请求（拒绝后没有换条路再试）": true,
+    "A-18 被拒绝后输入行保留（不是静默收起）": true,
+    "A-19 状态栏如实说明「对象已变化、未执行」": true,
+    "A-19a 找得到输入行的「×」取消按钮": true,
+    "A-19b 取消后输入行真的收起（不带着旧意图继续）": true,
+    "A-20 找到\"刷新当前目录\"入口": true,
+    "A-21 刷新后行锚变成新对象真正的锚": true,
+    "A-22a 取消后重新打开改名框（不是拿第一次的残留状态再提交）": true,
+    "A-22d 输入框确实可写且已填入新名字": true,
+    "A-22b 第二次提交确实发出了请求（不靠旧响应冒充结果）": true,
+    "A-22c 第二次请求带的是刷新后的新锚": true,
+    "A-22 对当前对象再次改名成功（200 APPLIED）": true,
+    "A-23 磁盘真的搬了：a.md 消失、renamed.md 内容与替换后一致": true,
+    "B-01 docs 层真正展开了（有子行），notes.md 可见": true,
+    "B-02 notes.md 有真实锚且行上已消费": true,
+    "B-03 右键菜单出现「移动到…」": true,
+    "B-04 移动对话框打开": true,
+    "B-05 目标候选里有 archive（来自已加载层表，不递归扫描）": true,
+    "B-06 替换后 Host 的锚变了": true,
+    "B-07 找到\"确认移动\"按钮": true,
+    "B-08 移动请求也带着旧锚": true,
+    "B-09 Host 明确拒绝移动：409 ERR_ENTRY_SOURCE_CHANGED": true,
+    "B-10 源仍在原路径且字节一致（零覆盖）": true,
+    "B-11 目标 archive/notes.md 没有被创建（零错误移动）": true,
+    "B-12 只发了一次移动请求（绝不自动重试）": true,
+    "B-13 全程零改名请求（拒绝后没有换条路再试）": true,
+    "B-14 对话框保留并显示原因（不静默关闭）": true,
+    "B-14d 找得到对话框的「取消」按钮": true,
+    "B-14e 取消后对话框真的关闭": true,
+    "B-14a 取消后 docs 层重新加载出子行": true,
+    "B-14b 刷新后 notes.md 行上的锚就是新对象的锚": true,
+    "B-15a 第二次移动确实发出了请求": true,
+    "B-15b 第二次移动带的是刷新后的新锚": true,
+    "B-15 对当前对象重新移动成功（200 APPLIED）": true,
+    "B-16 磁盘真的搬了：notes.md 消失、archive/notes.md 内容一致": true
+  },
+  "detail": {
+    "R2-01 fixture 就绪（1 个真实项目 / 原始 a.md 已落盘）": {
+      "root": "D:\\Workspace\\projects\\weavespace-test\\c02-r2\\projA",
+      "size": 36
+    },
+    "A-01 Host 给出 a.md 的真实锚": "2f470e502daea019c45e6ba87b58f7c4",
+    "A-02 行上已消费同一个锚（组件真的拿到了身份）": {
+      "anchor": "2f470e502daea019c45e6ba87b58f7c4",
+      "verification": "verified"
+    },
+    "A-03 找到 a.md 的名称文字": {
+      "x": 262,
+      "y": 194.25
+    },
+    "A-04 右键菜单出现「重命名」": {
+      "x": 308,
+      "y": 215
+    },
+    "A-05 行内改名框已打开并预填原名": {
+      "opened": true,
+      "prefilled": "a.md"
+    },
+    "A-06 替换后 Host 的锚真的变了（换了对象）": {
+      "before": "2f470e502daea019c45e6ba87b58f7c4",
+      "after": "90c572e56e0e42264dbce991794e7846"
+    },
+    "A-07 界面不刷新：行上仍是旧锚（前提成立，不是刷过之后才点）": {
+      "anchor": "2f470e502daea019c45e6ba87b58f7c4",
+      "verification": "verified"
+    },
+    "A-08 替换前后 inode 不同（不是原地覆盖写）": {
+      "before": 2533274791610817,
+      "after": 2814749768321473
+    },
+    "A-09 请求体带着旧锚（冻结的意图，不随外部变化）": "2f470e502daea019c45e6ba87b58f7c4",
+    "A-10 请求里没有客户端自述路径/令牌/身份": [
+      "projectId",
+      "sourcePath",
+      "name",
+      "sourceAnchor"
+    ],
+    "A-11 Host 明确拒绝：409": 409,
+    "A-12 拒绝码是 ERR_ENTRY_SOURCE_CHANGED（不是靠界面文案反推）": "ERR_ENTRY_SOURCE_CHANGED",
+    "A-13 新 a.md 仍在原路径，且字节与替换后逐项一致": {
+      "after": {
+        "sha256": "375a5e8aa93d6afe944e2389a2a9054ee6c0ee0d2c365375892389797a198781",
+        "size": 54,
+        "ino": 2814749768321473
+      },
+      "expected": {
+        "sha256": "375a5e8aa93d6afe944e2389a2a9054ee6c0ee0d2c365375892389797a198781",
+        "size": 54,
+        "ino": 2814749768321473
+      }
+    },
+    "A-16 只发了一次改名请求（绝不自动重试）": {
+      "before": 0,
+      "after": 1
+    },
+    "A-17 全程零 move 请求（拒绝后没有换条路再试）": 0,
+    "A-18 被拒绝后输入行保留（不是静默收起）": true,
+    "A-19 状态栏如实说明「对象已变化、未执行」": "该路径上的文件已被外部替换，未执行任何移动",
+    "A-19a 找得到输入行的「×」取消按钮": {
+      "x": 417,
+      "y": 222
+    },
+    "A-19b 取消后输入行真的收起（不带着旧意图继续）": false,
+    "A-20 找到\"刷新当前目录\"入口": {
+      "x": 350.296875,
+      "y": 22
+    },
+    "A-21 刷新后行锚变成新对象真正的锚": {
+      "row": "90c572e56e0e42264dbce991794e7846",
+      "host": "90c572e56e0e42264dbce991794e7846"
+    },
+    "A-22a 取消后重新打开改名框（不是拿第一次的残留状态再提交）": true,
+    "A-22d 输入框确实可写且已填入新名字": {
+      "secondDraft": true,
+      "draftValue": "renamed.md"
+    },
+    "A-22b 第二次提交确实发出了请求（不靠旧响应冒充结果）": 2,
+    "A-22c 第二次请求带的是刷新后的新锚": {
+      "sent": "90c572e56e0e42264dbce991794e7846",
+      "expected": "90c572e56e0e42264dbce991794e7846"
+    },
+    "A-22 对当前对象再次改名成功（200 APPLIED）": {
+      "status": "APPLIED",
+      "projectId": "proj-r2-a",
+      "kind": "rename",
+      "sourcePath": "a.md",
+      "targetPath": "renamed.md",
+      "targetParentDir": "",
+      "targetName": "renamed.md",
+      "entryKind": "file",
+      "contentSha256": "375a5e8aa93d6afe944e2389a2a9054ee6c0ee0d2c365375892389797a198781",
+      "metadataMigration": "none"
+    },
+    "A-23 磁盘真的搬了：a.md 消失、renamed.md 内容与替换后一致": {
+      "exists": true,
+      "after": {
+        "sha256": "375a5e8aa93d6afe944e2389a2a9054ee6c0ee0d2c365375892389797a198781",
+        "size": 54,
+        "ino": 2814749768321473
+      },
+      "expected": "375a5e8aa93d6afe944e2389a2a9054ee6c0ee0d2c365375892389797a198781"
+    },
+    "B-01 docs 层真正展开了（有子行），notes.md 可见": {
+      "docsState": "expanded",
+      "notesRect": {
+        "x": 280,
+        "y": 168.75
+      }
+    },
+    "B-02 notes.md 有真实锚且行上已消费": {
+      "host": "40b1fae4706604b7418cc3365f10c09f",
+      "row": "40b1fae4706604b7418cc3365f10c09f"
+    },
+    "B-03 右键菜单出现「移动到…」": {
+      "x": 326,
+      "y": 219
+    },
+    "B-04 移动对话框打开": true,
+    "B-05 目标候选里有 archive（来自已加载层表，不递归扫描）": [
+      "",
+      "archive"
+    ],
+    "B-06 替换后 Host 的锚变了": {
+      "before": "40b1fae4706604b7418cc3365f10c09f",
+      "after": "bf1f9c1486418fdc7b3c9cd8470e927f"
+    },
+    "B-07 找到\"确认移动\"按钮": {
+      "x": 836,
+      "y": 544.625
+    },
+    "B-08 移动请求也带着旧锚": "40b1fae4706604b7418cc3365f10c09f",
+    "B-09 Host 明确拒绝移动：409 ERR_ENTRY_SOURCE_CHANGED": {
+      "status": "REJECTED",
+      "errorCode": "ERR_ENTRY_SOURCE_CHANGED",
+      "message": "该路径上的文件已被外部替换，未执行任何移动"
+    },
+    "B-10 源仍在原路径且字节一致（零覆盖）": {
+      "after": {
+        "sha256": "14aaf74405cc14dd7b3dc0b1d14a19304fb41b7d4c2997eb88852595a871df7c",
+        "size": 52,
+        "ino": 2533274791610818
+      },
+      "expected": "14aaf74405cc14dd7b3dc0b1d14a19304fb41b7d4c2997eb88852595a871df7c"
+    },
+    "B-12 只发了一次移动请求（绝不自动重试）": {
+      "before": 0,
+      "after": 1
+    },
+    "B-13 全程零改名请求（拒绝后没有换条路再试）": 2,
+    "B-14 对话框保留并显示原因（不静默关闭）": {
+      "dialogStillOpen": true,
+      "moveErr": "该路径上的文件已被外部替换，未执行任何移动"
+    },
+    "B-14d 找得到对话框的「取消」按钮": {
+      "x": 750.9453125,
+      "y": 567.921875
+    },
+    "B-14e 取消后对话框真的关闭": false,
+    "B-14a 取消后 docs 层重新加载出子行": {
+      "docsState2": "expanded",
+      "notesRect2": {
+        "x": 280,
+        "y": 168.75
+      }
+    },
+    "B-14b 刷新后 notes.md 行上的锚就是新对象的锚": {
+      "row": "bf1f9c1486418fdc7b3c9cd8470e927f",
+      "host": "bf1f9c1486418fdc7b3c9cd8470e927f"
+    },
+    "B-15a 第二次移动确实发出了请求": 2,
+    "B-15b 第二次移动带的是刷新后的新锚": {
+      "sent": "bf1f9c1486418fdc7b3c9cd8470e927f",
+      "expected": "bf1f9c1486418fdc7b3c9cd8470e927f"
+    },
+    "B-15 对当前对象重新移动成功（200 APPLIED）": {
+      "status": "APPLIED",
+      "projectId": "proj-r2-a",
+      "kind": "move",
+      "sourcePath": "docs/notes.md",
+      "targetPath": "archive/notes.md",
+      "targetParentDir": "archive",
+      "targetName": "notes.md",
+      "entryKind": "file",
+      "contentSha256": "14aaf74405cc14dd7b3dc0b1d14a19304fb41b7d4c2997eb88852595a871df7c",
+      "metadataMigration": "none"
+    },
+    "B-16 磁盘真的搬了：notes.md 消失、archive/notes.md 内容一致": {
+      "exists": true,
+      "after": {
+        "sha256": "14aaf74405cc14dd7b3dc0b1d14a19304fb41b7d4c2997eb88852595a871df7c",
+        "size": 52,
+        "ino": 2533274791610818
+      }
+    }
+  },
+  "facts": {
+    "initialAMd": {
+      "sha256": "26630003a9fbc3a96cca9ed7c630f34aab023512f51d1623d73899452b80594f",
+      "size": 36,
+      "ino": 2533274791610817
+    },
+    "anchorBeforeReplace": {
+      "host": "2f470e502daea019c45e6ba87b58f7c4",
+      "row": {
+        "anchor": "2f470e502daea019c45e6ba87b58f7c4",
+        "verification": "verified"
+      }
+    },
+    "afterReplace": {
+      "sha256": "375a5e8aa93d6afe944e2389a2a9054ee6c0ee0d2c365375892389797a198781",
+      "size": 54,
+      "ino": 2814749768321473
+    },
+    "anchorAfterReplace": {
+      "host": "90c572e56e0e42264dbce991794e7846",
+      "row": {
+        "anchor": "2f470e502daea019c45e6ba87b58f7c4",
+        "verification": "verified"
+      }
+    },
+    "renameRequest": {
+      "sourceAnchor": "2f470e502daea019c45e6ba87b58f7c4",
+      "name": "renamed.md",
+      "sourcePath": "a.md"
+    },
+    "renameResponse": {
+      "status": 409,
+      "body": {
+        "status": "REJECTED",
+        "errorCode": "ERR_ENTRY_SOURCE_CHANGED",
+        "message": "该路径上的文件已被外部替换，未执行任何移动"
+      }
+    },
+    "afterReject": {
+      "stillOpen": true,
+      "notice": "该路径上的文件已被外部替换，未执行任何移动"
+    },
+    "escapeWhileFocusLost": {
+      "stillOpen": true,
+      "why": "提交中 disabled 夺走焦点，Escape 无人接收（既有行为）"
+    },
+    "anchorAfterRefresh": {
+      "host": "90c572e56e0e42264dbce991794e7846",
+      "row": {
+        "anchor": "90c572e56e0e42264dbce991794e7846",
+        "verification": "verified"
+      }
+    },
+    "secondAttemptTrace": {
+      "posts": 2,
+      "expected": 2,
+      "notice": "已把「a.md」变更为「renamed.md」（只刷新了相关目录）"
+    },
+    "renameRequest2": {
+      "sourceAnchor": "90c572e56e0e42264dbce991794e7846",
+      "name": "renamed.md"
+    },
+    "renameResponse2": {
+      "status": 200,
+      "body": {
+        "status": "APPLIED",
+        "projectId": "proj-r2-a",
+        "kind": "rename",
+        "sourcePath": "a.md",
+        "targetPath": "renamed.md",
+        "targetParentDir": "",
+        "targetName": "renamed.md",
+        "entryKind": "file",
+        "contentSha256": "375a5e8aa93d6afe944e2389a2a9054ee6c0ee0d2c365375892389797a198781",
+        "metadataMigration": "none"
+      }
+    },
+    "moveAnchorBefore": {
+      "host": "40b1fae4706604b7418cc3365f10c09f",
+      "row": {
+        "anchor": "40b1fae4706604b7418cc3365f10c09f",
+        "verification": "verified"
+      }
+    },
+    "moveOptions": [
+      "",
+      "archive"
+    ],
+    "moveAnchorAfterReplace": {
+      "host": "bf1f9c1486418fdc7b3c9cd8470e927f",
+      "before": "40b1fae4706604b7418cc3365f10c09f",
+      "replaced": {
+        "sha256": "14aaf74405cc14dd7b3dc0b1d14a19304fb41b7d4c2997eb88852595a871df7c",
+        "size": 52,
+        "ino": 2533274791610818
+      }
+    },
+    "moveRequest": {
+      "sourceAnchor": "40b1fae4706604b7418cc3365f10c09f",
+      "targetParentDir": "archive"
+    },
+    "moveResponse": {
+      "status": 409,
+      "body": {
+        "status": "REJECTED",
+        "errorCode": "ERR_ENTRY_SOURCE_CHANGED",
+        "message": "该路径上的文件已被外部替换，未执行任何移动"
+      }
+    },
+    "moveAfterReject": {
+      "dialogStillOpen": true,
+      "moveErr": "该路径上的文件已被外部替换，未执行任何移动"
+    },
+    "escapeWhileFocusLostMove": {
+      "stillOpen": true,
+      "why": "Escape 处理挂在 dialog 的 onKeyDown 上，需要焦点在对话框内；提交时按钮 disabled 使焦点回到 body（既有行为）"
+    },
+    "notesRowAfterRefresh": {
+      "row": {
+        "anchor": "bf1f9c1486418fdc7b3c9cd8470e927f",
+        "verification": "verified"
+      },
+      "host": "bf1f9c1486418fdc7b3c9cd8470e927f",
+      "hostAtReplace": "bf1f9c1486418fdc7b3c9cd8470e927f"
+    },
+    "moveRequest2": {
+      "sourceAnchor": "bf1f9c1486418fdc7b3c9cd8470e927f",
+      "expected": "bf1f9c1486418fdc7b3c9cd8470e927f"
+    },
+    "moveResponse2": {
+      "status": 200,
+      "body": {
+        "status": "APPLIED",
+        "projectId": "proj-r2-a",
+        "kind": "move",
+        "sourcePath": "docs/notes.md",
+        "targetPath": "archive/notes.md",
+        "targetParentDir": "archive",
+        "targetName": "notes.md",
+        "entryKind": "file",
+        "contentSha256": "14aaf74405cc14dd7b3dc0b1d14a19304fb41b7d4c2997eb88852595a871df7c",
+        "metadataMigration": "none"
+      }
+    }
+  },
+  "summary": {
+    "total": 52,
+    "passed": 52,
+    "failed": []
+  }
+}

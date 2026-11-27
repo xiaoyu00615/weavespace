@@ -26,6 +26,7 @@ import { ERROR_CODES, type ErrorCode } from '../../../packages/contracts/errors.
 import type { PermissionService } from '../../../packages/permission/index.ts';
 import type { SessionGuardView } from '../../../packages/document/index.ts';
 import type { StructureChangeCapability } from './project-runtime.ts';
+import { metadataAnchorOf } from './metadata.ts';
 import {
   entryRelativePath,
   parentDirOfEntry,
@@ -65,7 +66,18 @@ export interface StructureChangeRequest {
   readonly sourcePath: string;
   readonly targetParentDir: string;
   readonly targetName: string;
+  /**
+   * 源对象的**身份预期**（UX-02C-02-R2）：打开改名输入行 / 移动对话框时，
+   * Shell 从那一行捕获的资源锚（32 位十六进制）。
+   *
+   * 它不是授权凭据，也不被直接采信：Host 会自己读一次源身份、按同一套规则
+   * 重算锚再比对。它回答的问题只有一个——"用户当初指的是不是现在这个对象"。
+   */
+  readonly sourceAnchor: string;
 }
+
+/** 资源锚的形状：与 `metadataAnchorOf` 的输出一致（sha256 前 32 位小写十六进制）。 */
+export const SOURCE_ANCHOR_RE = /^[0-9a-f]{32}$/;
 
 export type ParseStructureResult =
   | { ok: true; request: StructureChangeRequest }
@@ -133,6 +145,30 @@ export function parseStructureBody(
     targetParentDir = dir.value;
   }
 
+  /**
+   * 源身份预期（UX-02C-02-R2）：**必填，零 IO**。
+   *
+   * 缺它不是"兼容老客户端"的场景，而是"这次操作说不清要改哪个对象"：
+   * 因此明确报 `ERR_STRUCTURE_INTENT_MISSING`，绝不退化成按路径直接改。
+   * 形状不对（长度/大小写/非十六进制）属于报文本身非法，报 `ERR_COMMAND_INVALID`。
+   */
+  const rawAnchor = typeof body.sourceAnchor === 'string' ? body.sourceAnchor.trim() : '';
+  if (rawAnchor === '') {
+    return {
+      ok: false,
+      errorCode: 'ERR_STRUCTURE_INTENT_MISSING',
+      message: '缺少源文件的身份信息，未执行任何变更',
+    };
+  }
+  if (!SOURCE_ANCHOR_RE.test(rawAnchor)) {
+    return {
+      ok: false,
+      errorCode: 'ERR_COMMAND_INVALID',
+      message: '源文件的身份信息形状非法',
+    };
+  }
+  const anchor = rawAnchor;
+
   return {
     ok: true,
     request: {
@@ -141,6 +177,7 @@ export function parseStructureBody(
       sourcePath: source.value,
       targetParentDir,
       targetName: name.value,
+      sourceAnchor: anchor,
     },
   };
 }
@@ -171,8 +208,17 @@ export interface StructureChangeDeps {
   readonly providerId: string;
   readonly permission: PermissionService;
   readonly actorId: string;
+  /** 项目根令牌：锚派生要用它，与 `/api/tree` 与元数据端点是同一套规则。 */
+  readonly rootToken: string;
   /** 只读枚举会话（DocumentService 内部状态，不采信 Shell）。 */
   sessionsUnder(projectId: string, pathPrefix: string): readonly SessionGuardView[];
+  /**
+   * 在**屏障内**读源对象的真实身份（`dev:ino`）。
+   *
+   * 必须走结构变更自己的磁盘通道：普通 `withDiskOp` 在屏障期间被拒，
+   * 而这次读取正是"要动它之前先认清它"的一部分。
+   */
+  readSourceIdentity(capability: StructureChangeCapability, path: string): Promise<string | null>;
   /**
    * 结构变更专用磁盘通道：runtime.withStructureDiskOp（UX-02C-02-R1.1）。
    *
@@ -219,6 +265,15 @@ export async function runManagedStructureChange(
   if (typeof provider.moveEntry !== 'function') {
     return reject('ERR_COMMAND_UNSUPPORTED');
   }
+  /**
+   * 没有 `identityOf` 就无法回答"要改的是不是当初那个对象"。
+   *
+   * 这里**不提供**按路径直接改的旁路：那等于把 R2 要消灭的静默降级写回 Host。
+   * 明确报"无法确认源身份"，让界面提示刷新/换 Provider，而不是冒险改错对象。
+   */
+  if (typeof provider.identityOf !== 'function') {
+    return reject('ERR_ENTRY_IDENTITY_UNVERIFIED');
+  }
   const targetPath = entryRelativePath(request.targetParentDir, request.targetName);
 
   // 项目级写授权：源与目标两条路径都要允许写，缺一不可
@@ -242,10 +297,46 @@ export async function runManagedStructureChange(
         };
       }
 
+      /**
+       * 读源身份 → 用**同一套规则**重算锚 → 与客户端预期比对。
+       *
+       * 顺序不能换：先有 Host 自己读到的 `dev:ino`，才有可比的锚。客户端给的
+       * `sourceAnchor` 只作为前置条件参与比较，绝不反过来当身份来源。
+       *
+       * 三种失败各有明确领域结果：
+       * - 读不出来（对象已消失）→ `ERR_RESOURCE_NOT_FOUND`；
+       * - 读得到但与预期不符 → `ERR_ENTRY_SOURCE_CHANGED`（对象已被替换）；
+       * - 连读都读不了（IO 失败）→ 按存储错误码拒绝。
+       * 三种都发生在**任何磁盘副作用之前**。
+       */
+      let identity: string | null;
+      try {
+        identity = await deps.readSourceIdentity(capability, request.sourcePath);
+      } catch (err) {
+        return reject(asKnownCode((err as { errorCode?: unknown }).errorCode) ?? 'ERR_STORAGE_IO');
+      }
+      if (identity === null) {
+        return reject('ERR_RESOURCE_NOT_FOUND');
+      }
+      const expectedAnchor = metadataAnchorOf({
+        projectId: request.projectId,
+        path: request.sourcePath,
+        rootToken: deps.rootToken,
+        identity,
+      });
+      if (expectedAnchor !== request.sourceAnchor) {
+        return reject('ERR_ENTRY_SOURCE_CHANGED');
+      }
+
       let result: MoveEntryResult;
       try {
         result = await deps.withStructureDiskOp(capability, () =>
-          provider.moveEntry!(request.sourcePath, request.targetParentDir, request.targetName),
+          provider.moveEntry!(
+            request.sourcePath,
+            request.targetParentDir,
+            request.targetName,
+            identity as string,
+          ),
         );
       } catch (err) {
         return reject(asKnownCode((err as { errorCode?: unknown }).errorCode) ?? 'ERR_STORAGE_IO');

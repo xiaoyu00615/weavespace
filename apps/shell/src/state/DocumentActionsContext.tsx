@@ -192,14 +192,24 @@ export interface DocumentActions {
 
   /* ---- UX-02C-02：真实改名 / 移动 ---- */
 
-  /** 同一目录内改名；目标目录由 Host 派生。 */
-  renameEntry(projectId: string, sourcePath: string, name: string): Promise<StructureChangeOutcome>;
-  /** 同一授权项目内移动。 */
+  /**
+   * 同一目录内改名；目标目录由 Host 派生。
+   * `sourceAnchor` 是打开改名输入行时捕获的身份预期（UX-02C-02-R2），必填：
+   * 没有它就不该发出任何真实磁盘操作。
+   */
+  renameEntry(
+    projectId: string,
+    sourcePath: string,
+    name: string,
+    sourceAnchor: string,
+  ): Promise<StructureChangeOutcome>;
+  /** 同一授权项目内移动（同样必须带源身份预期）。 */
   moveEntry(
     projectId: string,
     sourcePath: string,
     targetParentDir: string,
     name: string,
+    sourceAnchor: string,
   ): Promise<StructureChangeOutcome>;
   /**
    * Host 明确 APPLIED 之后才调用：清理旧路径层/展开/选择，刷新源父层与目标父层，
@@ -1058,18 +1068,18 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
 
       /* ---- UX-02C-02：真实改名 / 移动 ---- */
 
-      async renameEntry(projectId, sourcePath, name) {
+      async renameEntry(projectId, sourcePath, name, sourceAnchor) {
         if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
           return unsupportedStructure();
         }
-        return liveClient.renameEntry(projectId, sourcePath, name);
+        return liveClient.renameEntry(projectId, sourcePath, name, sourceAnchor);
       },
 
-      async moveEntry(projectId, sourcePath, targetParentDir, name) {
+      async moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor) {
         if (stateRef.current.mode !== 'live' || stateRef.current.workspaceMode !== 'multi') {
           return unsupportedStructure();
         }
-        return liveClient.moveEntry(projectId, sourcePath, targetParentDir, name);
+        return liveClient.moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor);
       },
 
       /**

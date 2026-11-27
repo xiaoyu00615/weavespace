@@ -35,6 +35,10 @@ import { inspectProjectRoot } from '../../packages/project-registry/index.ts';
 import { createLocalProvider, type StorageProvider } from '../../packages/storage/index.ts';
 import { createPermissionService } from '../../packages/permission/index.ts';
 import { runManagedStructureChange } from '../../apps/server/src/structure-change.ts';
+import {
+  withSourceAnchor,
+  type StructureBody,
+} from '../helpers/structure-intent.ts';
 
 const PROJ_A = 'project-a';
 const PROJ_B = 'project-b';
@@ -182,6 +186,11 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>, options: HarnessOptions
       body: JSON.stringify(body),
     });
 
+  const treeOf = (projectId: string, dir = ''): Promise<ApiResponse> =>
+    api(
+      `/api/tree?projectId=${encodeURIComponent(projectId)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
+    );
+
   const ctx: Ctx = {
     base,
     rootA,
@@ -196,12 +205,13 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>, options: HarnessOptions
     token,
     api,
     post,
-    rename: (body, opts) => post('/api/files/rename', body, opts),
-    move: (body, opts) => post('/api/files/move', body, opts),
-    tree: (projectId, dir = '') =>
-      api(
-        `/api/tree?projectId=${encodeURIComponent(projectId)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
-      ),
+    // 结构变更现在必须带源身份预期（UX-02C-02-R2）；锚从真实 `/api/tree` 取，
+    // 不在这里按 dev:ino 重算一遍，否则等于把生产派生逻辑抄成测试替身。
+    rename: async (body, opts) =>
+      post('/api/files/rename', await withSourceAnchor(body as StructureBody, treeOf), opts),
+    move: async (body, opts) =>
+      post('/api/files/move', await withSourceAnchor(body as StructureBody, treeOf), opts),
+    tree: treeOf,
     open: (projectId, path) => post('/api/open', { projectId, path }),
     edit: (sessionId, viewId, buffer) =>
       post('/api/edit', { sessionId, viewId, buffer, expectedVersion: undefined }),
@@ -433,6 +443,7 @@ test('10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝'
     assert.equal(forbidden.status, 400);
     // 直接编排：授权服务拒绝时，连结构变更磁盘通道都不进入
     let diskOps = 0;
+    let identityReads = 0;
     const denied = await runManagedStructureChange({
       request: {
         projectId: PROJ_A,
@@ -440,12 +451,19 @@ test('10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝'
         sourcePath: 'docs/notes.md',
         targetParentDir: 'docs',
         targetName: 'x.md',
+        // 形状合法的占位锚：这条用例要验的是"授权先拒"，不是锚内容
+        sourceAnchor: 'a'.repeat(32),
       },
       provider: h.runtime.providerOf(`local:${PROJ_A}`)!,
       providerId: `local:${PROJ_A}`,
       permission: createPermissionService([]),
       actorId: 'test-actor',
       sessionsUnder: () => [],
+      rootToken: 'test-root-token',
+      readSourceIdentity: async () => {
+        identityReads += 1;
+        return null;
+      },
       withStructureDiskOp: async <T,>(_capability: unknown, fn: () => Promise<T>): Promise<T> => {
         diskOps += 1;
         return fn();
@@ -456,6 +474,7 @@ test('10 缺令牌 / 错误 Origin / 无项目写授权 / 禁字段一律拒绝'
     });
     assert.equal(denied.status, 'REJECTED');
     assert.equal(diskOps, 0, '无写授权时零磁盘操作');
+    assert.equal(identityReads, 0, '无写授权时连源身份都不读');
     assert.equal(existsSync(join(h.rootA, 'docs', 'notes.md')), true);
   });
 });
@@ -497,8 +516,12 @@ test('11 活动编辑 View / 危险草稿阻止改名或移动，零磁盘变更
 
 test('13 并发 open / save / create 与结构变更：屏障内新准入被拒，路径不脱节', async () => {
   await withHost(async (h) => {
+    // 锚在竞态开始**之前**取好：取锚本身是一次真实往返，若放在并发块里，
+    // 会改变三个请求进入屏障的先后次序，让这条竞态测试变得不确定。
+    const anchor = (await h.tree(PROJ_A, 'docs')).body.anchors['docs/notes.md'];
+    assert.equal(typeof anchor, 'string', '夹具取不到锚');
     const [renameRes, openRes, createRes] = await Promise.all([
-      h.rename(at('docs/notes.md', 'renamed.md')),
+      h.rename({ ...at('docs/notes.md', 'renamed.md'), sourceAnchor: anchor }),
       h.open(PROJ_A, 'docs/notes.md'),
       h.post('/api/files/create', {
         projectId: PROJ_A,
@@ -520,18 +543,31 @@ test('13 并发 open / save / create 与结构变更：屏障内新准入被拒�
 test('14 A 项目操作不影响 B 项目', async () => {
   await withHost(async (h) => {
     const before = sha(await readFile(join(h.rootB, 'b.md')));
-    const res = await h.rename(at('docs/notes.md', 'a-only.md'));
-    assert.equal(res.status, 200);
-    assert.deepEqual(await readdir(h.rootB), ['b.md']);
-    assert.equal(sha(await readFile(join(h.rootB, 'b.md'))), before);
-    // 用 A 的 projectId 去改 B 的盘是做不到的：路径始终在 A 的授权根内解析
+    // 跨项目伪装：拿 A 的真实锚，套上 B 的 projectId。B 里没有这条路径，
+    // 所以锚不可能对上——无论在哪一层被拒，B 的盘和 A 的源文件都必须毫发无损。
+    const anchorA = (await h.tree(PROJ_A, 'docs')).body.anchors['docs/notes.md'];
+    assert.equal(typeof anchorA, 'string', '夹具取不到 A 的锚');
     const cross = await h.move({
       projectId: PROJ_B,
       sourcePath: 'docs/notes.md',
       targetParentDir: '',
       name: 'stolen.md',
+      sourceAnchor: anchorA,
     });
-    assert.equal(cross.status, 404, JSON.stringify(cross.body));
+    assert.ok(cross.status === 400 || cross.status === 404, JSON.stringify(cross.body));
+    assert.deepEqual(await readdir(h.rootB), ['b.md']);
+    assert.equal(sha(await readFile(join(h.rootB, 'b.md'))), before);
+    assert.equal(
+      existsSync(join(h.rootA, 'docs', 'notes.md')),
+      true,
+      'A 的源文件不得被 B 的请求动到',
+    );
+    assert.equal(existsSync(join(h.rootB, 'stolen.md')), false);
+
+    const res = await h.rename(at('docs/notes.md', 'a-only.md'));
+    assert.equal(res.status, 200);
+    assert.deepEqual(await readdir(h.rootB), ['b.md']);
+    assert.equal(sha(await readFile(join(h.rootB, 'b.md'))), before);
   });
 });
 

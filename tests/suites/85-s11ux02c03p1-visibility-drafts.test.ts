@@ -179,6 +179,16 @@ test('P1-04c 隐藏后保存：保存换了 inode，但隐藏记录必须跟着�
 
 test('P1-05a 隐藏后在工作台内改名：旧记录失效但不影响新名字，改名不被记录拦住', async () => {
   await withDraftHost(async (h) => {
+    /*
+     * 锚必须在隐藏**之前**取：隐藏行不再出现在 `/api/tree` 的 entries 里
+     * （只剩 `hiddenCount`），因此隐藏后这一行没有锚可取。
+     * 真实时序也是这样——Shell 手里握的是隐藏前那一页发下来的锚，
+     * 而"隐藏"只改变记录状态，不改变磁盘对象，锚理应继续匹配。
+     */
+    const beforeHide = await h.get(`/api/tree?projectId=${PROJ}`);
+    const anchor = (beforeHide.body as { anchors?: Record<string, string> }).anchors?.['note.md'];
+    assert.equal(typeof anchor, 'string', '夹具取不到隐藏前 note.md 的锚');
+
     assert.equal((await h.post('/api/workspace/hide', { projectId: PROJ, path: 'note.md' })).status, 200);
 
     // 没有活动会话：改名必须成功（隐藏记录不是结构变更阻断）
@@ -186,6 +196,7 @@ test('P1-05a 隐藏后在工作台内改名：旧记录失效但不影响新名�
       projectId: PROJ,
       sourcePath: 'note.md',
       name: 'renamed.md',
+      sourceAnchor: anchor,
     });
     assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
 

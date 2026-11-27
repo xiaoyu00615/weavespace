@@ -156,6 +156,13 @@ test('P2-01l 保留路径在全部公开入口都被拒绝（不是靠"越界"�
       name: 'create.name',
       res: await h.api.post('/api/directories/create', { projectId: PROJ, parentDir: '', name: '.weavespace' }),
     });
+    /*
+     * 结构变更现在要求源身份预期（UX-02C-02-R2）。这两条要验的是"保留路径守卫"，
+     * 所以身份字段必须**形状合法**，否则会被更早的形状校验挡在 400，测不到 403。
+     * 保留路径不在树里、取不到真锚，这里用一个合法形状的占位锚即可：
+     * 授权在"读源身份"之前，锚内容根本不会被用到。
+     */
+    const wellFormedAnchor = 'a'.repeat(32);
     cases.push({
       name: 'move.source',
       res: await h.api.post('/api/files/move', {
@@ -163,8 +170,13 @@ test('P2-01l 保留路径在全部公开入口都被拒绝（不是靠"越界"�
         sourcePath: reserved,
         targetParentDir: '',
         name: 'stolen.md',
+        sourceAnchor: wellFormedAnchor,
       }),
     });
+    const guideAnchor = ((await h.api.get(`/api/tree?projectId=${PROJ}&dir=docs`)).body as {
+      anchors?: Record<string, string>;
+    }).anchors?.['docs/guide.md'];
+    assert.equal(typeof guideAnchor, 'string', '夹具取不到 docs/guide.md 的锚');
     cases.push({
       name: 'move.target',
       res: await h.api.post('/api/files/move', {
@@ -172,6 +184,7 @@ test('P2-01l 保留路径在全部公开入口都被拒绝（不是靠"越界"�
         sourcePath: 'docs/guide.md',
         targetParentDir: '.weavespace/trash',
         name: 'guide.md',
+        sourceAnchor: guideAnchor,
       }),
     });
     cases.push({

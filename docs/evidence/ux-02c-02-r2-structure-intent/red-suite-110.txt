@@ -1,0 +1,649 @@
+TAP version 13
+# Subtest: S-01 捕获意图：有锚且已核验 → 成功，锚与票据被原样保存
+not ok 1 - S-01 捕获意图：有锚且已核验 → 成功，锚与票据被原样保存
+  ---
+  duration_ms: 4.3603
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:340:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    false !== true
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:354:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: S-02 捕获意图：没有锚且身份未确认 → 拒绝（不得按路径身份继续）
+not ok 2 - S-02 捕获意图：没有锚且身份未确认 → 拒绝（不得按路径身份继续）
+  ---
+  duration_ms: 0.4675
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:357:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    true !== false
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:364:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: S-03 捕获意图：Provider 声明无身份能力 → 同样拒绝，不降级成路径操作
+not ok 3 - S-03 捕获意图：Provider 声明无身份能力 → 同样拒绝，不降级成路径操作
+  ---
+  duration_ms: 0.2523
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:369:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    true !== false
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:376:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-04 提交前：当前锚与捕获锚一致 → 放行
+ok 4 - S-04 提交前：当前锚与捕获锚一致 → 放行
+  ---
+  duration_ms: 0.3304
+  type: 'test'
+  ...
+# Subtest: S-05 提交前：同路径换成新对象（锚变了）→ 对象已变化
+not ok 5 - S-05 提交前：同路径换成新对象（锚变了）→ 对象已变化
+  ---
+  duration_ms: 29.969
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:399:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(problem)
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:411:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-06 提交前：当前探测失败（unverified）→ 无法确认，不当成对象一致
+not ok 6 - S-06 提交前：当前探测失败（unverified）→ 无法确认，不当成对象一致
+  ---
+  duration_ms: 1.479
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:415:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(problem)
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:428:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-07 提交前：当前声明改口（unsupported）→ 身份状态已变化
+not ok 7 - S-07 提交前：当前声明改口（unsupported）→ 身份状态已变化
+  ---
+  duration_ms: 0.7317
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:432:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(problem)
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:445:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-08 提交前：声明 supported 但已探不到对象 → 对象已变化
+not ok 8 - S-08 提交前：声明 supported 但已探不到对象 → 对象已变化
+  ---
+  duration_ms: 0.6313
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:449:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(problem)
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: ~
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:461:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-09 会话票据：结果回来时票据已换 → 不得写进新会话
+not ok 9 - S-09 会话票据：结果回来时票据已换 → 不得写进新会话
+  ---
+  duration_ms: 0.7722
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:465:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    true !== false
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: false
+  actual: true
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:467:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-10 输入期间改草稿不改变捕获的锚（预期不可自动刷新）
+ok 10 - S-10 输入期间改草稿不改变捕获的锚（预期不可自动刷新）
+  ---
+  duration_ms: 2.1421
+  type: 'test'
+  ...
+# Subtest: S-11 提交时没有锚 → 本地拒绝，一个请求都不发
+not ok 11 - S-11 提交时没有锚 → 本地拒绝，一个请求都不发
+  ---
+  duration_ms: 5.4124
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:571:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'applied'
+    - 'rejected'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'rejected'
+  actual: 'applied'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:574:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-12 提交前核验不通过 → 本地拒绝，一个请求都不发
+not ok 12 - S-12 提交前核验不通过 → 本地拒绝，一个请求都不发
+  ---
+  duration_ms: 0.9678
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:580:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'applied'
+    - 'rejected'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'rejected'
+  actual: 'applied'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:585:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-13 正常提交：发出的请求带着同一个锚，成功才 onApplied
+not ok 13 - S-13 正常提交：发出的请求带着同一个锚，成功才 onApplied
+  ---
+  duration_ms: 6.4792
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:590:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    必须把捕获的锚原样发出
+    + actual - expected
+
+    + undefined
+    - 'ab5aa97074c454a0632057e704220d9a'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'ab5aa97074c454a0632057e704220d9a'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:595:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S-14 Host 拒绝（源已变化）：保留输入、只发一次、不自动重发
+ok 14 - S-14 Host 拒绝（源已变化）：保留输入、只发一次、不自动重发
+  ---
+  duration_ms: 2.1712
+  type: 'test'
+  ...
+# Subtest: S-15 移动提交同样带锚；verifySource 拿到的是源项目与源路径
+not ok 15 - S-15 移动提交同样带锚；verifySource 拿到的是源项目与源路径
+  ---
+  duration_ms: 0.8225
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:616:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + undefined
+    - 'ab5aa97074c454a0632057e704220d9a'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'ab5aa97074c454a0632057e704220d9a'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:627:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: H-01 文件改名：200 APPLIED，路径变化但内容与 inode 都不变（同一个对象搬家）
+ok 16 - H-01 文件改名：200 APPLIED，路径变化但内容与 inode 都不变（同一个对象搬家）
+  ---
+  duration_ms: 319.8395
+  type: 'test'
+  ...
+# Subtest: H-02 目录改名：后代路径跟着走，内容不变，锚校验不误伤
+ok 17 - H-02 目录改名：后代路径跟着走，内容不变，锚校验不误伤
+  ---
+  duration_ms: 398.5267
+  type: 'test'
+  ...
+# Subtest: H-03 大小写仅变化：带锚照样通过，磁盘上只留一个目录项
+ok 18 - H-03 大小写仅变化：带锚照样通过，磁盘上只留一个目录项
+  ---
+  duration_ms: 89.17
+  type: 'test'
+  ...
+# Subtest: H-04 文件移动：源消失、目标出现、字节一致
+ok 19 - H-04 文件移动：源消失、目标出现、字节一致
+  ---
+  duration_ms: 74.0588
+  type: 'test'
+  ...
+# Subtest: H-05 标注随改名迁移到新路径，旧路径不再有它的记录
+ok 20 - H-05 标注随改名迁移到新路径，旧路径不再有它的记录
+  ---
+  duration_ms: 168.8052
+  type: 'test'
+  ...
+# Subtest: I-01 缺少 sourceAnchor：400 ERR_STRUCTURE_INTENT_MISSING，磁盘逐字节零变更
+not ok 21 - I-01 缺少 sourceAnchor：400 ERR_STRUCTURE_INTENT_MISSING，磁盘逐字节零变更
+  ---
+  duration_ms: 74.1813
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:719:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"status":"APPLIED","projectId":"project-a","kind":"rename","sourcePath":"docs/notes.md","targetPath":"docs/x.md","targetParentDir":"docs","targetName":"x.md","entryKind":"file","contentSha256":"773b8a57631d7dc35336ef3bbb3eb02ef39743949ffbdbd626fe639ccb960d99","metadataMigration":"none"}
+
+    200 !== 400
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 400
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:723:12
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:720:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: I-02 锚形状非法（31 位 / 大写 / 非 hex）：400 ERR_COMMAND_INVALID，零副作用
+not ok 22 - I-02 锚形状非法（31 位 / 大写 / 非 hex）：400 ERR_COMMAND_INVALID，零副作用
+  ---
+  duration_ms: 82.5497
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:729:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 应被拒绝: {"status":"APPLIED","projectId":"project-a","kind":"rename","sourcePath":"docs/notes.md","targetPath":"docs/x.md","targetParentDir":"docs","targetName":"x.md","entryKind":"file","contentSha256":"773b8a57631d7dc35336ef3bbb3eb02ef39743949ffbdbd626fe639ccb960d99","metadataMigration":"none"}
+
+    200 !== 400
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 400
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:734:14
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:730:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: I-03 锚属于另一个文件：409 ERR_ENTRY_SOURCE_CHANGED，零副作用
+not ok 23 - I-03 锚属于另一个文件：409 ERR_ENTRY_SOURCE_CHANGED，零副作用
+  ---
+  duration_ms: 102.1573
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:741:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"status":"APPLIED","projectId":"project-a","kind":"rename","sourcePath":"docs/notes.md","targetPath":"docs/x.md","targetParentDir":"docs","targetName":"x.md","entryKind":"file","contentSha256":"773b8a57631d7dc35336ef3bbb3eb02ef39743949ffbdbd626fe639ccb960d99","metadataMigration":"none"}
+
+    200 !== 409
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 409
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:746:12
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:742:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: I-04 外部删除重建同名文件：旧锚失效 → 拒绝，新对象原位且内容不变
+not ok 24 - I-04 外部删除重建同名文件：旧锚失效 → 拒绝，新对象原位且内容不变
+  ---
+  duration_ms: 112.5925
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:753:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"status":"APPLIED","projectId":"project-a","kind":"rename","sourcePath":"docs/notes.md","targetPath":"docs/x.md","targetParentDir":"docs","targetName":"x.md","entryKind":"file","contentSha256":"379eaaafbf0f2534360b4c28eca402f7be82a5d7e94a1d39f75d89c68f5d1d06","metadataMigration":"none"}
+
+    200 !== 409
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 409
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:764:12
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:754:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: I-05 源已被删除：404 ERR_RESOURCE_NOT_FOUND，不创建目标
+ok 25 - I-05 源已被删除：404 ERR_RESOURCE_NOT_FOUND，不创建目标
+  ---
+  duration_ms: 101.4509
+  type: 'test'
+  ...
+# Subtest: I-06 Provider 无身份能力：409 ERR_ENTRY_IDENTITY_UNVERIFIED，绝不降级为无锚操作
+not ok 26 - I-06 Provider 无身份能力：409 ERR_ENTRY_IDENTITY_UNVERIFIED，绝不降级为无锚操作
+  ---
+  duration_ms: 99.7605
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:782:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"status":"APPLIED","projectId":"project-a","kind":"rename","sourcePath":"docs/notes.md","targetPath":"docs/x.md","targetParentDir":"docs","targetName":"x.md","entryKind":"file","contentSha256":"773b8a57631d7dc35336ef3bbb3eb02ef39743949ffbdbd626fe639ccb960d99","metadataMigration":"none"}
+
+    200 !== 409
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 409
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    withHost.withoutIdentity (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:792:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:783:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: I-07 占位建立后源被外部替换：rename 前复核拦下，占位清理干净
+not ok 27 - I-07 占位建立后源被外部替换：rename 前复核拦下，占位清理干净
+  ---
+  duration_ms: 100.0563
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:800:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"status":"UNKNOWN","errorCode":"ERR_OUTCOME_UNKNOWN","message":"结构变更结果未确认：已保留源位置与目标位置供人工核对（不会自动重试、不会回滚）","projectId":"project-a","sourcePath":"docs/notes.md","targetParentDir":"docs","targetName":"moved.md","targetPath":"docs/moved.md"}
+
+    202 !== 409
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 409
+  actual: 202
+  operator: 'strictEqual'
+  stack: |-
+    withHost.faults.beforeMoveRename.rmSync.force (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:815:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:803:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: I-08 占位建立后源被删除：404，占位清理干净（不残留 0 字节文件）
+not ok 28 - I-08 占位建立后源被删除：404，占位清理干净（不残留 0 字节文件）
+  ---
+  duration_ms: 106.354
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:833:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"status":"UNKNOWN","errorCode":"ERR_OUTCOME_UNKNOWN","message":"结构变更结果未确认：已保留源位置与目标位置供人工核对（不会自动重试、不会回滚）","projectId":"project-a","sourcePath":"docs/notes.md","targetParentDir":"archive","targetName":"notes.md","targetPath":"archive/notes.md"}
+
+    202 !== 404
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 404
+  actual: 202
+  operator: 'strictEqual'
+  stack: |-
+    withHost.faults.afterMoveReserve.rmSync.force (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:846:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:835:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: I-09 大小写仅变化也必须核验源身份：锚不符时照样拒绝
+not ok 29 - I-09 大小写仅变化也必须核验源身份：锚不符时照样拒绝
+  ---
+  duration_ms: 106.8033
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:854:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"status":"APPLIED","projectId":"project-a","kind":"rename","sourcePath":"a.md","targetPath":"A.md","targetParentDir":"","targetName":"A.md","entryKind":"file","contentSha256":"b191f5fe6a5b21edb5003a9feac7173ed847999edc1807e8ccea34d0b3a50e43","metadataMigration":"none"}
+
+    200 !== 409
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 409
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:859:12
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:855:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: R-01 有活动编辑 View：409 ERR_STRUCTURE_SESSION_BUSY，零磁盘变更
+ok 30 - R-01 有活动编辑 View：409 ERR_STRUCTURE_SESSION_BUSY，零磁盘变更
+  ---
+  duration_ms: 120.2954
+  type: 'test'
+  ...
+# Subtest: R-02 跨项目：用 B 的 projectId 改 A 的相对路径，两个项目都零副作用
+ok 31 - R-02 跨项目：用 B 的 projectId 改 A 的相对路径，两个项目都零副作用
+  ---
+  duration_ms: 114.4938
+  type: 'test'
+  ...
+# Subtest: R-03 保留命名空间（回收区）：403 ERR_PATH_RESERVED，零副作用
+ok 32 - R-03 保留命名空间（回收区）：403 ERR_PATH_RESERVED，零副作用
+  ---
+  duration_ms: 62.1856
+  type: 'test'
+  ...
+# Subtest: R-04 客户端自述路径 / 根令牌 / 身份一律不被采信
+not ok 33 - R-04 客户端自述路径 / 根令牌 / 身份一律不被采信
+  ---
+  duration_ms: 76.8511
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\110-s11ux02c02r2-structure-intent-identity.test.ts:911:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"status":"APPLIED","projectId":"project-a","kind":"move","sourcePath":"docs/notes.md","targetPath":"archive/x.md","targetParentDir":"archive","targetName":"x.md","entryKind":"file","contentSha256":"773b8a57631d7dc35336ef3bbb3eb02ef39743949ffbdbd626fe639ccb960d99","metadataMigration":"none"}
+
+    200 !== 409
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 409
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:949:12
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async withHost (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:323:5)
+    async TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/110-s11ux02c02r2-structure-intent-identity.test.ts:912:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: R-05 改名端点不得被当成移动端点：400
+ok 34 - R-05 改名端点不得被当成移动端点：400
+  ---
+  duration_ms: 69.5644
+  type: 'test'
+  ...
+# Subtest: R-06 目标已存在：409 ERR_ENTRY_EXISTS，源与目标都保持原样
+ok 35 - R-06 目标已存在：409 ERR_ENTRY_EXISTS，源与目标都保持原样
+  ---
+  duration_ms: 58.0816
+  type: 'test'
+  ...
+# Subtest: R-07 目录移入自身后代：400 ERR_MOVE_INTO_DESCENDANT，零副作用
+ok 36 - R-07 目录移入自身后代：400 ERR_MOVE_INTO_DESCENDANT，零副作用
+  ---
+  duration_ms: 64.7947
+  type: 'test'
+  ...
+# Subtest: R-08 源是符号链接 / junction：拒绝且不沿链接改名
+ok 37 - R-08 源是符号链接 / junction：拒绝且不沿链接改名
+  ---
+  duration_ms: 55.959
+  type: 'test'
+  ...
+# Subtest: R-09 占位被外部对象替换：绝不删除外部对象
+ok 38 - R-09 占位被外部对象替换：绝不删除外部对象
+  ---
+  duration_ms: 61.7786
+  type: 'test'
+  ...
+# Subtest: R-10 结果不确定（UNKNOWN）不自动重发：Provider 只被调用一次
+ok 39 - R-10 结果不确定（UNKNOWN）不自动重发：Provider 只被调用一次
+  ---
+  duration_ms: 64.1932
+  type: 'test'
+  ...
+# Subtest: R-11 目标父目录不存在：409/400 明确拒绝，源不动
+ok 40 - R-11 目标父目录不存在：409/400 明确拒绝，源不动
+  ---
+  duration_ms: 59.3748
+  type: 'test'
+  ...
+1..40
+# tests 40
+# suites 0
+# pass 19
+# fail 21
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4096.7644

@@ -32,6 +32,8 @@ import {
 import { inspectProjectRoot } from '../../packages/project-registry/index.ts';
 import { createLocalProvider, type StorageProvider } from '../../packages/storage/index.ts';
 
+import { withSourceAnchor, type StructureBody } from '../helpers/structure-intent.ts';
+
 const PROJ_A = 'project-a';
 
 interface ApiResponse {
@@ -142,6 +144,11 @@ async function withHost(
       body: JSON.stringify(body),
     });
 
+  const treeOf = (projectId: string, dir = ''): Promise<ApiResponse> =>
+    api(
+      `/api/tree?projectId=${encodeURIComponent(projectId)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
+    );
+
   try {
     await fn({
       rootA,
@@ -151,8 +158,12 @@ async function withHost(
       },
       api,
       post,
-      move: (body) => post('/api/files/move', body),
-      rename: (body) => post('/api/files/rename', body),
+      // 结构变更必须带源身份预期（UX-02C-02-R2）；锚从真实 `/api/tree` 取，
+      // 否则这些用例会被"缺身份预期"提前挡在 400，测不到占位语义本身。
+      move: async (body) =>
+        post('/api/files/move', await withSourceAnchor(body as StructureBody, treeOf)),
+      rename: async (body) =>
+        post('/api/files/rename', await withSourceAnchor(body as StructureBody, treeOf)),
     });
   } finally {
     await server.close().catch(() => {});

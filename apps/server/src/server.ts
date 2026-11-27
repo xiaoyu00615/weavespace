@@ -269,6 +269,8 @@ function httpStatusOfDomainError(errorCode: string | undefined): number {
     case 'ERR_STRUCTURE_SESSION_BUSY':
     // 源对象身份无法核验：与"确实换了"同样必须零副作用拒绝（UX-02C-02-R2）
     case 'ERR_ENTRY_IDENTITY_UNVERIFIED':
+    // 结构变更：这次操作指向的对象已经不是当初那个（锚/身份核验不通过）
+    case 'ERR_ENTRY_SOURCE_CHANGED':
     // Windows 上目录被占用，无法完成改名/移动
     case 'ERR_ENTRY_DIR_BUSY':
       return 409;
@@ -2872,7 +2874,12 @@ export async function createShellServer(options: ShellServerOptions): Promise<Sh
           providerId: handle.providerId,
           permission,
           actorId,
+          // 锚派生与 `/api/tree`、元数据端点是同一套规则：projectId + 路径 + 根令牌 + 身份
+          rootToken: handle.rootToken,
           sessionsUnder: (projectId, prefix) => document.sessionsUnder(projectId, prefix),
+          // 读源身份也走结构变更自己的通道：屏障期间普通 withDiskOp 已被拒
+          readSourceIdentity: (capability, path) =>
+            runtime.withStructureDiskOp(capability, () => handle.provider.identityOf!(path)),
           // 屏障持有期间普通 withDiskOp 已被拒，结构变更自己的磁盘操作走专用通道
           withStructureDiskOp: <T,>(capability: StructureChangeCapability, fn: () => Promise<T>) =>
             runtime.withStructureDiskOp(capability, fn),

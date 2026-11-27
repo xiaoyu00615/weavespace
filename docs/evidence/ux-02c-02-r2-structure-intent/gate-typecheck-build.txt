@@ -1,0 +1,12 @@
+== npm run typecheck ==
+exit=0（无输出）
+
+== npm run typecheck:apps ==
+exit=0（无输出）
+
+== npm run build:shell ==
+dist/assets/index-D3f5zHvm.js   495.28 kB │ gzip: 149.54 kB
+✓ built in 1.84s
+
+== git diff --check ==
+exit=0

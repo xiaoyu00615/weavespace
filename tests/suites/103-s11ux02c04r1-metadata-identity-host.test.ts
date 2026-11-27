@@ -23,6 +23,7 @@ import { createFakePicker } from '../../apps/server/src/folder-picker/fake-picke
 import { parseConfig, serializeConfig } from '../../apps/server/src/store/config.ts';
 import { CONFIG_FILE, createFileProjectStore } from '../../apps/server/src/store/index.ts';
 import { rootTokenOf } from '../../packages/storage/path-safety.ts';
+import { withSourceAnchor, type StructureBody } from '../helpers/structure-intent.ts';
 
 interface ApiResponse {
   status: number;
@@ -110,7 +111,7 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
   let token = ((await api('/api/session-token')).body as { token?: string }).token ?? '';
 
   const get = (path: string): Promise<ApiResponse> => api(path, { headers: { 'x-ws-token': token } });
-  const post = (path: string, body: unknown): Promise<ApiResponse> =>
+  const rawPost = (path: string, body: unknown): Promise<ApiResponse> =>
     api(path, {
       method: 'POST',
       headers: {
@@ -120,6 +121,22 @@ async function withHost(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
       },
       body: JSON.stringify(body),
     });
+
+  /*
+   * 结构变更请求必须带源身份预期（UX-02C-02-R2）。本套件验的是元数据身份再绑定，
+   * 不是身份契约本身，所以在**传输层**统一补锚：取发请求那一刻真实 `/api/tree`
+   * 给出的锚，即"UI 当时看到的那一行"。显式传了 `sourceAnchor`（含空串）不覆盖。
+   */
+  const STRUCTURE_PATHS = new Set(['/api/files/rename', '/api/files/move']);
+  const post = async (path: string, body: unknown): Promise<ApiResponse> => {
+    if (!STRUCTURE_PATHS.has(path)) return rawPost(path, body);
+    const withAnchor = await withSourceAnchor(body as StructureBody, (projectId, dir) =>
+      get(
+        `/api/tree?projectId=${encodeURIComponent(projectId)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
+      ),
+    );
+    return rawPost(path, withAnchor);
+  };
 
   const ctx: Ctx = {
     base,

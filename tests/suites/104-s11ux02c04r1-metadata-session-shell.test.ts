@@ -28,6 +28,12 @@ import { createLiveClient } from '../../apps/shell/src/client/client-api.ts';
 import type { MetadataOutcome } from '../../apps/shell/src/client/client-api.ts';
 
 const PROJ = 'project-a';
+
+/**
+ * 结构变更必须带源身份预期（UX-02C-02-R2）。本套件只验响应到界面语义的映射，
+ * fetch 是桩，锚在这里只是满足契约形状的一个合法值（32 位小写十六进制）。
+ */
+const TEST_ANCHOR = '0123456789abcdef0123456789abcdef';
 const ANCHOR_A = 'a'.repeat(32);
 const ANCHOR_B = 'b'.repeat(32);
 
@@ -389,7 +395,7 @@ test('R1-D05 结构变更响应：moved / metadataMoved 正确传递', async () 
   }));
   try {
     const client = createLiveClient('http://host.test');
-    const outcome = await client.renameEntry(PROJ, 'a.md', 'b.md');
+    const outcome = await client.renameEntry(PROJ, 'a.md', 'b.md', TEST_ANCHOR);
     assert.equal(outcome.status, 'APPLIED');
     if (outcome.status !== 'APPLIED') return;
     assert.equal(outcome.metadataMigration, 'moved');
@@ -418,7 +424,7 @@ test('R1-D06 结构变更响应：failed 不改磁盘成功语义；非法字段
   }));
   try {
     const client = createLiveClient('http://host.test');
-    const outcome = await client.renameEntry(PROJ, 'a.md', 'b.md');
+    const outcome = await client.renameEntry(PROJ, 'a.md', 'b.md', TEST_ANCHOR);
     assert.equal(outcome.status, 'APPLIED', '标注迁移失败不等于磁盘失败');
     if (outcome.status !== 'APPLIED') return;
     assert.equal(outcome.metadataMigration, 'failed');
@@ -445,7 +451,7 @@ test('R1-D06 结构变更响应：failed 不改磁盘成功语义；非法字段
   }));
   try {
     const client = createLiveClient('http://host.test');
-    const outcome = await client.renameEntry(PROJ, 'a.md', 'b.md');
+    const outcome = await client.renameEntry(PROJ, 'a.md', 'b.md', TEST_ANCHOR);
     assert.equal(outcome.status, 'APPLIED');
     if (outcome.status !== 'APPLIED') return;
     assert.equal(outcome.metadataMigration, 'none', '未知取值按"没有迁移"处理，不伪造结论');

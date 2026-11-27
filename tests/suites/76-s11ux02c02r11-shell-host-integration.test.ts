@@ -306,11 +306,16 @@ test('集成：DIRTY 草稿在刷新/重开后不丢，且继续阻止结构变�
     assert.equal(report.updated, 0, '有草稿的标签不得被自动覆盖');
     assert.deepEqual(report.dirtyChanged, ['docs/notes.md']);
 
-    // 结构变更必须仍被拦（脏会话 + 活动 View）
+    // 结构变更必须仍被拦（脏会话 + 活动 View）。锚要先取到，否则这条断言
+    // 会被更早的"缺身份预期"挡在 400，测不到屏障本身。
+    const treePage = await h.api(`/api/tree?projectId=${PROJ_A}&dir=docs`);
+    const anchor = (treePage.body as { anchors?: Record<string, string> }).anchors?.['docs/notes.md'];
+    assert.equal(typeof anchor, 'string', '夹具取不到锚');
     const renamed = await h.post('/api/files/rename', {
       projectId: PROJ_A,
       sourcePath: 'docs/notes.md',
       name: 'blocked.md',
+      sourceAnchor: anchor,
     });
     assert.equal(renamed.status, 409, JSON.stringify(renamed.body));
     assert.equal(existsSync(join(h.rootA, 'docs', 'notes.md')), true);

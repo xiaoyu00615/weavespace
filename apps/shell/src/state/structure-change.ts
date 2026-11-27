@@ -199,19 +199,50 @@ export function structureChangeNotice(outcome: {
 }
 
 export interface StructureRunnerHost {
-  rename(projectId: string, sourcePath: string, name: string): Promise<StructureChangeOutcome>;
+  rename(
+    projectId: string,
+    sourcePath: string,
+    name: string,
+    sourceAnchor: string,
+  ): Promise<StructureChangeOutcome>;
   move(
     projectId: string,
     sourcePath: string,
     targetParentDir: string,
     name: string,
+    sourceAnchor: string,
   ): Promise<StructureChangeOutcome>;
   /** Shell 本地草稿阻断；先于任何请求。 */
   localBlockers(projectId: string, sourcePath: string, entryKind: StructureEntryKind): string[];
+  /**
+   * 提交前的身份核验（UX-02C-02-R2）：当前这一行还是不是打开意图时那个对象。
+   *
+   * 返回 `null` 才能发请求；返回文案表示本地直接拒绝（零请求）。
+   * 它**不替代** Host 的核验：权威判据始终在 Host（客户端只看自己看到的树）。
+   */
+  verifySource(input: {
+    readonly projectId: string;
+    readonly sourcePath: string;
+    readonly entryKind: StructureEntryKind;
+  }): string | null;
   /** UNKNOWN 时恰好一次的只读核对：只刷新源父层与目标父层，不重发、不改草稿。 */
   checkLocations(projectId: string, sourceParentDir: string, targetParentDir: string): Promise<void>;
   /** 只有 Host 明确 APPLIED 才调用：更新层表、作废旧路径、必要时展开目标。 */
   onApplied(outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>): void;
+  /**
+   * Host 明确 REJECTED 时调用（UX-02C-02-R2）。
+   *
+   * 拒绝**不只是"命令没被执行"**：`ERR_ENTRY_SOURCE_CHANGED` / `ERR_RESOURCE_NOT_FOUND`
+   * 同时是一条事实——这个路径上的对象已经不是我们缓存里那一个了。调用方据此把
+   * 源所在的**那一层**判为过期并重取，否则旧锚会一直挂在这一行上，用户无论
+   * 重试多少次都会被同一个旧锚挡住。
+   *
+   * 只在拒绝时上报，不做任何磁盘动作；是否重取由 Shell 决定。
+   */
+  onRejected?(
+    outcome: Extract<StructureChangeOutcome, { status: 'REJECTED' }>,
+    target: { readonly projectId: string; readonly sourcePath: string },
+  ): void;
   onNotice(message: string): void;
 }
 
@@ -222,6 +253,14 @@ export interface StructureSubmitInput {
   readonly targetParentDir: string;
   readonly targetName: string;
   readonly entryKind: StructureEntryKind;
+  /**
+   * 打开意图时冻结的资源锚（UX-02C-02-R2）。
+   *
+   * **必填**：`''` 表示没有身份预期 → 本地直接拒绝，不发请求。
+   * 声明为必填而不是可选，是为了让"漏传"变成编译错误而不是一次静默的
+   * 无锚路径操作（与 `restoreTrash` 的 `gate` 同一处理）。
+   */
+  readonly sourceAnchor: string;
 }
 
 export type StructureRunResult = 'applied' | 'rejected' | 'unknown' | 'busy' | 'blocked';
@@ -250,6 +289,9 @@ export interface StructureRunner {
 const UNKNOWN_NOTICE =
   '结构变更结果未确认：已只读刷新源位置与目标位置，请人工核对（不会自动重试、不会自行回滚）';
 
+/** 没有身份预期就不发请求（与 Host 的 `ERR_STRUCTURE_INTENT_MISSING` 同义，只是更早）。 */
+const MISSING_INTENT_NOTICE = '缺少源文件的身份信息：请刷新文件树后重新发起操作';
+
 /**
  * 一次装配 = 一把单飞锁。菜单、行内改名、移动确认框都走这里，不实现第二套逻辑。
  */
@@ -276,16 +318,36 @@ export function createStructureRunner(host: StructureRunnerHost): StructureRunne
           host.onNotice(checked.reason);
           return 'rejected';
         }
+        /**
+         * 身份预期（UX-02C-02-R2）：先确认"要改的是哪个对象"，再谈怎么改。
+         *
+         * 两道都在**发请求之前**：没有锚、或当前这一行已经不是那个对象，
+         * 一个字节都不发出去。Host 侧仍会独立核验（这里只是尽早给原因）。
+         */
+        if (typeof input.sourceAnchor !== 'string' || input.sourceAnchor === '') {
+          host.onNotice(MISSING_INTENT_NOTICE);
+          return 'rejected';
+        }
+        const intentProblem = host.verifySource({
+          projectId: input.projectId,
+          sourcePath: input.sourcePath,
+          entryKind: input.entryKind,
+        });
+        if (intentProblem) {
+          host.onNotice(intentProblem);
+          return 'rejected';
+        }
         let outcome: StructureChangeOutcome;
         try {
           outcome =
             input.kind === 'rename'
-              ? await host.rename(input.projectId, input.sourcePath, input.targetName)
+              ? await host.rename(input.projectId, input.sourcePath, input.targetName, input.sourceAnchor)
               : await host.move(
                   input.projectId,
                   input.sourcePath,
                   input.targetParentDir,
                   input.targetName,
+                  input.sourceAnchor,
                 );
         } catch {
           // 传输层抛出：磁盘可能已经变了，只能 UNKNOWN，绝不重发
@@ -306,6 +368,7 @@ export function createStructureRunner(host: StructureRunnerHost): StructureRunne
           host.onNotice(UNKNOWN_NOTICE);
           return 'unknown';
         }
+        host.onRejected?.(outcome, { projectId: input.projectId, sourcePath: input.sourcePath });
         host.onNotice(outcome.message || '改名或移动失败');
         return 'rejected';
       } finally {

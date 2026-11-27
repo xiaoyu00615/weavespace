@@ -984,13 +984,29 @@ export interface WeaveSpaceClient {
   /** 只读核对某个 opId 的真实结果。 */
   queryTrashOp(projectId: string, opId: string): Promise<TrashOpQueryOutcome>;
 
-  renameEntry(projectId: string, sourcePath: string, name: string): Promise<StructureChangeOutcome>;
-  /** 同一授权项目内移动：只提交项目内相对目录 + 单段名称。 */
+  /**
+   * 真实改名 / 移动（UX-02C-02）。
+   *
+   * `sourceAnchor` 是**必填**的身份预期（UX-02C-02-R2）：打开改名输入行 /
+   * 移动对话框时从那一行捕获的资源锚，原样回传。Host 会用自己读到的身份重算
+   * 锚再比对，因此它既不是授权凭据，也不能被客户端伪造成功。
+   *
+   * 必填而不是可选：可选参数会让"漏传"变成一次静默的无锚路径操作，
+   * 而 R2 要消灭的正是这个旁路。
+   */
+  renameEntry(
+    projectId: string,
+    sourcePath: string,
+    name: string,
+    sourceAnchor: string,
+  ): Promise<StructureChangeOutcome>;
+  /** 同一授权项目内移动：只提交项目内相对目录 + 单段名称 + 源身份预期。 */
   moveEntry(
     projectId: string,
     sourcePath: string,
     targetParentDir: string,
     name: string,
+    sourceAnchor: string,
   ): Promise<StructureChangeOutcome>;
 }
 
@@ -1886,18 +1902,18 @@ export function createLiveClient(baseUrl = ''): WeaveSpaceClient {
       };
     },
 
-    async renameEntry(projectId, sourcePath, name) {
+    async renameEntry(projectId, sourcePath, name, sourceAnchor) {
       return postStructureChange(
         '/api/files/rename',
-        { projectId, sourcePath, name },
+        { projectId, sourcePath, name, sourceAnchor },
         { projectId, sourcePath, targetParentDir: '', targetName: name },
       );
     },
 
-    async moveEntry(projectId, sourcePath, targetParentDir, name) {
+    async moveEntry(projectId, sourcePath, targetParentDir, name, sourceAnchor) {
       return postStructureChange(
         '/api/files/move',
-        { projectId, sourcePath, targetParentDir, name },
+        { projectId, sourcePath, targetParentDir, name, sourceAnchor },
         { projectId, sourcePath, targetParentDir, targetName: name },
       );
     },

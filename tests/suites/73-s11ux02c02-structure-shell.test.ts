@@ -46,6 +46,8 @@ const baseSubmit = (over: Partial<StructureSubmitInput> = {}): StructureSubmitIn
   targetParentDir: 'docs',
   targetName: '数学笔记.md',
   entryKind: 'file',
+  // 结构变更必须带源身份预期（UX-02C-02-R2）；这里是纯编排层，锚只需形状合法。
+  sourceAnchor: '0123456789abcdef0123456789abcdef',
   ...over,
 });
 
@@ -149,6 +151,10 @@ test('本地标签/草稿阻断（含 Host 重启后的脱节场景），只判�
 function harness(outcome: StructureChangeOutcome | (() => never), opts: { blocked?: string[] } = {}) {
   const calls: string[] = [];
   const notices: string[] = [];
+  /** 提交前的身份核验记录：证明它发生在发请求之前，且阻断时一次都不发生。 */
+  const verifications: string[] = [];
+  /** 拒绝上报记录（UX-02C-02-R2）：Shell 据此把源所在的层判为过期。 */
+  const rejections: Array<{ errorCode: string | null; projectId: string; sourcePath: string }> = [];
   const runner = createStructureRunner({
     rename: async () => {
       calls.push('rename');
@@ -161,19 +167,33 @@ function harness(outcome: StructureChangeOutcome | (() => never), opts: { blocke
       return outcome;
     },
     localBlockers: () => opts.blocked ?? [],
+    // 提交前的最后一次身份核验：`null` 表示"还是那个对象"，可以发请求。
+    verifySource: (target) => {
+      verifications.push(`${target.projectId}:${target.sourcePath}:${target.entryKind}`);
+      return null;
+    },
+    onRejected: (outcome, target) => {
+      rejections.push({
+        errorCode: outcome.errorCode,
+        projectId: target.projectId,
+        sourcePath: target.sourcePath,
+      });
+    },
     checkLocations: async (pid, src, dst) => {
       calls.push(`check:${pid}:${src}:${dst}`);
     },
     onApplied: (value) => calls.push(`applied:${value.targetPath}`),
     onNotice: (message) => notices.push(message),
   });
-  return { runner, calls, notices };
+  return { runner, calls, notices, verifications, rejections };
 }
 
 test('只有 Host 明确 APPLIED 才刷新层表；失败保留输入不刷新', async () => {
   const h = harness(applied());
   assert.equal(await h.runner.submit(baseSubmit()), 'applied');
   assert.deepEqual(h.calls, ['rename', 'applied:docs/数学笔记.md']);
+  assert.deepEqual(h.verifications, ['project-a:docs/notes.md:file'], '发请求前核验过一次身份');
+  assert.deepEqual(h.rejections, [], '成功不触发拒绝上报');
 
   const rejected = harness({
     status: 'REJECTED',
@@ -184,6 +204,68 @@ test('只有 Host 明确 APPLIED 才刷新层表；失败保留输入不刷新',
   assert.equal(await rejected.runner.submit(baseSubmit()), 'rejected');
   assert.deepEqual(rejected.calls, ['rename']);
   assert.match(rejected.notices[0] ?? '', /同名冲突/);
+});
+
+test('拒绝上报：源对象变了/不在了才上报，Shell 据此只重取源父层（UX-02C-02-R2）', async () => {
+  /*
+   * 为什么需要这条上报：`ERR_ENTRY_SOURCE_CHANGED` 是一条磁盘事实——层表里那一行
+   * 还挂着替换前的锚。工具栏的「刷新当前目录」只重取项目根层，嵌套文件的旧锚
+   * 没有任何界面途径能刷掉，用户重试多少次都会被同一个旧锚挡住。
+   */
+  const changed = harness({
+    status: 'REJECTED',
+    errorCode: 'ERR_ENTRY_SOURCE_CHANGED',
+    message: '该路径上的文件已被外部替换，未执行任何移动',
+    httpStatus: 409,
+  });
+  assert.equal(await changed.runner.submit(baseSubmit()), 'rejected');
+  assert.deepEqual(changed.rejections, [
+    { errorCode: 'ERR_ENTRY_SOURCE_CHANGED', projectId: 'project-a', sourcePath: 'docs/notes.md' },
+  ]);
+
+  const vanished = harness({
+    status: 'REJECTED',
+    errorCode: 'ERR_RESOURCE_NOT_FOUND',
+    message: '源文件已经不存在',
+    httpStatus: 404,
+  });
+  assert.equal(await vanished.runner.submit(baseSubmit()), 'rejected');
+  assert.deepEqual(
+    vanished.rejections.map((item) => item.errorCode),
+    ['ERR_RESOURCE_NOT_FOUND'],
+  );
+
+  // 同名冲突这类拒绝不代表"对象变了"：照样上报，由 Shell 自己决定要不要重取。
+  const exists = harness({
+    status: 'REJECTED',
+    errorCode: 'ERR_ENTRY_EXISTS',
+    message: '目标已存在',
+    httpStatus: 409,
+  });
+  assert.equal(await exists.runner.submit(baseSubmit()), 'rejected');
+  assert.deepEqual(
+    exists.rejections.map((item) => item.errorCode),
+    ['ERR_ENTRY_EXISTS'],
+    '上报只陈述事实，不替调用方做决定',
+  );
+
+  // 本地阻断、缺锚、UNKNOWN 都不算"Host 明确拒绝"，一次都不上报。
+  const blocked = harness(applied(), { blocked: ['DIRTY'] });
+  assert.equal(await blocked.runner.submit(baseSubmit()), 'blocked');
+  assert.deepEqual(blocked.rejections, []);
+
+  const unknown = harness({
+    status: 'UNKNOWN',
+    errorCode: 'ERR_OUTCOME_UNKNOWN',
+    message: '不确定',
+    httpStatus: 0,
+    projectId: 'project-a',
+    sourcePath: 'docs/notes.md',
+    targetParentDir: 'docs',
+    targetName: '数学笔记.md',
+  });
+  assert.equal(await unknown.runner.submit(baseSubmit()), 'unknown');
+  assert.deepEqual(unknown.rejections, [], 'UNKNOWN 不能当作"已经变了"，只做只读核对');
 });
 
 test('网络断开 / UNKNOWN：恰好一次只读核对，绝不重发、不据目标存在推断成功', async () => {
@@ -213,6 +295,7 @@ test('本地阻断 / 非法目标：零请求；并发提交只有一个真正�
   const blocked = harness(applied(), { blocked: ['ACTIVE_VIEWS', 'DIRTY'] });
   assert.equal(await blocked.runner.submit(baseSubmit()), 'blocked');
   assert.deepEqual(blocked.calls, []);
+  assert.deepEqual(blocked.verifications, [], '本地阻断比身份核验更早，一次都不做');
   assert.match(blocked.notices[0] ?? '', /打开的编辑标签/);
 
   const invalid = harness(applied());
@@ -293,6 +376,6 @@ test('invalidateLevel 使旧路径的迟到响应失效', () => {
 
 test('Demo 客户端明确不支持真实改名/移动', async () => {
   const demo = createDemoClient([], {});
-  assert.equal((await demo.renameEntry('p', 'a.md', 'b.md')).status, 'REJECTED');
-  assert.equal((await demo.moveEntry('p', 'a.md', '', 'a.md')).status, 'REJECTED');
+  assert.equal((await demo.renameEntry('p', 'a.md', 'b.md', '0123456789abcdef0123456789abcdef')).status, 'REJECTED');
+  assert.equal((await demo.moveEntry('p', 'a.md', '', 'a.md', '0123456789abcdef0123456789abcdef')).status, 'REJECTED');
 });
