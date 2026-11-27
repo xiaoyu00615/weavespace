@@ -1,0 +1,133 @@
+{
+  "run": "ux-02c-05-r1-hardening",
+  "at": "2026-11-27T12:08:31.971Z",
+  "checks": {
+    "R0-01 fixture 就绪（两个真实项目 / 零隐藏 / 零回收 / 零元数据）": true,
+    "P-01 找到 dir/inner.md 的名称文字": true,
+    "P-02 浏览器真的产生了 click(detail=1) → click(detail=2) → dblclick": true,
+    "P-03 两次点击之间是**真实间隔**（≥250ms），不是连发的合成事件": true,
+    "P-04 间隔 300ms 的双击进入改名": true,
+    "P-05 双击没有先把文件打开（.tree__row--opened 仍为 false）": true,
+    "P-06 Escape 收起改名，零写入": true,
+    "Q-01 间隔 450ms 的双击也只改名，不打开文件": true,
+    "Q-02 间隔 450ms 的双击进入改名": true,
+    "R-01 找到 note.md 的名称文字": true,
+    "R-02 开始前 note.md 未被打开": true,
+    "R-03 期间确实刷新了真实目录（拿到了新锚）": true,
+    "R-04 在途单击没有把（已被替换的）文件打开": true,
+    "R-05 也没有误开改名输入行": true,
+    "S-01 单击（间隔足够）照常打开文件": true,
+    "S-02 单击不会误开改名输入行": true,
+    "U-01 找到项目A的铅笔按钮": true,
+    "U-02 项目A进入显示名编辑": true,
+    "U-03 找到项目B的根行名称": true,
+    "U-04 切换当前项目后旧编辑会话已收起": true,
+    "U-05 会话收起后没有发出任何 projects/rename（不自动提交、不自动重试）": true
+  },
+  "detail": {
+    "R0-01 fixture 就绪（两个真实项目 / 零隐藏 / 零回收 / 零元数据）": [
+      "项目A",
+      "项目B"
+    ],
+    "P-01 找到 dir/inner.md 的名称文字": {
+      "x": 280,
+      "y": 122.75
+    },
+    "P-02 浏览器真的产生了 click(detail=1) → click(detail=2) → dblclick": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "inner.md",
+        "at": 3420
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "inner.md",
+        "at": 3730
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "inner.md",
+        "at": 3731
+      }
+    ],
+    "P-03 两次点击之间是**真实间隔**（≥250ms），不是连发的合成事件": 310,
+    "R-01 找到 note.md 的名称文字": {
+      "x": 262,
+      "y": 148.25
+    },
+    "R-03 期间确实刷新了真实目录（拿到了新锚）": {
+      "before": 0,
+      "after": 1
+    },
+    "R-04 在途单击没有把（已被替换的）文件打开": "tree__row tree__row--file",
+    "U-01 找到项目A的铅笔按钮": {
+      "x": 396,
+      "y": 71.75
+    },
+    "U-03 找到项目B的根行名称": {
+      "x": 244,
+      "y": 264.125
+    },
+    "U-05 会话收起后没有发出任何 projects/rename（不自动提交、不自动重试）": 0
+  },
+  "facts": {
+    "clickSequence300": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "inner.md",
+        "at": 3420
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "inner.md",
+        "at": 3730
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "inner.md",
+        "at": 3731
+      }
+    ],
+    "gap300ms": 310,
+    "clickSequence450": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "inner.md",
+        "at": 5212
+      },
+      {
+        "type": "click",
+        "detail": 2,
+        "name": "inner.md",
+        "at": 5679
+      },
+      {
+        "type": "dblclick",
+        "detail": 2,
+        "name": "inner.md",
+        "at": 5679
+      }
+    ],
+    "gap450ms": 467,
+    "clickSequenceReplace": [
+      {
+        "type": "click",
+        "detail": 1,
+        "name": "note.md",
+        "at": 7221
+      }
+    ]
+  },
+  "summary": {
+    "total": 21,
+    "passed": 21,
+    "failed": []
+  }
+}

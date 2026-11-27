@@ -1,0 +1,106 @@
+{
+  "at": "2026-11-27T12:01:42.836Z",
+  "suite": "tests/suites/107-s11ux02c05r1-tree-hardening.test.ts",
+  "results": [
+    {
+      "id": "C05R1-M1",
+      "desc": "双击窗口退回 200ms（普通用户 300–450ms 的连击会被当成单击，先打开再改名）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "mutatedSha256": "6a6e96a7203740ab28fa8237925cf468908c41931f3c794423928acd8046f2b5",
+      "sourceChanged": true,
+      "restoredSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "W01 双击窗口默认 500ms（200ms 不足以覆盖真实双击间隔）",
+        "W02 单击后 200ms 不得提前激活（旧窗口会在这一刻把文件打开）",
+        "W03 间隔 250ms 的双击：只改名，一次都不激活",
+        "W04 间隔 350ms 的双击：只改名",
+        "W05 间隔 450ms 的双击：只改名（旧 200ms 窗口早就先打开了文件）",
+        "W07 双击之后不残留定时器（不会在 500ms 后再打开一次）",
+        "J05 正常双击（同一身份）：只改名，不打开"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R1-M2",
+      "desc": "定时器到点不再核对资源身份（对象被替换后，旧点击照样打开新对象）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "mutatedSha256": "9597b140621f5428bf8a7d9988c64676405e7e677fe4b681eace9d2f02ce5be3",
+      "sourceChanged": true,
+      "restoredSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "J01 单击后资源锚变了：定时器不得打开\"新的那个对象\"",
+        "J03 项目身份变化：旧的单击与双击意图都失效",
+        "J04 工作区身份变化：旧的仲裁意图不得执行",
+        "J07 身份不可确认（currentIdentity 为 null）：fail-closed，不打开也不改名"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R1-M3",
+      "desc": "双击第二下不核对\"是否同一个资源\"（第一次点击后换了文件，第二次照样改名）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "mutatedSha256": "95cf3f071e8d290977c9d56d4a915ca5f48a22fa33c46d9090f0045a4e472e1e",
+      "sourceChanged": true,
+      "restoredSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "J02 第一次点击后同路径文件被替换：第二次点击不得对新文件改名"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R1-M4",
+      "desc": "锚缺失重新改为放行（\"无法确认\"被当成\"身份一致\"）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "mutatedSha256": "845b3015b7dbed95cabd9a7fb3f3e4b24ff10520af6093aa1707a78152634389",
+      "sourceChanged": true,
+      "restoredSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "G06 原目标有锚、当前锚拿不到：拒绝（不得把\"无法确认\"当成\"身份一致\"）",
+        "G10 空串锚也算\"无法确认\"：原目标有锚时同样拒绝"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R1-M5",
+      "desc": "会话归属不再比对工作区（旧世界的草稿可以提交到新世界）",
+      "file": "apps/shell/src/state/tree-commands.ts",
+      "baselineSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "mutatedSha256": "947415146233c7cf34a09566dfae3e9793e68c069f946074ae53a9c41f1a5415",
+      "sourceChanged": true,
+      "restoredSha256": "eda59dc83e9f0e6b91597329630491f5437cc7c7a6b687e52d82766ae5bda288",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "S02 工作区 / 模式变化：旧会话不得在新世界里提交"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C05R1-M6",
+      "desc": "组件算完归属却不拿结论挡住提交（复核退化成一次无用计算）",
+      "file": "apps/shell/src/components/TreeCommandsContext.tsx",
+      "baselineSha256": "6c4a82ba0d38ef56f9ae93a031fc9a0b591640eaeb507e537be94c754d210fca",
+      "mutatedSha256": "e1856de0a4a290e04a65f8b23062c183482ab5a5d204b8664c563b36ee1ef334",
+      "sourceChanged": true,
+      "restoredSha256": "6c4a82ba0d38ef56f9ae93a031fc9a0b591640eaeb507e537be94c754d210fca",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "M02 项目改名提交前复核会话归属，提交后按会话核对结果"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

@@ -16,7 +16,12 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { FocusEvent, MouseEvent, ReactNode } from 'react';
 import type { ResourceNodeState } from '../state/types';
 import { colorRowClassOf, tagBadges } from '../state/resource-metadata';
-import { createActivationArbiter, NAME_DOUBLE_CLICK_WINDOW } from '../state/tree-commands';
+import {
+  activationIdentityKey,
+  createActivationArbiter,
+  NAME_DOUBLE_CLICK_WINDOW,
+  type ActivationIdentity,
+} from '../state/tree-commands';
 import { ancestorGuides, type TreeTrails } from './tree-trails';
 
 /** 每一级的缩进步长（px）。行内计算与 CSS 都必须用这个值。 */
@@ -183,6 +188,14 @@ export interface TreeRowProps {
    * 详见 `tree-commands.ts::createActivationArbiter`。
    */
   onRenameRequest?(): void;
+  /**
+   * 这一行的资源身份（工作区 + 项目 + 路径 + 资源锚）。
+   *
+   * 双击改名必须绑定它：同路径的文件被替换时 React 会复用组件实例，
+   * 只有身份能让在途的点击发现"对象已经换了"（UX-02C-05-R1）。
+   * 不传表示这一行没有可绑定的身份，单击立即激活、不装配仲裁器。
+   */
+  activationIdentity?: ActivationIdentity;
   /** 焦点进入本行：F2 / Shift+F10 以"当前焦点行"为操作对象。 */
   onFocus?(event: FocusEvent<HTMLButtonElement>): void;
   /** 展开后的子层（渲染在同一个 `<li>` 内，保证语义与缩进引导线连续）。 */
@@ -209,6 +222,7 @@ export function TreeRow({
   onActivate,
   onContextMenu,
   onRenameRequest,
+  activationIdentity,
   onFocus,
   children,
 }: TreeRowProps) {
@@ -216,14 +230,20 @@ export function TreeRow({
   const isLink = node.kind === 'link';
 
   /**
-   * 单击 / 双击仲裁（UX-02C-05）。
+   * 单击 / 双击仲裁（UX-02C-05 / R1）。
    *
-   * 回调放进 ref：仲裁器只在"是否提供双击改名"变化时重建，永远调用最新一次渲染
-   * 的 `onActivate` / `onRenameRequest`，不会拿着上一次的 projectId 去操作。
+   * 回调放进 ref：仲裁器只在"是否提供双击改名 + 这一行是谁"变化时重建，
+   * 因此不会拿着上一次渲染的 `onActivate` 去操作另一个项目。
+   *
+   * R1 起**不再只靠 ref 取最新回调**：每次点击都把发起时的
+   * `activationIdentity` 交给仲裁器，定时器到点与双击落槌前各核一次身份。
+   * 同路径文件被替换（锚变）、切了项目/工作区、或身份无法确认时，
+   * 这一下什么都不做——旧点击绝不会被重新绑定到新对象上。
    */
-  const latest = useRef({ onActivate, onRenameRequest });
-  latest.current = { onActivate, onRenameRequest };
-  const renameable = typeof onRenameRequest === 'function';
+  const latest = useRef({ onActivate, onRenameRequest, identity: activationIdentity });
+  latest.current = { onActivate, onRenameRequest, identity: activationIdentity };
+  const renameable = typeof onRenameRequest === 'function' && activationIdentity !== undefined;
+  const identityKey = activationIdentityKey(activationIdentity);
   const arbiter = useMemo(
     () =>
       renameable
@@ -231,13 +251,16 @@ export function TreeRow({
             delay: NAME_DOUBLE_CLICK_WINDOW,
             setTimer: (fn, delay) => window.setTimeout(fn, delay),
             clearTimer: (handle) => window.clearTimeout(handle as number),
+            currentIdentity: () => latest.current.identity ?? null,
             onSingle: () => latest.current.onActivate(),
             onDouble: () => latest.current.onRenameRequest?.(),
           })
         : null,
-    [renameable],
+    // 身份变化 = 这一行已经不是刚才那个对象：重建仲裁器，旧实例的在途单击由
+    // 下面的清理函数取消（结构上的作废 + 运行时的身份核对，两道都在）
+    [renameable, identityKey],
   );
-  // 卸载时撤掉在途的单击：组件已经不在，绝不能再触发一次"打开"
+  // 卸载 / 身份变化时撤掉在途的单击：绝不能再触发一次"打开"
   useEffect(() => () => arbiter?.cancel(), [arbiter]);
 
   /** 只有名称（含标注名）区域参与双击改名；图标与行内空白保持"点了就动"。 */
@@ -300,15 +323,17 @@ export function TreeRow({
           aria-expanded={isFolder ? expanded : undefined}
           title={rowTitle}
           onClick={(event) => {
-            if (!arbiter || !onNameArea(event.target)) {
+            const identity = latest.current.identity;
+            if (!arbiter || identity === undefined || !onNameArea(event.target)) {
               onActivate();
               return;
             }
-            arbiter.click(event.detail);
+            arbiter.click(event.detail, identity);
           }}
           onDoubleClick={(event) => {
-            if (!arbiter || !onNameArea(event.target)) return;
-            arbiter.doubleClick();
+            const identity = latest.current.identity;
+            if (!arbiter || identity === undefined || !onNameArea(event.target)) return;
+            arbiter.doubleClick(identity);
           }}
           onFocus={onFocus}
           onContextMenu={onContextMenu}

@@ -17,6 +17,7 @@ import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useQuickFile } from '../state/QuickFileContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
 import { makeDocId } from '../state/doc-identity.ts';
+import { activationIdentityOf } from '../state/tree-commands.ts';
 import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
 import { InlineCreateSlot, InlineRenameSlot } from './InlineCreateRow.tsx';
 import { useTreeCommands } from './TreeCommandsContext.tsx';
@@ -182,6 +183,17 @@ function TreeItem({
         onFocus={(event) => commands.noteFocus(target, event.currentTarget)}
         // 双击名称改名只在有真实项目身份时提供（Demo / Legacy 没有可写的项目配置）
         {...(projectId ? { onRenameRequest: () => commands.beginRename(target) } : {})}
+        // 身份的锚必须跟着这一行走（UX-02C-05-R1）：同路径目录被替换时不许"接着改名"
+        {...(projectId
+          ? {
+              activationIdentity: activationIdentityOf({
+                workspaceKey: state.workspaceKey,
+                projectId,
+                path: dir,
+                anchor: node.anchor ?? null,
+              }),
+            }
+          : {})}
         onActivate={() => {
           const willExpand = !expanded;
           toggle();
@@ -270,6 +282,17 @@ function TreeItem({
       onContextMenu={(event) => commands.openContextMenu(event, fileTarget)}
       onFocus={(event) => commands.noteFocus(fileTarget, event.currentTarget)}
       {...(projectId ? { onRenameRequest: () => commands.beginRename(fileTarget) } : {})}
+      // 同路径文件被替换（锚变）时，在途点击必须作废，不得给新文件改名
+      {...(projectId
+        ? {
+            activationIdentity: activationIdentityOf({
+              workspaceKey: state.workspaceKey,
+              projectId,
+              path: node.path ?? node.name,
+              anchor: node.anchor ?? null,
+            }),
+          }
+        : {})}
       onActivate={() => {
         // 契约 B.1：不支持预览的文件仍是普通文件节点，但点击**不得**进入文本编辑器。
         // 能力注册表就绪时先问一次；未就绪时沿用既有打开链路，避免启动瞬间全部被挡。

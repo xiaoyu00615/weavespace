@@ -351,12 +351,25 @@ function fakeClock() {
   };
 }
 
+/**
+ * UX-02C-05-R1：仲裁器现在绑定**资源身份**（工作区 + 项目 + 路径 + 资源锚），
+ * 这里补一个固定身份，D 组原有断言一条没有放宽——只是把"这一行是谁"，
+ * 显式写出来（旧实现里它隐含在组件实例里）。
+ */
+const ROW_IDENTITY = {
+  workspaceKey: 'ws-1',
+  projectId: 'p1',
+  path: 'note.md',
+  anchor: 'anchor-a1',
+} as const;
+
 function arbiterWith(clock: ReturnType<typeof fakeClock>) {
   const calls = { single: 0, double: 0 };
   const arbiter = createActivationArbiter({
     delay: NAME_DOUBLE_CLICK_WINDOW,
     setTimer: (fn, delay) => clock.setTimer(fn, delay),
     clearTimer: (handle) => clock.clearTimer(handle),
+    currentIdentity: () => ROW_IDENTITY,
     onSingle: () => {
       calls.single += 1;
     },
@@ -370,7 +383,7 @@ function arbiterWith(clock: ReturnType<typeof fakeClock>) {
 test('D01 名称上单击一次：延迟窗口结束后恰好激活一次', () => {
   const clock = fakeClock();
   const { arbiter, calls } = arbiterWith(clock);
-  arbiter.click(1);
+  arbiter.click(1, ROW_IDENTITY);
   assert.deepEqual(calls, { single: 0, double: 0 }, '窗口内先不激活，等第二下');
   assert.equal(arbiter.isPending(), true);
   clock.advance(NAME_DOUBLE_CLICK_WINDOW);
@@ -383,9 +396,9 @@ test('D01 名称上单击一次：延迟窗口结束后恰好激活一次', () =
 test('D02 双击：零激活 + 一次改名（文件不会被"先打开"而把自己挡住）', () => {
   const clock = fakeClock();
   const { arbiter, calls } = arbiterWith(clock);
-  arbiter.click(1);
-  arbiter.click(2);
-  arbiter.doubleClick();
+  arbiter.click(1, ROW_IDENTITY);
+  arbiter.click(2, ROW_IDENTITY);
+  arbiter.doubleClick(ROW_IDENTITY);
   assert.deepEqual(calls, { single: 0, double: 1 });
   clock.advance(5000);
   assert.deepEqual(calls, { single: 0, double: 1 }, '在途单击必须已被取消');
@@ -394,7 +407,7 @@ test('D02 双击：零激活 + 一次改名（文件不会被"先打开"而把�
 test('D03 键盘触发的 click（detail=0）立即激活，不进入窗口', () => {
   const clock = fakeClock();
   const { arbiter, calls } = arbiterWith(clock);
-  arbiter.click(0);
+  arbiter.click(0, ROW_IDENTITY);
   assert.deepEqual(calls, { single: 1, double: 0 });
   assert.equal(clock.count(), 0, '键盘激活不排定时器');
 });
@@ -402,10 +415,10 @@ test('D03 键盘触发的 click（detail=0）立即激活，不进入窗口', ()
 test('D04 一次双击之后仲裁器仍可正常使用（不残留状态）', () => {
   const clock = fakeClock();
   const { arbiter, calls } = arbiterWith(clock);
-  arbiter.click(1);
-  arbiter.click(2);
-  arbiter.doubleClick();
-  arbiter.click(1);
+  arbiter.click(1, ROW_IDENTITY);
+  arbiter.click(2, ROW_IDENTITY);
+  arbiter.doubleClick(ROW_IDENTITY);
+  arbiter.click(1, ROW_IDENTITY);
   clock.advance(NAME_DOUBLE_CLICK_WINDOW);
   assert.deepEqual(calls, { single: 1, double: 1 });
 });
@@ -413,7 +426,7 @@ test('D04 一次双击之后仲裁器仍可正常使用（不残留状态）', (
 test('D05 取消（关闭菜单 / 卸载）后不再有延迟激活', () => {
   const clock = fakeClock();
   const { arbiter, calls } = arbiterWith(clock);
-  arbiter.click(1);
+  arbiter.click(1, ROW_IDENTITY);
   arbiter.cancel();
   clock.advance(5000);
   assert.deepEqual(calls, { single: 0, double: 0 });
@@ -423,10 +436,10 @@ test('D05 取消（关闭菜单 / 卸载）后不再有延迟激活', () => {
 test('D06 连续两次"双击"不会顺带激活（重复确认也不产生第二次副作用）', () => {
   const clock = fakeClock();
   const { arbiter, calls } = arbiterWith(clock);
-  arbiter.click(2);
-  arbiter.doubleClick();
-  arbiter.click(2);
-  arbiter.doubleClick();
+  arbiter.click(2, ROW_IDENTITY);
+  arbiter.doubleClick(ROW_IDENTITY);
+  arbiter.click(2, ROW_IDENTITY);
+  arbiter.doubleClick(ROW_IDENTITY);
   clock.advance(5000);
   assert.deepEqual(calls, { single: 0, double: 2 }, '每次手势各一次，绝不额外触发单击');
 });

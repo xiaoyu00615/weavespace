@@ -17,6 +17,7 @@ import type { ProjectSummary } from '../client/client-api.ts';
 import type { ResourceNodeState } from '../state/types.ts';
 import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
 import { useWorkspace } from '../state/WorkspaceContext.tsx';
+import { activationIdentityOf } from '../state/tree-commands.ts';
 import { AddProjectEntry } from './AddProjectEntry.tsx';
 import { InlineCreateSlot } from './InlineCreateRow.tsx';
 import { RemoveProjectEntry } from './RemoveProjectEntry.tsx';
@@ -91,6 +92,13 @@ function ProjectRoot({
       onFocus={(event) => commands.noteFocus(rootTarget, event.currentTarget)}
       // 双击项目根名称：只改**显示名称**，不改磁盘目录名，也不改标注名
       onRenameRequest={() => commands.beginProjectRename(projectId)}
+      // 身份锚 = 根令牌（projectAnchor）：项目根被替换后旧点击不得继续
+      activationIdentity={activationIdentityOf({
+        workspaceKey: state.workspaceKey,
+        projectId,
+        path: '',
+        anchor: rootLevel?.projectAnchor ?? null,
+      })}
       onActivate={() => {
         // 切换当前项目只改焦点：不清标签、不动草稿、不影响其它项目（G2-05/G2-07）
         if (!active) void actions.switchProject(projectId);

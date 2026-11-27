@@ -1,0 +1,2124 @@
+TAP version 13
+# Subtest: W01 双击窗口默认 500ms（200ms 不足以覆盖真实双击间隔）
+not ok 1 - W01 双击窗口默认 500ms（200ms 不足以覆盖真实双击间隔）
+  ---
+  duration_ms: 6.2348
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:115:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    200 !== 500
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 500
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:116:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: W02 单击后 200ms 不得提前激活（旧窗口会在这一刻把文件打开）
+not ok 2 - W02 单击后 200ms 不得提前激活（旧窗口会在这一刻把文件打开）
+  ---
+  duration_ms: 0.6746
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:119:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    200ms 时第二下可能还在路上
+
+    1 !== 0
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:124:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: W03 间隔 250ms 的双击：只改名，一次都不激活
+not ok 3 - W03 间隔 250ms 的双击：只改名，一次都不激活
+  ---
+  duration_ms: 1.8579
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:130:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        double: 1,
+    +   single: 1
+    -   single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 1
+  actual:
+    single: 1
+    double: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:138:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: W04 间隔 350ms 的双击：只改名
+not ok 4 - W04 间隔 350ms 的双击：只改名
+  ---
+  duration_ms: 0.4639
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:141:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        double: 1,
+    +   single: 1
+    -   single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 1
+  actual:
+    single: 1
+    double: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:149:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: W05 间隔 450ms 的双击：只改名（旧 200ms 窗口早就先打开了文件）
+not ok 5 - W05 间隔 450ms 的双击：只改名（旧 200ms 窗口早就先打开了文件）
+  ---
+  duration_ms: 0.6688
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:152:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        double: 1,
+    +   single: 1
+    -   single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 1
+  actual:
+    single: 1
+    double: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:160:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: W06 超出窗口的单击：正常激活且只激活一次
+ok 6 - W06 超出窗口的单击：正常激活且只激活一次
+  ---
+  duration_ms: 0.2141
+  type: 'test'
+  ...
+# Subtest: W07 双击之后不残留定时器（不会在 500ms 后再打开一次）
+not ok 7 - W07 双击之后不残留定时器（不会在 500ms 后再打开一次）
+  ---
+  duration_ms: 0.838
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:174:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        double: 1,
+    +   single: 1
+    -   single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 1
+  actual:
+    single: 1
+    double: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:184:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: W08 键盘触发的 click（detail=0）仍然立即激活，不进入窗口
+ok 8 - W08 键盘触发的 click（detail=0）仍然立即激活，不进入窗口
+  ---
+  duration_ms: 0.16
+  type: 'test'
+  ...
+# Subtest: J01 单击后资源锚变了：定时器不得打开"新的那个对象"
+not ok 9 - J01 单击后资源锚变了：定时器不得打开"新的那个对象"
+  ---
+  duration_ms: 0.4839
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:199:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    旧点击不能落到新对象上
+    + actual - expected
+
+      {
+        double: 0,
+    +   single: 1
+    -   single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 0
+  actual:
+    single: 1
+    double: 0
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:206:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: J02 第一次点击后同路径文件被替换：第二次点击不得对新文件改名
+not ok 10 - J02 第一次点击后同路径文件被替换：第二次点击不得对新文件改名
+  ---
+  duration_ms: 1.2501
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:210:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    两次点击不是同一个对象，整段手势作废
+    + actual - expected
+
+      {
+    +   double: 1,
+    -   double: 0,
+        single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 0
+  actual:
+    single: 0
+    double: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:219:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: J03 项目身份变化：旧的单击与双击意图都失效
+not ok 11 - J03 项目身份变化：旧的单击与双击意图都失效
+  ---
+  duration_ms: 0.5299
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:223:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    切了项目，旧单击不能打开新项目的文件
+
+    1 !== 0
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:229:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: J04 工作区身份变化：旧的仲裁意图不得执行
+not ok 12 - J04 工作区身份变化：旧的仲裁意图不得执行
+  ---
+  duration_ms: 0.3001
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:239:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        double: 0,
+    +   single: 1
+    -   single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 0
+  actual:
+    single: 1
+    double: 0
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:245:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: J05 正常双击（同一身份）：只改名，不打开
+not ok 13 - J05 正常双击（同一身份）：只改名，不打开
+  ---
+  duration_ms: 0.1693
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:248:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        double: 1,
+    +   single: 1
+    -   single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 1
+  actual:
+    single: 1
+    double: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:256:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: J06 正常单击（同一身份）：照常打开一次
+ok 14 - J06 正常单击（同一身份）：照常打开一次
+  ---
+  duration_ms: 0.0935
+  type: 'test'
+  ...
+# Subtest: J07 身份不可确认（currentIdentity 为 null）：fail-closed，不打开也不改名
+not ok 15 - J07 身份不可确认（currentIdentity 为 null）：fail-closed，不打开也不改名
+  ---
+  duration_ms: 0.1491
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:267:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    无法确认身份时不得激活
+    + actual - expected
+
+      {
+        double: 0,
+    +   single: 1
+    -   single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 0
+  actual:
+    single: 1
+    double: 0
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:273:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: J08 没有第一次点击时，孤立的 dblclick 不改名（无可核对的对象）
+not ok 16 - J08 没有第一次点击时，孤立的 dblclick 不改名（无可核对的对象）
+  ---
+  duration_ms: 0.1883
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:283:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+    +   double: 1,
+    -   double: 0,
+        single: 0
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    single: 0
+    double: 0
+  actual:
+    single: 0
+    double: 1
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:288:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: G06 原目标有锚、当前锚拿不到：拒绝（不得把"无法确认"当成"身份一致"）
+not ok 17 - G06 原目标有锚、当前锚拿不到：拒绝（不得把"无法确认"当成"身份一致"）
+  ---
+  duration_ms: 0.2095
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:303:1'
+  failureType: 'testCodeFailure'
+  error: '锚缺失时必须 fail-closed'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: ~
+  actual: ~
+  operator: 'notStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:311:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: G07 两个锚不同：拒绝（对象已被替换）
+ok 18 - G07 两个锚不同：拒绝（对象已被替换）
+  ---
+  duration_ms: 0.1702
+  type: 'test'
+  ...
+# Subtest: G08 锚相同：放行
+ok 19 - G08 锚相同：放行
+  ---
+  duration_ms: 0.0754
+  type: 'test'
+  ...
+# Subtest: G09 原目标没有锚（Provider 无身份能力）：不误伤，继续放行
+ok 20 - G09 原目标没有锚（Provider 无身份能力）：不误伤，继续放行
+  ---
+  duration_ms: 0.0742
+  type: 'test'
+  ...
+# Subtest: G10 空串锚也算"无法确认"：原目标有锚时同样拒绝
+not ok 21 - G10 空串锚也算"无法确认"：原目标有锚时同样拒绝
+  ---
+  duration_ms: 0.1255
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:363:1'
+  failureType: 'testCodeFailure'
+  error: 'Expected "actual" to be strictly unequal to: null'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: ~
+  actual: ~
+  operator: 'notStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:371:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: G11 blank / toolbar / link / project-root 不受锚核验影响
+ok 22 - G11 blank / toolbar / link / project-root 不受锚核验影响
+  ---
+  duration_ms: 0.1196
+  type: 'test'
+  ...
+# Subtest: G12 项目消失 / 不可用 / 行被移除：仍然先于锚判断给出原因
+ok 23 - G12 项目消失 / 不可用 / 行被移除：仍然先于锚判断给出原因
+  ---
+  duration_ms: 0.1563
+  type: 'test'
+  ...
+# Subtest: S01 会话归属一致、项目可用：放行提交
+not ok 24 - S01 会话归属一致、项目可用：放行提交
+  ---
+  duration_ms: 0.8727
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:421:1'
+  failureType: 'testCodeFailure'
+  error: 'tc.projectRenameGateOf is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:423:8)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S02 工作区 / 模式变化：旧会话不得在新世界里提交
+not ok 25 - S02 工作区 / 模式变化：旧会话不得在新世界里提交
+  ---
+  duration_ms: 0.4601
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:433:1'
+  failureType: 'testCodeFailure'
+  error: 'tc.workspaceScopeOf is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:436:24)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S03 项目已不在工作区 / 已不可用：分别给出原因
+not ok 26 - S03 项目已不在工作区 / 已不可用：分别给出原因
+  ---
+  duration_ms: 0.3925
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:455:1'
+  failureType: 'testCodeFailure'
+  error: 'tc.projectRenameGateOf is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:458:8)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S04 每个不放行的原因都有可展示的文案，ok 没有文案
+not ok 27 - S04 每个不放行的原因都有可展示的文案，ok 没有文案
+  ---
+  duration_ms: 0.334
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:467:1'
+  failureType: 'testCodeFailure'
+  error: 'tc.projectRenameGateMessage is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:468:19)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: S05 结果落地：已发出的请求不得被伪装成未发送，也不自动重试
+not ok 28 - S05 结果落地：已发出的请求不得被伪装成未发送，也不自动重试
+  ---
+  duration_ms: 0.2293
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:476:1'
+  failureType: 'testCodeFailure'
+  error: 'tc.projectRenameResultEffect is not a function'
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:477:19)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: M01 行组件把点击绑定到身份，而不是只调用"最新回调"
+not ok 29 - M01 行组件把点击绑定到身份，而不是只调用"最新回调"
+  ---
+  duration_ms: 24.2018
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:491:1'
+  failureType: 'testCodeFailure'
+  error: '行必须接收资源身份'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: |-
+    /**
+     * 目录树的共享行组件（S11-UX-02A）。
+     *
+     * 为什么抽出来：Multi（`ProjectList`）与 Legacy / Demo（`ProjectTree`）要呈现**同一种**
+     * 目录层级——同样的缩进步长、引导线、图标列与省略规则。两处各写一份必然逐渐走形，
+     * 所以这里只做展示原语（不带任何状态与请求），数据仍由各自组件注入。
+     *
+     * 约定：
+     * - 层级只由 `depth` 决定，**绝不**从文件名或路径字符串里猜层级；
+     * - `depth` 0 = 项目根自己，1 = 项目根的直接子项，依次递归；
+     * - 每级缩进 18px，引导线落在缩进列的中线（6.5px）上，与箭头/图标列严格对齐；
+     * - 祖先是本层末项时，它的后代不再画这条竖线（见 `tree-trails.ts`）；
+     * - 叶子行没有箭头，但保留同宽占位，保证文件名起点一致。
+     */
+    import { useEffect, useMemo, useRef } from 'react';
+    import type { FocusEvent, MouseEvent, ReactNode } from 'react';
+    import type { ResourceNodeState } from '../state/types';
+    import { colorRowClassOf, tagBadges } from '../state/resource-metadata';
+    import { createActivationArbiter, NAME_DOUBLE_CLICK_WINDOW } from '../state/tree-commands';
+    import { ancestorGuides, type TreeTrails } from './tree-trails';
+
+    /** 每一级的缩进步长（px）。行内计算与 CSS 都必须用这个值。 */
+    export const TREE_INDENT = 18;
+
+    /** 文件夹图标尺寸（px）：与箭头列同宽，避免图标挤压文件名。 */
+    const ICON_SIZE = 15;
+
+    /**
+     * 缩进列 + 树状引导线。
+     *
+     * `last` 决定**自己**这一列的收尾方式：同级最后一项只画"上半段竖线 + 横线"（└），
+     * 其余画"整段竖线 + 横线"（├），这样最后一项下方不会拖着一条悬空竖线。
+     *
+     * `trails` 决定**祖先列**是否继续：祖先已是本层末项时只留空白占位，不画线；
+     * 占位仍然存在，所以缩进宽度与图标列不受影响。
+     */
+    export function TreeIndent({
+      depth,
+      last,
+      trails,
+    }: {
+      depth: number;
+      last?: boolean;
+      trails?: TreeTrails;
+    }) {
+      if (depth <= 0) return null;
+      const guides = ancestorGuides(trails ?? [], depth);
+      return (
+        <span className="tree__indent" aria-hidden="true">
+          {guides.map((guide, index) => (
+            <span
+              key={index}
+              className={guide === 'line' ? 'tree__guide' : 'tree__guide tree__guide--blank'}
+            />
+          ))}
+          <span className={last ? 'tree__elbow tree__elbow--last' : 'tree__elbow'} />
+        </span>
+      );
+    }
+
+    /** 展开箭头；叶子行传 `expanded={undefined}`，渲染同宽空占位。 */
+    export function TreeCaret({ expanded }: { expanded?: boolean }) {
+      return (
+        <span className="tree__caret" aria-hidden="true">
+          {expanded === undefined ? '' : expanded ? '▾' : '▸'}
+        </span>
+      );
+    }
+
+    /** 文件夹图标：展开/闭合两种形态，用 `currentColor` 跟随主题。 */
+    export function FolderGlyph({ open }: { open: boolean }) {
+      return open ? (
+        <svg className="tree__icon" viewBox="0 0 16 16" width={ICON_SIZE} height={ICON_SIZE} aria-hidden="true">
+          <path
+            d="M1.75 4.25A1.25 1.25 0 0 1 3 3h3.1l1.3 1.6h4.6a1.25 1.25 0 0 1 1.25 1.25v.4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M2.1 6.25h11.3a.75.75 0 0 1 .72.95l-1.16 4.7a1.25 1.25 0 0 1-1.22.95H3.2a1.25 1.25 0 0 1-1.25-1.25V6.55a.3.3 0 0 1 .15-.3Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : (
+        <svg className="tree__icon" viewBox="0 0 16 16" width={ICON_SIZE} height={ICON_SIZE} aria-hidden="true">
+          <path
+            d="M1.75 4.1A1.35 1.35 0 0 1 3.1 2.75h3.05l1.3 1.6h5.45A1.35 1.35 0 0 1 14.25 5.7v6.2a1.35 1.35 0 0 1-1.35 1.35H3.1A1.35 1.35 0 0 1 1.75 11.9Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
+    }
+
+    /**
+     * 文件图标：`md` 带一个向下的折角（Markdown 语义），`txt` 用纯文本行，
+     * 其余格式统一用通用文档图标。区分只是"扫一眼能分开"，不引入颜色噪音。
+     */
+    export function FileGlyph({ extension }: { extension?: string }) {
+      const ext = (extension ?? '').toLowerCase();
+      return (
+        <svg className="tree__icon" viewBox="0 0 16 16" width={ICON_SIZE} height={ICON_SIZE} aria-hidden="true">
+          <path
+            d="M3.6 2.4h5.05L11.9 5.6v8A.9.9 0 0 1 11 14.5H3.6a.9.9 0 0 1-.9-.9V3.3a.9.9 0 0 1 .9-.9Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinejoin="round"
+          />
+          <path d="M8.6 2.5v3.2h3.2" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+          {ext === '.md' || ext === '.markdown' ? (
+            <path d="M4.9 12.1V9.2l1.25 1.55L7.4 9.2v2.9" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+          ) : (
+            <path d="M4.9 9.3h4.2M4.9 11.1h3" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+          )}
+        </svg>
+      );
+    }
+
+    /**
+     * 链接图标（UX-02B-TREE 契约 B.5）。
+     *
+     * 形状与文件/文件夹都不同：链接是"显示但不可用"的叶子（不展开、不打开、不预览），
+     * 静默隐藏会让用户以为文件丢了，但把它画成普通文件又会诱导点击。
+     */
+    export function LinkGlyph() {
+      return (
+        <svg className="tree__icon tree__icon--link" viewBox="0 0 16 16" width={ICON_SIZE} height={ICON_SIZE} aria-hidden="true">
+          <path
+            d="M6.6 9.4 9.4 6.6M6.9 4.9l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9.1 11.1l-1 1a2.5 2.5 0 0 1-3.5-3.5l1-1"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+            strokeDasharray="2 1.4"
+          />
+        </svg>
+      );
+    }
+
+    export interface TreeRowProps {
+      node: ResourceNodeState;
+      depth: number;
+      /** 同级最后一项：决定引导线是否收尾。 */
+      last: boolean;
+      /** 各祖先层是否还有后续兄弟：决定祖先竖线是否继续画。 */
+      trails?: TreeTrails;
+      /** 文件夹才是可展开的；文件传 undefined。 */
+      expanded?: boolean;
+      selected?: boolean;
+      /** 已在标签中打开。 */
+      opened?: boolean;
+      /** 已打开且有未保存修改。 */
+      dirty?: boolean;
+      /**
+       * 右对齐的附加内容（项目根的状态芯片 / 刷新按钮）。
+       *
+       * 渲染在**按钮之外**、同一个 `<li>` 之内：HTML 不允许按钮套按钮，
+       * 把它放进主按钮会让项目根行的刷新按钮变成无效交互元素。
+       */
+      actions?: ReactNode;
+      /**
+       * 追加到行上的类名（例如项目根有更多右侧操作时，需要单独放宽右内边距）。
+       * 只做展示微调，不影响层级/缩进计算。
+       */
+      rowClassName?: string;
+      onActivate(): void;
+      /** 右键菜单（UX-02C-01）：由调用方按上下文决定命令；本组件不含任何命令逻辑。 */
+      onContextMenu?(event: MouseEvent<HTMLButtonElement>): void;
+      /**
+       * 双击**名称文字**进入改名（UX-02C-05）。不传表示这一行不提供双击改名，
+       * 单击立即激活（Demo / Legacy / 链接节点就是这种情形）。
+       *
+       * 为什么需要它：文件的单击会立刻打开活动 View，而改名保护要求"没有打开的标签"。
+       * 因此名称上的单击要延后一个短窗口再激活，窗口内的第二次点击改为改名，
+       * 详见 `tree-commands.ts::createActivationArbiter`。
+       */
+      onRenameRequest?(): void;
+      /** 焦点进入本行：F2 / Shift+F10 以"当前焦点行"为操作对象。 */
+      onFocus?(event: FocusEvent<HTMLButtonElement>): void;
+      /** 展开后的子层（渲染在同一个 `<li>` 内，保证语义与缩进引导线连续）。 */
+      children?: ReactNode;
+    }
+
+    /**
+     * 一行：缩进 → 箭头 → 图标 → 名称 →（右对齐的）打开/脏标记。
+     *
+     * 名称 `flex:1 + min-width:0 + ellipsis`，`title` 给出完整路径名，
+     * 因此在 260px 侧栏里长文件名不会把标记挤出可视区。
+     */
+    export function TreeRow({
+      node,
+      depth,
+      last,
+      trails,
+      expanded,
+      selected,
+      opened,
+      dirty,
+      actions,
+      rowClassName,
+      onActivate,
+      onContextMenu,
+      onRenameRequest,
+      onFocus,
+      children,
+    }: TreeRowProps) {
+      const isFolder = node.kind === 'folder';
+      const isLink = node.kind === 'link';
+
+      /**
+       * 单击 / 双击仲裁（UX-02C-05）。
+       *
+       * 回调放进 ref：仲裁器只在"是否提供双击改名"变化时重建，永远调用最新一次渲染
+       * 的 `onActivate` / `onRenameRequest`，不会拿着上一次的 projectId 去操作。
+       */
+      const latest = useRef({ onActivate, onRenameRequest });
+      latest.current = { onActivate, onRenameRequest };
+      const renameable = typeof onRenameRequest === 'function';
+      const arbiter = useMemo(
+        () =>
+          renameable
+            ? createActivationArbiter({
+                delay: NAME_DOUBLE_CLICK_WINDOW,
+                setTimer: (fn, delay) => window.setTimeout(fn, delay),
+                clearTimer: (handle) => window.clearTimeout(handle as number),
+                onSingle: () => latest.current.onActivate(),
+                onDouble: () => latest.current.onRenameRequest?.(),
+              })
+            : null,
+        [renameable],
+      );
+      // 卸载时撤掉在途的单击：组件已经不在，绝不能再触发一次"打开"
+      useEffect(() => () => arbiter?.cancel(), [arbiter]);
+
+      /** 只有名称（含标注名）区域参与双击改名；图标与行内空白保持"点了就动"。 */
+      const onNameArea = (target: EventTarget | null): boolean =>
+        target instanceof HTMLElement && Boolean(target.closest('.tree__name, .tree__alias'));
+      /**
+       * 隐藏标记（UX-02C-03-P1）。
+       *
+       * 它是**展示**而不是禁用：隐藏的文件照样能点开、能编辑、能保存，
+       * 所以这里只做"变淡 + 一枚小标签"，绝不给行加 disabled 或拦截点击。
+       */
+      const hiddenSelf = node.hidden === true;
+      const hiddenBy = node.hiddenBy;
+      /**
+       * 资源标注（UX-02C-04）：标注名是**附加**信息，永远排在真实名称之后。
+       *
+       * 真实名称不加任何修饰：用户判断"这是哪个文件"靠它，标注名只用来帮人记住用途。
+       * 颜色只落在 `color` 上（见样式表），不覆盖选中/焦点/禁用/错误态。
+       */
+      const meta = node.meta;
+      const colorClass = colorRowClassOf(meta?.color);
+      /*
+       * 侧栏只有 260px，放不下"名称 + 标注名 + 标签"三样：
+       * - 有标注名时，行内**不画**标签（它们进 `title`）——否则标注名会被挤成 `（…`，
+       *   而标注名正是用户刚刚输入、最需要确认的东西；
+       * - 没有标注名时，行内最多两枚标签 + `+N`。
+       *
+       * 标签本身没有丢：对话框里完整可编辑，行的 `title` 里也全列出来了。
+       */
+      const badges = tagBadges(meta?.tags ?? [], meta?.alias ? 0 : 2);
+      const annotated = Boolean(meta?.alias) || badges.shown.length > 0;
+      const baseTitle = isLink
+        ? `${node.name}（链接不展开，避免越过项目根）`
+        : hiddenSelf
+          ? `${node.name}（已从文件树隐藏；文件仍在磁盘上，可正常打开与保存）`
+          : hiddenBy
+            ? `${node.name}（上级「${hiddenBy}」被隐藏；文件仍在磁盘上）`
+            : node.name;
+      const aliasTitle = meta?.alias ? `\n标注名：${meta.alias}` : '';
+      const tagTitle = meta?.tags.length ? `\n标签：${meta.tags.join('、')}` : '';
+      const rowTitle = annotated ? `${baseTitle}${aliasTitle}${tagTitle}` : baseTitle;
+      return (
+        <li className="tree__item">
+          <div className="tree__row-wrap">
+            <button
+              type="button"
+              className={[
+                'tree__row',
+                isFolder ? 'tree__row--folder' : 'tree__row--file',
+                isLink ? 'tree__row--link' : '',
+                selected ? 'tree__row--selected' : '',
+                opened ? 'tree__row--opened' : '',
+                hiddenSelf || hiddenBy ? 'tree__row--hidden' : '',
+                colorClass ?? '',
+                actions ? 'tree__row--with-actions' : '',
+                rowClassName ?? '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              aria-expanded={isFolder ? expanded : undefined}
+              title={rowTitle}
+              onClick={(event) => {
+                if (!arbiter || !onNameArea(event.target)) {
+                  onActivate();
+                  return;
+                }
+                arbiter.click(event.detail);
+              }}
+              onDoubleClick={(event) => {
+                if (!arbiter || !onNameArea(event.target)) return;
+                arbiter.doubleClick();
+              }}
+              onFocus={onFocus}
+              onContextMenu={onContextMenu}
+            >
+              <TreeIndent depth={depth} last={last} trails={trails} />
+              <TreeCaret expanded={isFolder ? expanded : undefined} />
+              {isFolder ? (
+                <FolderGlyph open={expanded === true} />
+              ) : isLink ? (
+                <LinkGlyph />
+              ) : (
+                <FileGlyph extension={node.extension} />
+              )}
+              <span className="tree__name">{node.name}</span>
+              {meta?.alias && (
+                <span className="tree__alias" title={`标注名：${meta.alias}（真实名称不变）`}>
+                  （{meta.alias}）
+                </span>
+              )}
+              {badges.shown.map((tag) => (
+                <span key={tag} className="tree__tag" title={`标签：${tag}`}>
+                  {tag}
+                </span>
+              ))}
+              {badges.more > 0 && (
+                <span className="tree__tag tree__tag--more" title={(meta?.tags ?? []).slice(2).join('、')}>
+                  +{badges.more}
+                </span>
+              )}
+              {hiddenSelf && (
+                <span className="tree__hidden-badge" title="已从文件树隐藏（磁盘文件未删除）">
+                  隐藏
+                </span>
+              )}
+              {!hiddenSelf && hiddenBy && (
+                <span className="tree__hidden-badge tree__hidden-badge--inherited" title={`上级「${hiddenBy}」被隐藏`}>
+                  随上级隐藏
+                </span>
+              )}
+              {opened && (
+                <span
+                  className={dirty ? 'tree__dot tree__dot--dirty' : 'tree__dot'}
+                  title={dirty ? '已打开（有未保存修改）' : '已在标签中打开'}
+                />
+              )}
+            </button>
+            {actions && <span className="tree__row-actions">{actions}</span>}
+          </div>
+          {children}
+        </li>
+      );
+    }
+
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:493:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: M02 项目改名提交前复核会话归属，提交后按会话核对结果
+not ok 30 - M02 项目改名提交前复核会话归属，提交后按会话核对结果
+  ---
+  duration_ms: 2.8247
+  type: 'test'
+  location: 'D:\\Workspace\\projects\\weavespace\\tests\\suites\\107-s11ux02c05r1-tree-hardening.test.ts:499:1'
+  failureType: 'testCodeFailure'
+  error: '提交前必须复核归属'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: |-
+    /**
+     * 文件树命令编排（UX-02C-01 创建 / UX-02C-02 改名与移动 / UX-02C-03-P1 隐藏 /
+     * UX-02C-03-P2-02 回收 / UX-02C-04 标注 / UX-02C-05 交互统一）：
+     * **右键菜单、顶部工具栏、行内输入框、移动对话框、双击改名、F2 / Shift+F10 的唯一入口**。
+     *
+     * 职责：把"右键了什么 / 工具栏在哪 / 焦点停在哪一行"折算成显式
+     * `(projectId, 相对路径)`，管住行内命名与单飞提交，然后把结果交给
+     * `DocumentActions` 去刷新层表。不 fetch、不碰磁盘、不复制任何授权判定；
+     * 同名/路径/会话的权威判定在 Host。
+     *
+     * UX-02C-05 起，**可用性与禁用原因不再写在这份 JSX 里**：
+     * `state/tree-commands.ts` 的 `treeCommandMatrix()` 是菜单、工具栏与键盘共用的唯一来源，
+     * 这里只负责"命令 id → 执行函数"的映射，以及执行前的失效检测与菜单生命周期。
+     */
+    import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+    import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent, ReactNode } from 'react';
+    import type {
+      CreateEntryKindDto,
+      CreateEntryOutcome,
+      ProjectSummary,
+      ResourceMetadataDto,
+      StructureChangeOutcome,
+    } from '../client/client-api.ts';
+    import { useCapabilities } from '../capabilities/CapabilityContext.tsx';
+    import { supportedFileExtensions, type SupportedExtension } from '../capabilities/supported-extensions.ts';
+    import {
+      createEntryRunner,
+      createExpansionPlan,
+      EMPTY_PRESET_STEM_MESSAGE,
+      initialNamingDraft,
+      missingPresetStem,
+      normalizeDir,
+      parentDirOf,
+      resolveCreateTarget,
+      selectionForPreset,
+      type CreateOrigin,
+    } from '../state/create-entry.ts';
+    import {
+      createStructureRunner,
+      inputSurvivesStructureResult,
+      localStructureBlockers,
+      moveTargetOptions,
+      renameDraftOf,
+      STRUCTURE_BUSY_MESSAGE,
+      type StructureEntryKind,
+    } from '../state/structure-change.ts';
+    import { entryNameOf } from '../../../../packages/storage/entry-name.ts';
+    import {
+      visibilityNoopNotice,
+      visibilityNotice,
+      visibilityUnknownNotice,
+    } from '../state/visibility.ts';
+    import { useDocumentActions } from '../state/DocumentActionsContext.tsx';
+    import { useResourceMetadata } from '../state/MetadataContext.tsx';
+    import { useTrash } from '../state/TrashContext.tsx';
+    import { useWorkspace } from '../state/WorkspaceContext.tsx';
+    import { validateProjectName } from '../state/add-project.ts';
+    import {
+      menuIdentityOf,
+      toolbarTargetOf,
+      treeCommandMatrix,
+      treeKeyIntentOf,
+      treeTargetProblemOf,
+      menuOrderOf,
+      type TreeCommandId,
+      type TreeCommandMatrix,
+      type TreeCommandTarget,
+    } from '../state/tree-commands.ts';
+    import { ContextMenu, type MenuItem } from './ContextMenu.tsx';
+    import { MoveEntryDialog } from './MoveEntryDialog.tsx';
+    import { RemoveProjectDialog } from './RemoveProjectEntry.tsx';
+    import { findEntryByPath } from './tree-model.ts';
+
+    export interface TreeTarget extends TreeCommandTarget {
+      readonly origin: CreateOrigin;
+      /** 上下文所属项目；Demo / Legacy 传 null。 */
+      readonly projectId: string | null;
+      /** folder：自身相对路径；file：文件相对路径。 */
+      readonly nodePath?: string | null;
+      /** 右键文件夹行时该行的节点 id：折叠目录中创建可精确、幂等地展开。 */
+      readonly nodeId?: string | null;
+      /** 被右键节点的类型：改名/移动据此判断是否要检查后代。 */
+      readonly entryKind?: StructureEntryKind | 'link';
+      /**
+       * 该行自身是否已有隐藏记录（UX-02C-03-P1）。
+       *
+       * 只有"显示隐藏项"打开时才可能为 true；据此决定菜单给"隐藏"还是"取消隐藏"。
+       */
+      readonly nodeHidden?: boolean;
+      /**
+       * 该行当前的展示元数据（UX-02C-04）。
+       *
+       * 传给对话框当"打开时的基准"：只有它才能算出"用户到底改了哪几个字段"，
+       * 从而只提交差异，不覆盖别人刚改的其它字段。
+       */
+      readonly nodeMeta?: ResourceMetadataDto;
+      /** 打开菜单那一刻该行的资源锚（UX-02C-04-R1）：执行前用来判断"还是不是那一行"。 */
+      readonly nodeAnchor?: string | null;
+    }
+
+    export interface NamingState {
+      /** create = 新建；rename = 真实改名。两者共用同一个行内输入行。 */
+      readonly mode: 'create' | 'rename';
+      readonly projectId: string;
+      /** 输入行所在的层：create 是目标目录；rename 是源节点的父目录。 */
+      readonly parentDir: string;
+      readonly kind: CreateEntryKindDto;
+      readonly presetExtension?: string;
+      readonly draft: string;
+      readonly selection: [number, number];
+      readonly error: string | null;
+      readonly submitting: boolean;
+      /** rename 专用：源相对路径与源类型。 */
+      readonly sourcePath?: string;
+      readonly entryKind?: StructureEntryKind;
+    }
+
+    export interface MoveDialogState {
+      readonly projectId: string;
+      readonly sourcePath: string;
+      readonly targetName: string;
+      readonly entryKind: StructureEntryKind;
+      readonly targetParentDir: string;
+      readonly options: readonly string[];
+      readonly error: string | null;
+      readonly submitting: boolean;
+    }
+
+    /**
+     * 项目**显示名称**的行内编辑（UX-02C-05 上提）。
+     *
+     * 与资源标注名、磁盘目录名是三件事：
+     * - 显示名称属于项目注册信息（`renameProject`），改它不动路径、不动 `workspaceKey`；
+     * - 标注名是资源元数据（UX-02C-04），只影响展示；
+     * - 磁盘目录名只有用户自己在资源管理器里改，工作台不会去改它。
+     */
+    export interface ProjectRenameState {
+      readonly projectId: string;
+      readonly draft: string;
+      readonly error: string | null;
+      readonly saving: boolean;
+    }
+
+    interface MenuState {
+      readonly x: number;
+      readonly y: number;
+      /** 每次打开都换一个实例：键盘高亮/子菜单状态不从上一次右键带过来。 */
+      readonly nonce: number;
+      readonly target: TreeTarget;
+      /** 打开时所属的"世界"；与当前世界不一致时菜单必须关闭（UX-02C-05）。 */
+      readonly identity: string;
+    }
+
+    /** 树内焦点位置：F2 / Shift+F10 的"当前有效资源"。 */
+    interface FocusedRow {
+      readonly target: TreeTarget;
+      readonly element: HTMLElement | null;
+      readonly left: number;
+      readonly top: number;
+      readonly height: number;
+    }
+
+    interface TreeCommandsValue {
+      openContextMenu(event: MouseEvent, target: TreeTarget): void;
+      closeContextMenu(): void;
+      /** 右键菜单与工具栏都走这里；`presetExtension` 只影响行内输入的初值与选区。 */
+      beginCreate(kind: CreateEntryKindDto, target: TreeTarget, presetExtension?: string): void;
+      /** 右键文件/文件夹 / F2 / 双击名称 → 行内改名（预填原名，选主文件名）。 */
+      beginRename(target: TreeTarget): void;
+      /** 右键文件/文件夹 → 打开"移动到…"选择器。 */
+      openMove(target: TreeTarget): void;
+      /**
+       * 右键 → 从文件树隐藏 / 取消隐藏（UX-02C-03-P1）。
+       *
+       * `currentlyHidden` 是这一行现在的状态：true 表示要**取消隐藏**。
+       * 只改工作台可见性，不关标签、不动草稿、不碰磁盘内容。
+       */
+      toggleVisibility(target: TreeTarget, currentlyHidden: boolean): Promise<void>;
+      setMoveTarget(dir: string): void;
+      confirmMove(): Promise<void>;
+      cancelMove(): void;
+      readonly moveDialog: MoveDialogState | null;
+      toolbarCreate(kind: CreateEntryKindDto): void;
+      toolbarRefresh(): void;
+      noteSelection(projectId: string, kind: 'folder' | 'file', path: string): void;
+      /** 记录树内焦点行：F2 / Shift+F10 / 双击改名都以此为准。 */
+      noteFocus(target: TreeTarget, element: HTMLElement | null): void;
+      /** 树范围内的键盘处理（F2 / Shift+F10 / 菜单键 / Escape）。 */
+      onTreeKeyDown(event: ReactKeyboardEvent<HTMLElement>): void;
+      /** 项目根容器的展开态（R1-01）：与创建编排放在同一处，保证开始创建时一定可见。 */
+      isRootOpen(projectId: string): boolean;
+      toggleRoot(projectId: string): void;
+      /** 项目显示名称的行内编辑（菜单、铅笔按钮、双击项目根名称共用）。 */
+      readonly projectRename: ProjectRenameState | null;
+      beginProjectRename(projectId: string): void;
+      setProjectRenameDraft(value: string): void;
+      submitProjectRename(): Promise<void>;
+      cancelProjectRename(): void;
+      /** 由右键菜单打开的项目移除确认框（与行内 🗑 按钮同一套检查与文案）。 */
+      requestRemoveProject(projectId: string): void;
+      readonly naming: NamingState | null;
+      setDraft(value: string): void;
+      submitNaming(): Promise<void>;
+      cancelNaming(): void;
+      readonly supportedExtensions: readonly SupportedExtension[];
+    }
+
+    const TreeCommandsContext = createContext<TreeCommandsValue | null>(null);
+
+    export function TreeCommandsProvider({ children }: { children: ReactNode }) {
+      const { state, dispatch } = useWorkspace();
+      const actions = useDocumentActions();
+      const trash = useTrash();
+      const metadata = useResourceMetadata();
+      const { ready, registry, resolveViewer, revision } = useCapabilities();
+      const [menu, setMenu] = useState<MenuState | null>(null);
+      const menuSeq = useRef(0);
+      const [naming, setNaming] = useState<NamingState | null>(null);
+      const [moveDialog, setMoveDialog] = useState<MoveDialogState | null>(null);
+      const [projectRename, setProjectRename] = useState<ProjectRenameState | null>(null);
+      /** 菜单触发的移除：存项目快照而不是 id —— 移除成功后项目会从列表消失，
+       * 但对话框还要把"已移除"的结果说完。 */
+      const [removeTarget, setRemoveTarget] = useState<ProjectSummary | null>(null);
+      /** "当前明确选中的目录"按项目记录：空白区 / 工具栏据此决定创建位置。 */
+      const [selectedDirByProject, setSelectedDirByProject] = useState<Record<string, string>>({});
+      /** 树内焦点行（F2 / Shift+F10 的"当前有效资源"）。 */
+      const focusRef = useRef<FocusedRow | null>(null);
+      /** 项目改名在途标记：同一 tick 连按两次 Enter 也只会发一次请求。 */
+      const projectRenameBusy = useRef(false);
+      /**
+       * 项目根容器展开态（UX-02C-01-R1）。从 `ProjectList` 上提，使"打开根"与
+       * "挂上输入行"在同一次渲染里完成。缺席即默认展开。
+       */
+      const [openRoots, setOpenRoots] = useState<Record<string, boolean>>({});
+      const isRootOpen = useCallback((projectId: string): boolean => openRoots[projectId] ?? true, [openRoots]);
+      const toggleRoot = useCallback((projectId: string): void => {
+        setOpenRoots((current) => ({ ...current, [projectId]: !(current[projectId] ?? true) }));
+      }, []);
+      /** 幂等打开：已经展开时返回原 state，绝不误折叠。 */
+      const ensureRootOpen = useCallback((projectId: string): void => {
+        setOpenRoots((current) =>
+          current[projectId] === false ? { ...current, [projectId]: true } : current,
+        );
+      }, []);
+
+      const supportedExtensions = useMemo(
+        () => supportedFileExtensions({ list: () => registry.list(), resolveViewer }, ready),
+        [registry, resolveViewer, ready, revision],
+      );
+
+      const isSupported = useCallback(
+        (projectId: string | null): boolean => {
+          if (state.mode !== 'live' || state.workspaceMode !== 'multi' || !projectId) return false;
+          return state.projects.some((project) => project.projectId === projectId && project.status === 'READY');
+        },
+        [state.mode, state.workspaceMode, state.projects],
+      );
+
+      /**
+       * 菜单所属的"世界"。切换模式 / 工作区 / 当前项目都会让它变化，
+       * 变化的瞬间旧菜单必须关闭——它的命令已经不属于当前界面。
+       */
+      const identity = menuIdentityOf({
+        mode: state.mode,
+        workspaceMode: state.workspaceMode,
+        workspaceKey: state.workspaceKey,
+        activeProjectId: state.activeProjectId,
+      });
+
+      /** 两个编排器共用的提示落地：状态栏 + 当前输入行/对话框的行内错误。 */
+      const onNotice = useCallback(
+        (message: string) => {
+          dispatch({ type: 'NOTICE', message });
+          setNaming((current) => (current ? { ...current, error: message } : current));
+          setMoveDialog((current) => (current ? { ...current, error: message } : current));
+        },
+        [dispatch],
+      );
+
+      const runner = useMemo(
+        () =>
+          createEntryRunner({
+            create: (input) => actions.createEntry(input.projectId, input.parentDir, input.name, input.kind),
+            checkDirectory: async (projectId, parentDir) => {
+              await actions.refreshTreeLevel(projectId, parentDir);
+            },
+            onApplied: (outcome: Extract<CreateEntryOutcome, { status: 'APPLIED' }>) => {
+              void actions.refreshTreeLevel(outcome.projectId, outcome.parentDir, { expand: true });
+              dispatch({
+                type: 'NOTICE',
+                message: `已创建「${outcome.name}」（刷新该目录后可见；未加载到的分页不声明已显示）`,
+              });
+            },
+            onNotice,
+          }),
+        [actions, dispatch, onNotice],
+      );
+
+      const structureRunner = useMemo(
+        () =>
+          createStructureRunner({
+            rename: (projectId, sourcePath, name) => actions.renameEntry(projectId, sourcePath, name),
+            move: (projectId, sourcePath, targetParentDir, name) =>
+              actions.moveEntry(projectId, sourcePath, targetParentDir, name),
+            // Host 重启后内存会话表归零，Shell 本地标签/草稿这道门必须独立存在
+            localBlockers: (projectId, sourcePath, entryKind) =>
+              localStructureBlockers(state.tabs, projectId, sourcePath, entryKind),
+            checkLocations: (projectId, sourceParentDir, targetParentDir) =>
+              actions.checkStructureLocations(projectId, sourceParentDir, targetParentDir),
+            onApplied: (outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>) => {
+              void actions.applyStructureChange(outcome);
+            },
+            onNotice,
+          }),
+        [actions, state.tabs, onNotice],
+      );
+
+      const resolve = useCallback(
+        (target: TreeTarget): ReturnType<typeof resolveCreateTarget> =>
+          resolveCreateTarget({
+            origin: target.origin,
+            projectId: target.projectId,
+            nodePath: target.nodePath,
+            kind: 'file',
+            selectedDirByProject,
+            activeProjectId: state.activeProjectId,
+            supported: isSupported(target.projectId ?? state.activeProjectId),
+          }),
+        [selectedDirByProject, state.activeProjectId, isSupported],
+      );
+
+      /**
+       * 执行前的失效检测（UX-02C-05）。
+       *
+       * 菜单是 portal，打开之后树可能已经刷新、项目可能已经不可用、文件可能已经被
+       * 同名新对象替换。这里只用**界面已知**的信息判断；权威仍是 Host。
+       */
+      const targetProblem = useCallback(
+        (target: TreeTarget): string | null => {
+          if (target.projectId === null) {
+            return treeTargetProblemOf({
+              target,
+              projectExists: false,
+              projectReady: false,
+              entryPresent: true,
+              currentAnchor: null,
+            });
+          }
+          const project = state.projects.find((item) => item.projectId === target.projectId);
+          const levels = state.treeByProject[target.projectId] ?? {};
+          const path = normalizeDir(target.nodePath ?? '');
+          const root = target.origin === 'project-root';
+          const entry = root || path === '' ? undefined : findEntryByPath(levels, path);
+          const anchor = root
+            ? (levels['']?.projectAnchor ?? null)
+            : entry
+              ? (levels[parentDirOf(path)]?.anchors?.[path] ?? null)
+              : null;
+          return treeTargetProblemOf({
+            target,
+            projectExists: Boolean(project),
+            projectReady: project?.status === 'READY',
+            entryPresent: root ? true : Boolean(entry),
+            currentAnchor: anchor,
+          });
+        },
+        [state.projects, state.treeByProject],
+      );
+
+      /** 菜单矩阵：菜单、工具栏、键盘共用同一份（UX-02C-05 阶段 B）。 */
+      const matrixOf = useCallback(
+        (target: TreeTarget): TreeCommandMatrix =>
+          treeCommandMatrix(target, {
+            supported: isSupported(target.projectId ?? state.activeProjectId),
+            supportedExtensionCount: supportedExtensions.length,
+          }),
+        [isSupported, state.activeProjectId, supportedExtensions],
+      );
+
+      const beginCreate = useCallback(
+        (kind: CreateEntryKindDto, target: TreeTarget, presetExtension?: string) => {
+          setMenu(null);
+          const problem = targetProblem(target);
+          if (problem) {
+            dispatch({ type: 'NOTICE', message: problem });
+            return;
+          }
+          const resolved = resolve(target);
+          if (!resolved.ok) {
+            dispatch({ type: 'NOTICE', message: resolved.reason });
+            return;
+          }
+          // R1-01：输入行只在展开的目录里渲染；两处都用幂等动作，不会误折叠
+          const plan = createExpansionPlan({
+            projectId: resolved.projectId,
+            parentDir: resolved.parentDir,
+            levels: state.treeByProject[resolved.projectId] ?? {},
+            nodeId: target.nodeId ?? null,
+          });
+          if (plan.rootProjectId) ensureRootOpen(plan.rootProjectId);
+          if (plan.folderNodeId && plan.rootProjectId) {
+            dispatch({
+              type: 'EXPAND_PROJECT_NODE',
+              projectId: plan.rootProjectId,
+              path: plan.folderNodeId,
+            });
+          }
+          const draft = initialNamingDraft(presetExtension);
+          setNaming({
+            mode: 'create',
+            projectId: resolved.projectId,
+            parentDir: resolved.parentDir,
+            kind,
+            ...(presetExtension ? { presetExtension } : {}),
+            draft,
+            selection: selectionForPreset(draft, presetExtension),
+            error: null,
+            submitting: false,
+          });
+        },
+        [dispatch, resolve, ensureRootOpen, state.treeByProject, targetProblem],
+      );
+
+      /** 能被改名/移动的上下文：必须是真实 Multi 项目里的普通文件或文件夹。 */
+      const structureSource = useCallback(
+        (target: TreeTarget):
+          | {
+              projectId: string;
+              sourcePath: string;
+              entryKind: StructureEntryKind;
+              parentDir: string;
+            }
+          | null => {
+          const projectId = target.projectId;
+          const sourcePath = target.nodePath == null ? '' : normalizeDir(target.nodePath);
+          if (
+            !projectId ||
+            sourcePath === '' ||
+            (target.origin !== 'file' && target.origin !== 'folder') ||
+            target.entryKind !== 'file' && target.entryKind !== 'directory'
+          ) {
+            return null;
+          }
+          if (!isSupported(projectId)) return null;
+          return {
+            projectId,
+            sourcePath,
+            entryKind: target.entryKind,
+            parentDir: parentDirOf(sourcePath),
+          };
+        },
+        [isSupported],
+      );
+
+      const beginRename = useCallback(
+        (target: TreeTarget) => {
+          setMenu(null);
+          const problem = targetProblem(target);
+          if (problem) {
+            dispatch({ type: 'NOTICE', message: problem });
+            return;
+          }
+          const source = structureSource(target);
+          if (!source) {
+            dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以改名' });
+            return;
+          }
+          ensureRootOpen(source.projectId);
+          const draft = renameDraftOf(source.sourcePath);
+          setNaming({
+            mode: 'rename',
+            projectId: source.projectId,
+            parentDir: draft.parentDir,
+            kind: source.entryKind === 'directory' ? 'directory' : 'file',
+            draft: draft.draft,
+            selection: draft.selection,
+            error: null,
+            submitting: false,
+            sourcePath: draft.sourcePath,
+            entryKind: source.entryKind,
+          });
+        },
+        [dispatch, ensureRootOpen, structureSource, targetProblem],
+      );
+
+      const openMove = useCallback(
+        (target: TreeTarget) => {
+          setMenu(null);
+          const problem = targetProblem(target);
+          if (problem) {
+            dispatch({ type: 'NOTICE', message: problem });
+            return;
+          }
+          const source = structureSource(target);
+          if (!source) {
+            dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以移动' });
+            return;
+          }
+          const levels = state.treeByProject[source.projectId] ?? {};
+          const options = moveTargetOptions(levels, source.sourcePath, source.entryKind).filter(
+            (dir) => dir !== source.parentDir,
+          );
+          setMoveDialog({
+            projectId: source.projectId,
+            sourcePath: source.sourcePath,
+            targetName: entryNameOf(source.sourcePath),
+            entryKind: source.entryKind,
+            targetParentDir: options[0] ?? '',
+            options,
+            error: null,
+            submitting: false,
+          });
+        },
+        [dispatch, state.treeByProject, structureSource, targetProblem],
+      );
+
+      const setMoveTarget = useCallback((dir: string) => {
+        setMoveDialog((current) =>
+          current && current.options.includes(dir) ? { ...current, targetParentDir: dir, error: null } : current,
+        );
+      }, []);
+
+      const cancelMove = useCallback(() => setMoveDialog(null), []);
+
+      /**
+       * 隐藏 / 取消隐藏的单飞提交（UX-02C-03-P1）。
+       *
+       * 与创建/改名不同，这里没有输入行也没有模态：一次右键就是一个完整意图。
+       * 仍然要单飞，避免同一行被双击两次产生两条并发请求（第二条会变成 no-op 提示，
+       * 用户会以为"点了没反应"）。
+       */
+      const visibilityBusy = useRef(false);
+      const toggleVisibility = useCallback(
+        async (target: TreeTarget, currentlyHidden: boolean): Promise<void> => {
+          setMenu(null);
+          const projectId = target.projectId;
+          const path = normalizeDir(target.nodePath ?? '');
+          if (!projectId || path === '') {
+            dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件或文件夹可以从文件树隐藏' });
+            return;
+          }
+          const problem = targetProblem(target);
+          if (problem) {
+            dispatch({ type: 'NOTICE', message: problem });
+            return;
+          }
+          if (visibilityBusy.current) return;
+          visibilityBusy.current = true;
+          try {
+            const outcome = currentlyHidden
+              ? await actions.unhideEntry(projectId, path)
+              : await actions.hideEntry(projectId, path);
+
+            if (outcome.status === 'APPLIED') {
+              // 先刷新父层再提示：提示"已隐藏"时树里必须真的已经不显示了
+              await actions.applyVisibilityChange(projectId, path);
+              dispatch({
+                type: 'NOTICE',
+                message: outcome.changed
+                  ? visibilityNotice(path, !currentlyHidden)
+                  : visibilityNoopNotice(path, !currentlyHidden),
+              });
+              return;
+            }
+            if (outcome.status === 'UNKNOWN') {
+              // 只读核对一次：不重发、不宣布成功
+              await actions.applyVisibilityChange(projectId, path);
+              dispatch({ type: 'NOTICE', message: visibilityUnknownNotice() });
+              return;
+            }
+            dispatch({ type: 'NOTICE', message: outcome.message ?? '隐藏操作失败' });
+          } catch {
+            dispatch({ type: 'NOTICE', message: '隐藏操作失败：网络或本地服务不可用' });
+          } finally {
+            visibilityBusy.current = false;
+          }
+        },
+        [actions, dispatch, targetProblem],
+      );
+
+      const confirmMove = useCallback(async (): Promise<void> => {
+        if (!moveDialog || moveDialog.submitting) return;
+        setMoveDialog((current) => (current ? { ...current, submitting: true, error: null } : current));
+        const result = await structureRunner.submit({
+          kind: 'move',
+          projectId: moveDialog.projectId,
+          sourcePath: moveDialog.sourcePath,
+          targetParentDir: moveDialog.targetParentDir,
+          targetName: moveDialog.targetName,
+          entryKind: moveDialog.entryKind,
+        });
+        if (!inputSurvivesStructureResult(result)) {
+          setMoveDialog(null);
+          return;
+        }
+        if (result === 'busy') {
+          setMoveDialog((current) =>
+            (current ? { ...current, submitting: false, error: STRUCTURE_BUSY_MESSAGE } : current),
+          );
+          return;
+        }
+        // blocked / rejected：保留对话框供修正目标，原因已由 onNotice 写入行内错误
+        setMoveDialog((current) => (current ? { ...current, submitting: false } : current));
+      }, [moveDialog, structureRunner]);
+
+      const cancelNaming = useCallback(() => setNaming(null), []);
+
+      const submitNaming = useCallback(async (): Promise<void> => {
+        if (!naming || naming.submitting) return;
+        if (naming.mode === 'create' && missingPresetStem(naming.draft, naming.presetExtension)) {
+          // R1-02：连"提交中"都不进入，避免输入框被禁用而失焦
+          setNaming((current) => (current ? { ...current, error: EMPTY_PRESET_STEM_MESSAGE } : current));
+          return;
+        }
+        if (naming.mode === 'rename' && naming.draft === entryNameOf(naming.sourcePath ?? '')) {
+          setNaming((current) => (current ? { ...current, error: '请输入不同的名称' } : current));
+          return;
+        }
+        setNaming((current) => (current ? { ...current, submitting: true, error: null } : current));
+
+        const result =
+          naming.mode === 'rename'
+            ? await structureRunner.submit({
+                kind: 'rename',
+                projectId: naming.projectId,
+                sourcePath: naming.sourcePath ?? '',
+                targetParentDir: naming.parentDir,
+                targetName: naming.draft,
+                entryKind: naming.entryKind ?? 'file',
+              })
+            : await runner.submit({
+                projectId: naming.projectId,
+                parentDir: naming.parentDir,
+                name: naming.draft,
+                kind: naming.kind,
+                ...(naming.presetExtension ? { presetExtension: naming.presetExtension } : {}),
+              });
+        if (!inputSurvivesStructureResult(result)) {
+          // applied / unknown：收起输入行（unknown 的提示由状态栏保持可辨认）
+          setNaming(null);
+          return;
+        }
+        if (result === 'busy') {
+          setNaming((current) => (current ? { ...current, submitting: false, error: STRUCTURE_BUSY_MESSAGE } : current));
+          return;
+        }
+        // blocked / rejected：保留输入供修正，行内显示原因
+        // （原因已由 onNotice 在提交期间写入，这里只解除提交中状态）
+        setNaming((current) => (current ? { ...current, submitting: false } : current));
+      }, [naming, runner, structureRunner]);
+
+      const noteSelection = useCallback((projectId: string, kind: 'folder' | 'file', path: string) => {
+        const dir = kind === 'folder' ? path.replace(/\\/g, '/') : parentDirOf(path);
+        setSelectedDirByProject((current) => (current[projectId] === dir ? current : { ...current, [projectId]: dir }));
+      }, []);
+
+      const noteFocus = useCallback((target: TreeTarget, element: HTMLElement | null) => {
+        const rect = element?.getBoundingClientRect();
+        focusRef.current = {
+          target,
+          element,
+          left: rect?.left ?? 0,
+          top: rect?.top ?? 0,
+          height: rect?.height ?? 0,
+        };
+      }, []);
+
+      const activeTarget = useCallback(
+        (): TreeTarget => toolbarTargetOf(state.activeProjectId),
+        [state.activeProjectId],
+      );
+      const toolbarCreate = useCallback(
+        (kind: CreateEntryKindDto) => beginCreate(kind, activeTarget()),
+        [activeTarget, beginCreate],
+      );
+      const toolbarRefresh = useCallback(() => {
+        const target = activeTarget();
+        const problem = targetProblem(target);
+        if (problem) {
+          dispatch({ type: 'NOTICE', message: problem });
+          return;
+        }
+        const resolved = resolve(target);
+        if (!resolved.ok) {
+          dispatch({ type: 'NOTICE', message: resolved.reason });
+          return;
+        }
+        void actions.refreshTreeLevel(resolved.projectId, resolved.parentDir);
+      }, [activeTarget, dispatch, resolve, actions, targetProblem]);
+
+      const openContextMenu = useCallback((event: MouseEvent, target: TreeTarget) => {
+        // 输入框里的原生文本右键（剪切/复制/粘贴）不能抢
+        if ((event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        menuSeq.current += 1;
+        setMenu({ x: event.clientX, y: event.clientY, nonce: menuSeq.current, target, identity });
+      }, [identity]);
+
+      /**
+       * 菜单关闭（UX-02C-05 阶段 F）：
+       * - 命令执行时先关闭再执行（`ContextMenu` 已经这么做），这里只兜住 Escape；
+       * - Escape 关闭后把焦点还给触发它的那一行——键盘用户不该被扔回页面顶部。
+       */
+      const closeContextMenu = useCallback((reason?: 'escape' | 'other') => {
+        setMenu(null);
+        if (reason === 'escape') {
+          const element = focusRef.current?.element;
+          if (element && element.isConnected) element.focus();
+        }
+      }, []);
+
+      /** 世界变了 → 旧菜单立刻失效（不向其他工作区发送旧操作）。 */
+      useEffect(() => {
+        setMenu((current) => (current && current.identity !== identity ? null : current));
+      }, [identity]);
+
+      /** 项目被移除 / 改名失败后不该继续挂着一个指向它的编辑器。 */
+      useEffect(() => {
+        if (!projectRename) return;
+        if (!state.projects.some((project) => project.projectId === projectRename.projectId)) {
+          setProjectRename(null);
+        }
+      }, [state.projects, projectRename]);
+
+      const beginProjectRename = useCallback(
+        (projectId: string) => {
+          setMenu(null);
+          const project = state.projects.find((item) => item.projectId === projectId);
+          if (!project) {
+            dispatch({ type: 'NOTICE', message: '该项目已不在工作区里' });
+            return;
+          }
+          if (!isSupported(projectId)) {
+            dispatch({ type: 'NOTICE', message: '只有已授权的真实项目可以修改显示名称' });
+            return;
+          }
+          setProjectRename({ projectId, draft: project.name, error: null, saving: false });
+        },
+        [dispatch, isSupported, state.projects],
+      );
+
+      const setProjectRenameDraft = useCallback((value: string) => {
+        setProjectRename((current) => (current ? { ...current, draft: value, error: null } : current));
+      }, []);
+
+      const cancelProjectRename = useCallback(() => setProjectRename(null), []);
+
+      const submitProjectRename = useCallback(async (): Promise<void> => {
+        if (!projectRename || projectRename.saving || projectRenameBusy.current) return;
+        const checked = validateProjectName(projectRename.draft);
+        // 本地预检只挡"注定失败"的请求；权威判断仍在 Host
+        if (!checked.ok) {
+          setProjectRename((current) => (current ? { ...current, error: checked.message } : current));
+          return;
+        }
+        const project = state.projects.find((item) => item.projectId === projectRename.projectId);
+        if (!project) {
+          setProjectRename(null);
+          dispatch({ type: 'NOTICE', message: '该项目已不在工作区里' });
+          return;
+        }
+        // 名称没变：不发请求、不制造"已保存"的假象
+        if (project.name === checked.name) {
+          setProjectRename(null);
+          return;
+        }
+        projectRenameBusy.current = true;
+        setProjectRename((current) => (current ? { ...current, saving: true, error: null } : current));
+        try {
+          const outcome = await actions.renameProject(projectRename.projectId, checked.name);
+          if (outcome.status === 'APPLIED') {
+            setProjectRename(null);
+            return;
+          }
+          // 失败：界面保持原名（未派发任何改名），输入保留供修正
+          setProjectRename((current) => (current ? { ...current, saving: false, error: outcome.message } : current));
+        } catch {
+          setProjectRename((current) =>
+            current ? { ...current, saving: false, error: '重命名失败：网络或本地服务不可用' } : current,
+          );
+        } finally {
+          projectRenameBusy.current = false;
+        }
+      }, [actions, dispatch, projectRename, state.projects]);
+
+      const requestRemoveProject = useCallback(
+        (projectId: string) => {
+          setMenu(null);
+          const project = state.projects.find((item) => item.projectId === projectId);
+          if (!project) {
+            dispatch({ type: 'NOTICE', message: '该项目已不在工作区里' });
+            return;
+          }
+          setRemoveTarget(project);
+        },
+        [dispatch, state.projects],
+      );
+
+      /**
+       * 树范围内的键盘（阶段 E2）。
+       *
+       * 事件只绑在文件树的根 `<ul>` 上：焦点在正文编辑器 / 输入框 / 其它模块时
+       * 根本不会冒泡到这里，因此不存在"劫持别人的快捷键"。
+       */
+      const onTreeKeyDown = useCallback(
+        (event: ReactKeyboardEvent<HTMLElement>) => {
+          const element = event.target as HTMLElement | null;
+          const inEditable = Boolean(
+            element?.closest('input, textarea, select, [contenteditable="true"]'),
+          );
+          const focused = focusRef.current;
+          const intent = treeKeyIntentOf({
+            key: event.key,
+            shiftKey: event.shiftKey,
+            inEditable,
+            hasTarget: focused !== null,
+          });
+          if (!intent) return;
+          if (intent === 'escape') {
+            // 输入行自己有 Escape（取消改名/创建）；这里只负责菜单
+            if (menu) {
+              event.preventDefault();
+              closeContextMenu('escape');
+            }
+            return;
+          }
+          const target = focused?.target;
+          if (!target) return;
+          if (intent === 'rename') {
+            event.preventDefault();
+            // 已经有输入行/改名会话时不叠加：不把用户正在打的字换掉
+            if (naming || projectRename) return;
+            const matrix = matrixOf(target);
+            if (!matrix.rename.visible) return;
+            if (matrix.rename.disabled) {
+              dispatch({ type: 'NOTICE', message: matrix.rename.hint ?? '当前不能改名' });
+              return;
+            }
+            beginRename(target);
+            return;
+          }
+          // context-menu：没有鼠标坐标，就落在焦点行的左下方
+          event.preventDefault();
+          menuSeq.current += 1;
+          setMenu({
+            x: (focused?.left ?? 0) + 12,
+            y: (focused?.top ?? 0) + (focused?.height ?? 0),
+            nonce: menuSeq.current,
+            target,
+            identity,
+          });
+        },
+        [beginRename, closeContextMenu, dispatch, identity, matrixOf, menu, naming, projectRename],
+      );
+
+      /* ---------------- 菜单项：矩阵 → 具体命令 ---------------- */
+
+      const openMetadata = useCallback(
+        (target: TreeTarget, focus: 'alias' | 'tags' | 'color') => {
+          setMenu(null);
+          const problem = targetProblem(target);
+          if (problem) {
+            dispatch({ type: 'NOTICE', message: problem });
+            return;
+          }
+          const projectId = target.projectId;
+          const path = target.nodePath == null ? '' : normalizeDir(target.nodePath);
+          if (!projectId || (path === '' && target.origin !== 'project-root')) {
+            dispatch({ type: 'NOTICE', message: '只有已授权项目里的文件、文件夹或项目根可以标注' });
+            return;
+          }
+          metadata.open(
+            {
+              projectId,
+              path,
+              name: path === '' ? '项目根' : (path.split('/').pop() ?? path),
+              ...(target.nodeMeta ? { meta: target.nodeMeta } : {}),
+            },
+            focus,
+          );
+        },
+        [dispatch, metadata, targetProblem],
+      );
+
+      const menuItems = useMemo<readonly MenuItem[]>(() => {
+        if (!menu) return [];
+        const target = menu.target;
+        const matrix = matrixOf(target);
+        /** 计时的"刷新"：目标目录由与创建相同的解析规则给出，链接/无项目时不发请求。 */
+        const refresh = (): void => {
+          setMenu(null);
+          const problem = targetProblem(target);
+          if (problem) {
+            dispatch({ type: 'NOTICE', message: problem });
+            return;
+          }
+          const resolved = resolve(target);
+          if (!resolved.ok) {
+            dispatch({ type: 'NOTICE', message: resolved.reason });
+            return;
+          }
+          void actions.refreshTreeLevel(resolved.projectId, resolved.parentDir);
+        };
+        const create = (kind: CreateEntryKindDto, preset?: string) => () => beginCreate(kind, target, preset);
+        const items: Record<TreeCommandId, MenuItem> = {
+          rename: { id: 'rename', label: '重命名', command: () => beginRename(target) },
+          move: { id: 'move', label: '移动到…', command: () => openMove(target) },
+          // 隐藏与取消隐藏共用一条"对这一个节点动手但不碰磁盘"的语义，矩阵保证只出现一条
+          hide: {
+            id: 'hide',
+            label: '从文件树隐藏',
+            command: () => void toggleVisibility(target, target.nodeHidden === true),
+          },
+          unhide: {
+            id: 'unhide',
+            label: '取消隐藏',
+            command: () => void toggleVisibility(target, true),
+          },
+          trash: {
+            id: 'trash',
+            label: '移入回收区',
+            command: () => {
+              setMenu(null);
+              const problem = targetProblem(target);
+              if (problem) {
+                dispatch({ type: 'NOTICE', message: problem });
+                return;
+              }
+              const projectId = target.projectId;
+              const path = normalizeDir(target.nodePath ?? '');
+              if (!projectId || path === '') {
+                dispatch({ type: 'NOTICE', message: '只有已授权项目里的普通文件可以移入回收区' });
+                return;
+              }
+              trash.openDelete(projectId, path);
+            },
+          },
+          'meta-alias': { id: 'meta-alias', label: '设置标注名…', command: () => openMetadata(target, 'alias') },
+          'meta-tags': { id: 'meta-tags', label: '编辑标签…', command: () => openMetadata(target, 'tags') },
+          'meta-color': { id: 'meta-color', label: '设置颜色…', command: () => openMetadata(target, 'color') },
+          'new-file': { id: 'new-file', label: '新建文件', command: create('file') },
+          'new-folder': { id: 'new-folder', label: '新建文件夹', command: create('directory') },
+          'new-supported': {
+            id: 'new-supported',
+            label: '创建已支持的扩展文件',
+            children: supportedExtensions.map((item) => ({
+              id: `new-supported:${item.extension}`,
+              label: item.label,
+              command: create('file', item.extension),
+            })),
+          },
+          refresh: {
+            id: 'refresh',
+            label: target.origin === 'project-root' ? '刷新项目根' : '刷新此目录',
+            command: refresh,
+          },
+          'rename-project': {
+            id: 'rename-project',
+            label: '修改项目显示名称…',
+            command: () => target.projectId && beginProjectRename(target.projectId),
+          },
+          'remove-project': {
+            id: 'remove-project',
+            label: '从工作台移除项目…',
+            command: () => target.projectId && requestRemoveProject(target.projectId),
+          },
+        };
+        const order = menuOrderOf(target.origin);
+        return order.map((id) => {
+          const base = items[id];
+          const cell = matrix[id];
+          const children = base.children?.filter((child) => !child.hidden);
+          return {
+            ...base,
+            ...(children ? { children } : {}),
+            hidden: !cell.visible || base.hidden === true,
+            ...(cell.hint ? { hint: cell.hint } : {}),
+            disabled: cell.disabled,
+          };
+        });
+      }, [
+        menu,
+        matrixOf,
+        isSupported,
+        state.activeProjectId,
+        dispatch,
+        targetProblem,
+        resolve,
+        actions,
+        beginCreate,
+        beginRename,
+        openMove,
+        openMetadata,
+        supportedExtensions,
+        toggleVisibility,
+        trash,
+        beginProjectRename,
+        requestRemoveProject,
+      ]);
+
+      const value = useMemo<TreeCommandsValue>(
+        () => ({
+          openContextMenu,
+          closeContextMenu: () => closeContextMenu('other'),
+          beginCreate,
+          beginRename,
+          openMove,
+          toggleVisibility,
+          setMoveTarget,
+          confirmMove,
+          cancelMove,
+          moveDialog,
+          toolbarCreate,
+          toolbarRefresh,
+          noteSelection,
+          noteFocus,
+          onTreeKeyDown,
+          isRootOpen,
+          toggleRoot,
+          projectRename,
+          beginProjectRename,
+          setProjectRenameDraft,
+          submitProjectRename,
+          cancelProjectRename,
+          requestRemoveProject,
+          naming,
+          setDraft: (draft) =>
+            setNaming((current) => (current ? { ...current, draft, error: null } : current)),
+          submitNaming,
+          cancelNaming,
+          supportedExtensions,
+        }),
+        [
+          openContextMenu,
+          closeContextMenu,
+          beginCreate,
+          beginRename,
+          openMove,
+          toggleVisibility,
+          setMoveTarget,
+          confirmMove,
+          cancelMove,
+          moveDialog,
+          toolbarCreate,
+          toolbarRefresh,
+          noteSelection,
+          noteFocus,
+          onTreeKeyDown,
+          isRootOpen,
+          toggleRoot,
+          projectRename,
+          beginProjectRename,
+          setProjectRenameDraft,
+          submitProjectRename,
+          cancelProjectRename,
+          requestRemoveProject,
+          naming,
+          submitNaming,
+          cancelNaming,
+          supportedExtensions,
+        ],
+      );
+
+      return (
+        <TreeCommandsContext.Provider value={value}>
+          {children}
+          {menu && (
+            <ContextMenu
+              key={menu.nonce}
+              x={menu.x}
+              y={menu.y}
+              items={menuItems}
+              identity={menu.identity}
+              onClose={(reason) => closeContextMenu(reason === 'escape' ? 'escape' : 'other')}
+            />
+          )}
+          <MoveEntryDialog />
+          {removeTarget && (
+            <RemoveProjectDialog
+              project={removeTarget}
+              open
+              onClose={() => setRemoveTarget(null)}
+            />
+          )}
+        </TreeCommandsContext.Provider>
+      );
+    }
+
+    export function useTreeCommands(): TreeCommandsValue {
+      const value = useContext(TreeCommandsContext);
+      if (!value) throw new Error('useTreeCommands 必须在 TreeCommandsProvider 内使用');
+      return value;
+    }
+
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///D:/Workspace/projects/weavespace/tests/suites/107-s11ux02c05r1-tree-hardening.test.ts:501:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: M03 改名链路仍然只有一条，且没有自动重试
+ok 31 - M03 改名链路仍然只有一条，且没有自动重试
+  ---
+  duration_ms: 3.221
+  type: 'test'
+  ...
+1..31
+# tests 31
+# suites 0
+# pass 9
+# fail 22
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 310.5761

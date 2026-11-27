@@ -258,8 +258,15 @@ export function treeTargetProblemOf(input: {
   if (!input.projectReady) return '项目当前不可用，命令没有执行';
   if (target.origin === 'project-root') return null;
   if (!input.entryPresent) return '这一行已经被移除或替换，命令没有执行';
-  if (target.nodeAnchor && input.currentAnchor && target.nodeAnchor !== input.currentAnchor) {
-    return '这一行对应的对象已经变化，命令没有执行';
+  /*
+   * 资源锚核验必须 fail-closed（UX-02C-05-R1）：
+   * 目标**带着锚**就等于"我们声称知道它是谁"，此刻却拿不到当前锚，
+   * 只能是"无法确认"，绝不能当成"身份一致"放行——那正好是对象被替换
+   * 且新锚也拿不到时的空档。目标本身没有锚（Provider 无身份能力）时不进入这段。
+   */
+  if (target.nodeAnchor) {
+    if (!input.currentAnchor) return '无法确认这一行的身份，命令没有执行';
+    if (target.nodeAnchor !== input.currentAnchor) return '这一行对应的对象已经变化，命令没有执行';
   }
   return null;
 }
@@ -346,14 +353,68 @@ export function menuIdentityOf(input: {
 }
 
 /* ------------------------------------------------------------------ */
+/* 资源身份（单击 / 双击必须绑定"发起时的那一个对象"）                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 一行的资源身份。
+ *
+ * 为什么不是 React `key`：同一个路径的文件被替换时，`key` 保持不变、组件实例被复用，
+ * 于是"上一次点击"会顺理成章地落到**新对象**上。锚（UX-02C-04-R1）由对象身份派生，
+ * 同路径替换必然改变它；工作区 + 项目 + 路径把"别的世界里的同名文件"也排除掉。
+ */
+export interface ActivationIdentity {
+  /** 工作区身份：切换工作区后，旧的在途点击不得执行。 */
+  readonly workspaceKey: string | null;
+  readonly projectId: string | null;
+  /** 归一化后的相对路径；项目根为 ''。 */
+  readonly path: string;
+  /** 资源锚；拿不到为 null（此时不参与"相等"以外的任何推断）。 */
+  readonly anchor: string | null;
+}
+
+export function activationIdentityOf(input: {
+  readonly workspaceKey: string | null;
+  readonly projectId: string | null;
+  readonly path?: string | null;
+  readonly anchor?: string | null;
+}): ActivationIdentity {
+  return {
+    workspaceKey: input.workspaceKey,
+    projectId: input.projectId,
+    path: normalizeDir(input.path ?? ''),
+    anchor: input.anchor ?? null,
+  };
+}
+
+function activationKeyOf(identity: ActivationIdentity): string {
+  return [
+    identity.workspaceKey ?? '',
+    identity.projectId ?? '',
+    identity.path,
+    identity.anchor ?? '',
+  ].join('\u0000');
+}
+
+/** 稳定字符串键：只用于 React 依赖数组，不参与业务判断。 */
+export function activationIdentityKey(identity: ActivationIdentity | null | undefined): string {
+  return identity ? activationKeyOf(identity) : '';
+}
+
+/** 两次交互是不是**同一个资源**。任一项不同都不算——包括"锚从有到无"。 */
+export function sameActivationResource(a: ActivationIdentity, b: ActivationIdentity): boolean {
+  return activationKeyOf(a) === activationKeyOf(b);
+}
+
+/* ------------------------------------------------------------------ */
 /* 单击 / 双击仲裁                                                     */
 /* ------------------------------------------------------------------ */
 
 export interface ActivationArbiter {
   /** 单击（`detail` 由浏览器给出：0 = 键盘触发，1 = 第一次点击，≥2 = 连击）。 */
-  click(detail: number): void;
-  /** 双击（`dblclick` 事件）。 */
-  doubleClick(): void;
+  click(detail: number, identity: ActivationIdentity): void;
+  /** 双击（`dblclick` 事件），`identity` 是第二次点击所在的资源。 */
+  doubleClick(identity: ActivationIdentity): void;
   /** 取消在途的单击（关闭菜单、组件卸载、会话失效时调用）。 */
   cancel(): void;
   isPending(): boolean;
@@ -362,10 +423,12 @@ export interface ActivationArbiter {
 /**
  * 名称区域"单击还是双击"的判别窗口（毫秒）。
  *
- * 取 200ms：低于常见双击间隔（180ms 左右的两连击仍能命中），又短到单击打开
- * 不会明显变慢。窗口只作用于**名称文字**上的点击，图标与行内空白仍是立即激活。
+ * UX-02C-05-R1 把 200 提到 500：200ms 只覆盖"电竞式"双击，普通用户 300–450ms 的
+ * 连击会掉进单击分支——第一下已经把文件打开，第二下再改名就被自己的会话保护挡住。
+ * 500ms 是常见双击阈值（Windows/Chrome 默认 `GetDoubleClickTime()`）的上界，
+ * 代价是名称区域的单击打开最多晚 500ms；图标与行内空白仍然立即激活。
  */
-export const NAME_DOUBLE_CLICK_WINDOW = 200;
+export const NAME_DOUBLE_CLICK_WINDOW = 500;
 
 /**
  * 单击 / 双击仲裁（双击名称改名用）。
@@ -377,46 +440,150 @@ export const NAME_DOUBLE_CLICK_WINDOW = 200;
  * 因此：名称区域的单击**延后一个短窗口**再执行，窗口内发生第二次点击就取消
  * 单击、只执行改名。窗口只作用于名称区域，且只有"这一行确实能改名"时才装配，
  * 图标/空白处的单击仍然是立即的；键盘触发的 click（detail=0）也立即执行。
+ *
+ * 每一次点击都带着**发起时的资源身份**：定时器到点与双击落槌之前都要和
+ * `currentIdentity()` 再核一次。同路径文件被替换（锚变）、切了项目、切了工作区、
+ * 或者身份已经无法确认时，这一下**什么都不做**——绝不把旧点击重新绑定到新对象。
  */
 export function createActivationArbiter(input: {
   readonly delay: number;
   readonly setTimer: (fn: () => void, delay: number) => unknown;
   readonly clearTimer: (handle: unknown) => void;
+  /** 这一行**现在**指向谁；拿不到（已卸载 / 身份未知）返回 null。 */
+  readonly currentIdentity: () => ActivationIdentity | null;
   readonly onSingle: () => void;
   readonly onDouble: () => void;
 }): ActivationArbiter {
   let pending: unknown = null;
+  /** 发起时的那一个资源：单击定时器与双击都必须拿它做核对。 */
+  let armed: ActivationIdentity | null = null;
 
   const clear = (): void => {
     if (pending === null) return;
     input.clearTimer(pending);
     pending = null;
   };
+  /** 身份仍然指向同一个资源（拿不到当前身份一律视为"不是"）。 */
+  const stillSame = (identity: ActivationIdentity): boolean => {
+    const current = input.currentIdentity();
+    return current !== null && sameActivationResource(identity, current);
+  };
 
   return {
-    click(detail) {
+    click(detail, identity) {
       // 键盘触发（Enter/Space 合成的 click）没有"等一下看是不是双击"的必要
       if (detail === 0) {
         clear();
-        input.onSingle();
+        armed = null;
+        if (stillSame(identity)) input.onSingle();
         return;
       }
-      // 连击的第二下：交给 doubleClick，绝不在这里再激活一次
+      // 连击的第二下：必须和第一次属于**同一个资源**，否则整段手势作废
       if (detail >= 2) {
+        if (armed !== null && !sameActivationResource(armed, identity)) {
+          clear();
+          armed = null;
+          return;
+        }
         clear();
+        armed = identity;
         return;
       }
       clear();
+      armed = identity;
       pending = input.setTimer(() => {
         pending = null;
+        const target = armed;
+        armed = null;
+        // 到点再核一次：这 500ms 里对象可能已经被刷新/替换掉
+        if (target === null || !stillSame(target)) return;
         input.onSingle();
       }, input.delay);
     },
-    doubleClick() {
+    doubleClick(identity) {
+      // 没有可核对的第一次点击：不猜，直接不动
+      if (armed === null) return;
+      if (!sameActivationResource(armed, identity)) {
+        clear();
+        armed = null;
+        return;
+      }
       clear();
+      armed = null;
+      if (!stillSame(identity)) return;
       input.onDouble();
     },
-    cancel: clear,
+    cancel() {
+      clear();
+      armed = null;
+    },
     isPending: () => pending !== null,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 项目显示名编辑会话的归属                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * "世界"范围：模式 + 工作区模式 + 工作区摘要（**不含**当前项目）。
+ *
+ * 项目改名会话属于某一个世界；世界一变，未提交的会话必须失效，
+ * 否则旧工作区的草稿会提交到新工作区里。
+ */
+export function workspaceScopeOf(input: {
+  readonly mode: string;
+  readonly workspaceMode: string;
+  readonly workspaceKey: string | null;
+}): string {
+  return [input.mode, input.workspaceMode, input.workspaceKey ?? ''].join('\u0000');
+}
+
+export type ProjectRenameGate = 'ok' | 'scope-changed' | 'project-missing' | 'unsupported';
+
+/**
+ * 提交前的归属复核。
+ *
+ * 顺序是产品语义：先确认"这个会话还属于当前世界"，再说项目还在不在、能不能改。
+ * 旧世界的会话即使在新世界里能找到同名项目，也**不是**同一个会话。
+ */
+export function projectRenameGateOf(input: {
+  readonly sessionScope: string;
+  readonly currentScope: string;
+  readonly projectExists: boolean;
+  readonly projectSupported: boolean;
+}): ProjectRenameGate {
+  if (input.sessionScope !== input.currentScope) return 'scope-changed';
+  if (!input.projectExists) return 'project-missing';
+  if (!input.projectSupported) return 'unsupported';
+  return 'ok';
+}
+
+export function projectRenameGateMessage(gate: ProjectRenameGate): string | null {
+  switch (gate) {
+    case 'ok':
+      return null;
+    case 'scope-changed':
+      return '工作区或模式已经改变，旧的改名会话已失效';
+    case 'project-missing':
+      return '该项目已不在工作区里';
+    case 'unsupported':
+      return '只有已授权的真实项目可以修改显示名称';
+  }
+}
+
+export type ProjectRenameResultEffect = 'close' | 'keep-error' | 'notice-only';
+
+/**
+ * 请求回来之后怎么落地。
+ *
+ * `notice-only` 的存在理由：请求**已经发出去了**，不能因为会话在此期间被收起，
+ * 就把结果丢掉、假装"什么都没发生"，更不能自动重发一次。
+ */
+export function projectRenameResultEffect(input: {
+  readonly applied: boolean;
+  readonly sessionStillCurrent: boolean;
+}): ProjectRenameResultEffect {
+  if (!input.sessionStillCurrent) return 'notice-only';
+  return input.applied ? 'close' : 'keep-error';
 }
