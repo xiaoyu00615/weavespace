@@ -6,7 +6,7 @@
  * 上下分屏、嵌套分屏、多个独立视图组都写不出来。本模块先把"布局可以被表达、
  * 被校验、被序列化"这件事做成可测试的确定性，再让未来的 WorkspaceState 接上它。
  *
- * 三条纪律，违反任意一条都会让后续重构失去支点：
+ * 四条纪律，违反任意一条都会让后续重构失去支点：
  *
  * 1. **只做结构**。这里不知道文档、不知道未保存修改、不做授权判断。
  *    "关掉这个视图会不会丢草稿"是 ViewGroup / DocumentSession 管理层的事。
@@ -15,6 +15,14 @@
  *    同一棵树，测试与恢复流程都能逐字节比对。
  * 3. **fail-closed**。非法输入一律返回明确错误码，不"尽力修复"、不静默钳制。
  *    布局是后续所有视图的骨架，宁可拒绝，也不能生成一棵看起来正常但语义错误的树。
+ * 4. **封闭结构**。根对象、PaneNode、SplitNode 各有**显式字段白名单**，
+ *    多一个字段就是 `unexpected-field`。布局树不该携带文档/会话身份，
+ *    所以外部对象里混进来的 `docId` / `sessionId` / `path` / `viewId`
+ *    不能跟着树一起被序列化、被恢复。`parseLayoutTree` 通过校验后仍会重建，
+ *    返回值与入参不共享任何引用。
+ *
+ * 比例有两套区间，**不要混用**（见 `MIN_SPLIT_RATIO` 与 `MIN_UI_SPLIT_RATIO`）：
+ * 结构上允许 10%~90%，用户拖动只能到 25%~75%。
  */
 /* ------------------------------------------------------------------ */
 /* 类型                                                                */
@@ -68,11 +76,14 @@ export interface LayoutTree {
 /**
  * 错误码。
  *
- * 分两类：`invalid-*` / `duplicate-*` / `empty-identity` / `cyclic-tree` /
- * `depth-exceeded` / `pane-limit-exceeded` 是**数据非法**（校验失败）；
- * `node-not-found` / `split-not-found` / `pane-not-found` / `last-pane` 是
- * **操作无法执行**（数据本身没问题）。调用方据此决定是"拒绝这份数据"
- * 还是"告诉用户换个目标"。
+ * 分三类：
+ * - **数据非法**：`invalid-*` / `duplicate-*` / `empty-identity` / `cyclic-tree` /
+ *   `depth-exceeded` / `pane-limit-exceeded` / `unexpected-field`——"这份数据不能当布局用"；
+ * - **操作参数非法**：`invalid-position`——"这个动作说不通"；
+ * - **操作无法执行**：`node-not-found` / `split-not-found` / `pane-not-found` / `last-pane`
+ *   ——数据本身没问题，只是这个动作在当前结构上做不到。
+ *
+ * 调用方据此决定是"拒绝这份数据"还是"告诉用户换个目标"。
  */
 export type LayoutErrorCode =
   | 'invalid-tree'
@@ -80,6 +91,8 @@ export type LayoutErrorCode =
   | 'invalid-orientation'
   | 'invalid-split'
   | 'invalid-ratio'
+  | 'invalid-position'
+  | 'unexpected-field'
   | 'duplicate-node-id'
   | 'duplicate-group-id'
   | 'empty-identity'
@@ -141,6 +154,30 @@ export const DEFAULT_SPLIT_RATIO = 0.5;
 export const MAX_LAYOUT_DEPTH = 8;
 export const MAX_LAYOUT_PANES = 16;
 
+/**
+ * UI **拖动**的比例区间（25%~75%）。
+ *
+ * 与上面的模型结构区间是两件事，不能混用：
+ * - 结构区间 0.1~0.9 回答"这个布局能不能成立"——低于 10% 的窗格实际上已经不可用；
+ * - 拖动区间 0.25~0.75 回答"用户能把分隔条拖到哪"——沿用旧 reducer 的 25/75
+ *   （`workspace-reducer.ts:22-23`），保证新界面拖动起来与既有界面手感一致。
+ *
+ * 所以"结构上允许 0.15"和"拖动到不了 0.15"可以同时成立，这是有意的。
+ */
+export const MIN_UI_SPLIT_RATIO = 0.25;
+export const MAX_UI_SPLIT_RATIO = 0.75;
+
+/**
+ * 旧持久化（V1）里 `splitRatio` 的真实取值域：**25~75 的整数百分比**。
+ *
+ * 两个常量 + 整数判定缺一不可：旧 reducer 的 `clampRatio`
+ * （`workspace-reducer.ts:71-74`）先 `Math.round` 再钳进 25~75，所以
+ * `25.5` / `20` / `80` 从来不是 V1 里会出现的合法值。转换时把非法旧值
+ * "凑成能用的样子"，等于替一份损坏的存档编造布局。
+ */
+export const V1_MIN_SPLIT_RATIO = 25;
+export const V1_MAX_SPLIT_RATIO = 75;
+
 /* ------------------------------------------------------------------ */
 /* 内部工具                                                            */
 /* ------------------------------------------------------------------ */
@@ -168,15 +205,61 @@ function isOrientation(value: unknown): value is LayoutOrientation {
 }
 
 /**
- * 供 UI 拖动时使用的钳制工具。
+ * 新 Pane 的落位。
+ *
+ * 类型上只有两个值，运行时仍要显式校验：调用方可能是 `JSON.parse` 的结果、
+ * 恢复流程里的旧记录，或者一段被改坏的代码。落位非法的后果是"新窗格出现在
+ * 没被预期的位置"，而且不会报错——这种静默错位比抛异常难查得多。
+ */
+function isPosition(value: unknown): value is 'first' | 'second' {
+  return value === 'first' || value === 'second';
+}
+
+/**
+ * 结构钳制：把任意数值收敛到模型允许的 0.1~0.9。
  *
  * 模型 API 自己**不**钳制（非法值直接拒绝，见 `setSplitRatio`）：
- * 静默改小/改大会让调用方以为设置成功了。拖动过程需要连续手感，才用这个，
- * 且边界仍从本模块取，不在组件里再写一遍 0.1 / 0.9。
+ * 静默改小/改大会让调用方以为设置成功了。这个函数只给"必须得到一个能进模型的数"
+ * 的场合用，边界从本模块取，调用方不要再写一遍 0.1 / 0.9。
  */
 export function clampLayoutRatio(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_SPLIT_RATIO;
   return Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, value));
+}
+
+/**
+ * 拖动钳制：把指针位置收敛到 UI 允许的 25%~75%。
+ *
+ * 与 `clampLayoutRatio` **不是一个函数**：那个回答"结构能不能成立"，这个回答
+ * "用户能拖到哪"。拖动时用它，用户永远拖不出一个结构上合法但视觉上不可用的
+ * 极窄窗格；程序化设置（恢复、测试）走 `setSplitRatio`，可以用到 0.1~0.9 全区间。
+ */
+export function clampUiSplitRatio(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_SPLIT_RATIO;
+  return Math.min(MAX_UI_SPLIT_RATIO, Math.max(MIN_UI_SPLIT_RATIO, value));
+}
+
+/**
+ * 字段白名单。
+ *
+ * 布局树是**封闭**结构：多一个字段就说明这份对象不是我们的数据。只校验
+ * "必需字段在不在"是不够的——外部对象里混进来的 `docId` / `sessionId` /
+ * `path` / `viewId` 会跟着树一起被序列化、被恢复、被当成布局的一部分，
+ * 而布局树按设计**不该**携带任何文档或会话身份（见模块头注释）。
+ */
+const ROOT_FIELDS: readonly string[] = ['version', 'root'];
+const PANE_FIELDS: readonly string[] = ['type', 'nodeId', 'groupId'];
+const SPLIT_FIELDS: readonly string[] = ['type', 'nodeId', 'orientation', 'ratio', 'children'];
+
+/** 第一个不在白名单里的**自有可枚举**字段（原型上的不算，`JSON.parse` 也只有自有字段）。 */
+function firstUnexpectedField(
+  record: Record<string, unknown>,
+  allowed: readonly string[],
+): string | null {
+  for (const key of Object.keys(record)) {
+    if (!allowed.includes(key)) return key;
+  }
+  return null;
 }
 
 /**
@@ -211,6 +294,10 @@ function checkNode(
   const type = record.type;
   if (type !== 'pane' && type !== 'split') {
     return { error: 'invalid-node', detail: `未知节点类型：${String(type)}` };
+  }
+  const unexpected = firstUnexpectedField(record, type === 'pane' ? PANE_FIELDS : SPLIT_FIELDS);
+  if (unexpected !== null) {
+    return { error: 'unexpected-field', detail: `${type} 节点不允许字段：${unexpected}` };
   }
 
   const nodeId = record.nodeId;
@@ -270,6 +357,10 @@ export function validateLayoutTree(value: unknown): LayoutProblem | null {
   if (record.version !== LAYOUT_TREE_VERSION) {
     return { error: 'invalid-tree', detail: `不支持的版本：${String(record.version)}` };
   }
+  const unexpected = firstUnexpectedField(record, ROOT_FIELDS);
+  if (unexpected !== null) {
+    return { error: 'unexpected-field', detail: `根对象不允许字段：${unexpected}` };
+  }
   if (!('root' in record)) {
     return { error: 'invalid-tree', detail: '缺少 root' };
   }
@@ -279,9 +370,11 @@ export function validateLayoutTree(value: unknown): LayoutProblem | null {
 /**
  * 构造完成前的最后一道闸门。
  *
- * 每个修改函数都走这里：先按操作语义改树，再整棵校验。局部检查只负责给出
- * 更准确的"操作类"错误码（找不到节点等），**结构不变量一律由这里兜底**——
- * 少写一个边界就是非法树，这里会当场拦住，不会流到 UI。
+ * 顺序是"**先验输入、再动手、最后兜底**"：
+ * 1. 每个修改入口先 `validateLayoutTree(tree)`——损坏输入（环、非法节点、超限）
+ *    在进入递归**之前**就被拒绝，不会栈溢出，也不会抛异常；
+ * 2. 按操作语义改树（局部检查给出更准确的"操作类"错误码，如找不到节点）；
+ * 3. 结果整棵再校验一次——少写一个边界就是非法树，这里当场拦住，不会流到 UI。
  */
 function commit(tree: LayoutTree): LayoutResult<LayoutTree> {
   const problem = validateLayoutTree(tree);
@@ -290,21 +383,38 @@ function commit(tree: LayoutTree): LayoutResult<LayoutTree> {
 }
 
 /**
+ * 修改入口的**前置**闸门。
+ *
+ * 为什么不能只靠 `commit`：`replaceNode` / `removePane` 是递归函数，环状输入
+ * 在"改完再校验"之前就已经把栈打爆了。校验必须发生在递归之前。
+ */
+function rejectBrokenInput(tree: LayoutTree): LayoutResult<LayoutTree> | null {
+  const problem = validateLayoutTree(tree);
+  if (problem === null) return null;
+  return { ok: false, error: problem.error, detail: `输入布局不合法：${problem.detail}` };
+}
+
+/**
  * 把 `targetId` 那个节点替换成 `make(原节点)`，并只重建**从根到它的路径**。
  *
  * 未修改的分支保持**同一对象引用**（结构化共享）：这让"只调了内层比例"可以被
  * 测试用 `===` 证明外层没被重写，也让未来的 React memo 能真正生效。
+ *
+ * `depth` 是兜底：入口都已验过树，合法树走不到上限；这里只是为了"万一有人绕过
+ * 前置校验"时不至于无限递归。
  */
 function replaceNode(
   node: LayoutNode,
   targetId: string,
   make: (target: LayoutNode) => LayoutNode,
+  depth = 1,
 ): LayoutNode | null {
+  if (depth > MAX_LAYOUT_DEPTH) return null;
   if (node.nodeId === targetId) return make(node);
   if (node.type === 'pane') return null;
-  const left = replaceNode(node.children[0], targetId, make);
+  const left = replaceNode(node.children[0], targetId, make, depth + 1);
   if (left !== null) return { ...node, children: [left, node.children[1]] };
-  const right = replaceNode(node.children[1], targetId, make);
+  const right = replaceNode(node.children[1], targetId, make, depth + 1);
   if (right !== null) return { ...node, children: [node.children[0], right] };
   return null;
 }
@@ -315,10 +425,11 @@ function replaceNode(
  * 关键在于**在每一层重新组装**：直接父 split 因为少了一个孩子而自动塌陷
  * （剩下那个孩子顶上来），更上层的结构原样保留。不需要"先找父节点再改父的父"。
  */
-function removePane(node: LayoutNode, groupId: string): LayoutNode | null {
+function removePane(node: LayoutNode, groupId: string, depth = 1): LayoutNode | null {
+  if (depth > MAX_LAYOUT_DEPTH) return node; // 兜底：同 replaceNode，合法树走不到
   if (node.type === 'pane') return node.groupId === groupId ? null : node;
-  const left = removePane(node.children[0], groupId);
-  const right = removePane(node.children[1], groupId);
+  const left = removePane(node.children[0], groupId, depth + 1);
+  const right = removePane(node.children[1], groupId, depth + 1);
   if (left === null && right === null) return node; // groupId 唯一，理论上不可达
   if (left === null) return right; // 左子被删 → 右子顶上来
   if (right === null) return left; // 右子被删 → 左子顶上来
@@ -328,6 +439,7 @@ function removePane(node: LayoutNode, groupId: string): LayoutNode | null {
 
 /** 深度优先、左 → 右。这个顺序就是屏幕上的视觉顺序，测试据此断言。 */
 function walk(node: LayoutNode, visit: (node: LayoutNode, depth: number) => void, depth = 1): void {
+  if (depth > MAX_LAYOUT_DEPTH) return; // 兜底：损坏数据不得把查询拖进无限递归
   visit(node, depth);
   if (node.type === 'split') {
     walk(node.children[0], visit, depth + 1);
@@ -379,6 +491,14 @@ export interface SplitPaneInput {
  * - 新 split 的 `nodeId` 必须由调用方指定，模块不生成。
  */
 export function splitPane(tree: LayoutTree, input: SplitPaneInput): LayoutResult<LayoutTree> {
+  const broken = rejectBrokenInput(tree);
+  if (broken !== null) return broken;
+  if (!isPosition(input.position)) {
+    return fail(
+      'invalid-position',
+      `position 只能是 first 或 second，实际：${String(input.position)}`,
+    );
+  }
   const target = findLayoutNode(tree, input.paneNodeId);
   if (target === null || target.type !== 'pane') {
     return fail('node-not-found', `找不到可分的 pane：${input.paneNodeId}`);
@@ -417,6 +537,8 @@ export interface SetSplitRatioInput {
  * 新模型存 0~1 的小数，舍入会丢掉拖动精度。
  */
 export function setSplitRatio(tree: LayoutTree, input: SetSplitRatioInput): LayoutResult<LayoutTree> {
+  const broken = rejectBrokenInput(tree);
+  if (broken !== null) return broken;
   const target = findLayoutNode(tree, input.splitNodeId);
   if (target === null || target.type !== 'split') {
     return fail('split-not-found', `找不到分屏节点：${input.splitNodeId}`);
@@ -444,6 +566,8 @@ export interface MergePaneInput {
  * 模型只回答"结构上能不能删"，答案只有"能"（>=2 片）与"不能"（最后一片）。
  */
 export function mergePane(tree: LayoutTree, input: MergePaneInput): LayoutResult<LayoutTree> {
+  const broken = rejectBrokenInput(tree);
+  if (broken !== null) return broken;
   if (findPaneByGroup(tree, input.groupId) === null) {
     return fail('pane-not-found', `找不到视图组对应的 pane：${input.groupId}`);
   }
@@ -492,7 +616,14 @@ export function findPaneByGroup(tree: LayoutTree, groupId: string): PaneNode | n
       if (node.groupId === groupId) return node;
       continue;
     }
-    stack.push(node.children[1], node.children[0]);
+    /**
+     * 不写 `else` 就直接取 `children`：损坏数据里可能出现未知 `type`
+     * （如 `{type:'grid'}`），那样会读 `undefined[1]` 抛 TypeError。
+     * 查询函数不该有崩溃面 —— 想拦这种数据是 `validateLayoutTree` 的职责。
+     */
+    const children = (node as { children?: unknown }).children;
+    if (!Array.isArray(children) || children.length !== 2) continue;
+    stack.push(children[1] as LayoutNode, children[0] as LayoutNode);
   }
   return null;
 }
@@ -533,27 +664,58 @@ export function layoutPaneCount(tree: LayoutTree): number {
 /* ------------------------------------------------------------------ */
 
 /**
- * 序列化：先校验再输出，非法树不产出字符串。
+ * 把一棵**已通过校验**的树重建为只含白名单字段的规范树。
  *
- * 输出是稳定的（键序由对象构造决定），所以"序列化 → 解析 → 再序列化"
+ * 为什么"校验通过还要重建"：校验与使用之间隔着别人的代码。返回值若是原对象
+ * 引用，调用方（或任何持有同一对象的代码）之后给某个节点挂一个 `docId`，
+ * 这棵"已解析"的树就悄悄变了——而 `parse` 的语义是"这是我要用的那份数据"。
+ * 重建一次，代价是 O(节点数)，换来的是"解析结果与世界脱钩"。
+ *
+ * 属性顺序固定（`version` → `root`；`type` → ... ），所以序列化输出稳定。
+ */
+function normalizeNode(node: LayoutNode): LayoutNode {
+  if (node.type === 'pane') {
+    return { type: 'pane', nodeId: node.nodeId, groupId: node.groupId };
+  }
+  return {
+    type: 'split',
+    nodeId: node.nodeId,
+    orientation: node.orientation,
+    ratio: node.ratio,
+    children: [normalizeNode(node.children[0]), normalizeNode(node.children[1])],
+  };
+}
+
+function normalizeLayoutTree(tree: LayoutTree): LayoutTree {
+  return { version: LAYOUT_TREE_VERSION, root: normalizeNode(tree.root) };
+}
+
+/**
+ * 序列化：先校验、再规范化、然后输出。
+ *
+ * 两道保险都必要：`validateLayoutTree` 拦住"多字段的树"，`normalizeLayoutTree`
+ * 保证即使将来校验被放宽或绕过，落盘的字节里也只有模型定义过的字段。
+ * 输出稳定（键序由 `normalizeNode` 固定），所以"序列化 → 解析 → 再序列化"
  * 必须逐字节相同，测试据此断言 round-trip 无损。
  */
 export function serializeLayoutTree(tree: LayoutTree): LayoutResult<string> {
   const problem = validateLayoutTree(tree);
   if (problem !== null) return { ok: false, error: problem.error, detail: problem.detail };
-  return { ok: true, value: JSON.stringify(tree) };
+  return { ok: true, value: JSON.stringify(normalizeLayoutTree(tree)) };
 }
 
 /**
  * 解析外部数据（`JSON.parse` 的结果或任何 `unknown`）为布局树。
  *
- * 不做"尽力修复"：形状不对、版本不对、比例越界都直接拒绝。布局是后续所有
- * 视图的骨架，修复出一棵"看起来能用"的树比报错危险得多。
+ * 不做"尽力修复"：形状不对、版本不对、比例越界、多出一个字段都直接拒绝。
+ * 布局是后续所有视图的骨架，修复出一棵"看起来能用"的树比报错危险得多。
+ *
+ * 通过校验后仍然**重建**：返回的是新对象，与入参不共享任何引用。
  */
 export function parseLayoutTree(value: unknown): LayoutResult<LayoutTree> {
   const problem = validateLayoutTree(value);
   if (problem !== null) return { ok: false, error: problem.error, detail: problem.detail };
-  return { ok: true, value: value as LayoutTree };
+  return { ok: true, value: normalizeLayoutTree(value as LayoutTree) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -588,6 +750,11 @@ export interface LayoutV1Identity {
  *
  * 所以映射是：`'vertical'` → `orientation: 'horizontal'`，`splitRatio / 100` → `ratio`。
  * `tabIndex` / `docId` / `sessionId` 一概不进新树——布局树只描述结构。
+ *
+ * **`splitRatio` 必须满足旧版的真实规则**：`Number.isInteger` 且落在
+ * `V1_MIN_SPLIT_RATIO`~`V1_MAX_SPLIT_RATIO`（25~75）。`25.5` / `20` / `80`
+ * 都不是 V1 会产生的值，一律 `invalid-ratio`——不四舍五入、不钳制、不"凑成
+ * 能用的样子"。
  *
  * 单视图时只要求 `primary` 身份；双视图时 `secondary` 与 `splitNodeId` 缺一即报
  * `empty-identity`，绝不自造一个。
@@ -635,6 +802,23 @@ export function layoutTreeFromV1(input: unknown, identity: LayoutV1Identity): La
   const splitRatio = uiRecord.splitRatio;
   if (typeof splitRatio !== 'number' || !Number.isFinite(splitRatio)) {
     return fail('invalid-ratio', `splitRatio 不是有限数值：${String(splitRatio)}`);
+  }
+  /**
+   * 旧值必须是 **25~75 的整数百分比**。
+   *
+   * 旧 reducer 的 `clampRatio`（`workspace-reducer.ts:71-74`）先 `Math.round`
+   * 再钳进 25~75，所以 V1 里根本不会出现 `25.5` / `20` / `80`。这些值只可能
+   * 来自被手工改过或写坏了的存档——此时若"顺手 除以 100 再算合法"，等于替
+   * 一份损坏的记录编造一个布局，用户下次打开会看到一个自己从没设过的分屏。
+   */
+  if (!Number.isInteger(splitRatio)) {
+    return fail('invalid-ratio', `splitRatio 必须是整数百分比：${splitRatio}`);
+  }
+  if (splitRatio < V1_MIN_SPLIT_RATIO || splitRatio > V1_MAX_SPLIT_RATIO) {
+    return fail(
+      'invalid-ratio',
+      `splitRatio 必须在 ${V1_MIN_SPLIT_RATIO}~${V1_MAX_SPLIT_RATIO} 之间：${splitRatio}`,
+    );
   }
 
   const secondary = identity.secondary;

@@ -21,8 +21,13 @@ import {
   MAX_LAYOUT_DEPTH,
   MAX_LAYOUT_PANES,
   MAX_SPLIT_RATIO,
+  MAX_UI_SPLIT_RATIO,
   MIN_SPLIT_RATIO,
+  MIN_UI_SPLIT_RATIO,
+  V1_MAX_SPLIT_RATIO,
+  V1_MIN_SPLIT_RATIO,
   clampLayoutRatio,
+  clampUiSplitRatio,
   createLayoutTree,
   findLayoutNode,
   findPaneByGroup,
@@ -875,4 +880,267 @@ test('LTA-24 循环引用拒绝：同一节点对象被复用成 DAG / 真环都
   const problem = validateLayoutTree({ version: 1, root: self });
   assert.notEqual(problem, null);
   assert.equal(problem?.error, 'cyclic-tree');
+});
+
+/* ================================================================== */
+/* LTA-25 ~ LTA-29：严格字段白名单（R1 / P1）                            */
+/*                                                                     */
+/* 只校验"必需字段在不在"是不够的：外部对象里混进来的 `docId` /          */
+/* `sessionId` / `path` / `viewId` 会跟着树一起被序列化、被恢复、被当成  */
+/* 布局的一部分。布局树必须是**封闭**的——多一个字段就拒绝。              */
+/* ================================================================== */
+
+test('LTA-25 根对象只允许 version 与 root，多一个字段就拒绝', () => {
+  const base = ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+  assert.equal(validateLayoutTree(base), null);
+
+  assert.equal(validateLayoutTree({ ...base, docId: 'd1' })?.error, 'unexpected-field');
+  assert.equal(validateLayoutTree({ ...base, workspaceKey: 'wk' })?.error, 'unexpected-field');
+  assert.equal(validateLayoutTree({ ...base, savedAt: '2026-01-01' })?.error, 'unexpected-field');
+  // 拒绝就是拒绝：不返回一棵"已经丢掉多余字段"的树
+  assert.equal(err(parseLayoutTree({ ...base, sessionId: 's1' })), 'unexpected-field');
+});
+
+test('LTA-26 PaneNode 只允许 type / nodeId / groupId', () => {
+  const pane = { type: 'pane', nodeId: 'p1', groupId: 'g1' };
+  assert.equal(validateLayoutTree({ version: 1, root: pane }), null);
+
+  for (const extra of ['docId', 'sessionId', 'path', 'viewId', 'anchor', 'tabIndex']) {
+    assert.equal(
+      validateLayoutTree({ version: 1, root: { ...pane, [extra]: 'x' } })?.error,
+      'unexpected-field',
+      `Pane 不应接受字段 ${extra}`,
+    );
+  }
+});
+
+test('LTA-27 SplitNode 只允许 type / nodeId / orientation / ratio / children', () => {
+  const split = {
+    type: 'split',
+    nodeId: 's1',
+    orientation: 'horizontal',
+    ratio: 0.5,
+    children: [PANE('p1', 'g1'), PANE('p2', 'g2')],
+  };
+  assert.equal(validateLayoutTree({ version: 1, root: split }), null);
+
+  for (const extra of ['docId', 'viewId', 'panes', 'activeTabId', 'groupId']) {
+    assert.equal(
+      validateLayoutTree({ version: 1, root: { ...split, [extra]: 'x' } })?.error,
+      'unexpected-field',
+      `Split 不应接受字段 ${extra}`,
+    );
+  }
+});
+
+test('LTA-28 parseLayoutTree 与外部对象彻底脱钩：不是原引用，改原对象不影响解析结果', () => {
+  const source = { version: 1, root: { type: 'pane', nodeId: 'p1', groupId: 'g1' } };
+  const parsed = ok(parseLayoutTree(source));
+  assert.deepEqual(parsed, source);
+  // 必须是重建出来的新对象：共享引用会让"解析"变成一句空话
+  assert.notEqual(parsed, source);
+  assert.notEqual(parsed.root, source.root);
+
+  (source.root as { nodeId: string }).nodeId = 'hacked';
+  assert.equal(parsed.root.type === 'pane' ? parsed.root.nodeId : null, 'p1');
+
+  // 嵌套同样要脱钩
+  const nested = {
+    version: 1,
+    root: {
+      type: 'split',
+      nodeId: 's1',
+      orientation: 'horizontal',
+      ratio: 0.5,
+      children: [PANE('p1', 'g1'), PANE('p2', 'g2')],
+    },
+  };
+  const parsedNested = ok(parseLayoutTree(nested));
+  const sourceRoot = nested.root as { children: Array<{ nodeId: string }> };
+  assert.notEqual(parsedNested.root, nested.root);
+  sourceRoot.children[0].nodeId = 'hacked';
+  const revivedRoot = parsedNested.root;
+  assert.equal(
+    revivedRoot.type === 'split' && revivedRoot.children[0].type === 'pane'
+      ? revivedRoot.children[0].nodeId
+      : null,
+    'p1',
+  );
+});
+
+test('LTA-29 serializeLayoutTree 只输出白名单字段', () => {
+  const base = ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+  const text = ok(serializeLayoutTree(base));
+  assert.deepEqual(Object.keys(JSON.parse(text) as object).sort(), ['root', 'version']);
+  assert.deepEqual(
+    Object.keys((JSON.parse(text) as { root: object }).root).sort(),
+    ['groupId', 'nodeId', 'type'],
+  );
+
+  // 带额外字段的树不许被"照原样"序列化出去
+  assert.equal(
+    err(serializeLayoutTree({ ...base, docId: 'd1' } as unknown as LayoutTree)),
+    'unexpected-field',
+  );
+});
+
+/* ================================================================== */
+/* LTA-30 ~ LTA-31：修改入口对损坏输入的防护（R1 / P2）                  */
+/*                                                                     */
+/* `replaceNode` / `removePane` 是**无保护递归**：环状输入在 validate 之前 */
+/* 进入递归就是栈溢出。三个入口必须"先验证、后动手"。                    */
+/* ================================================================== */
+
+/** 环状输入：根 split 的第二个孩子指回自己。 */
+function cyclicLayout(): LayoutTree {
+  const self: Record<string, unknown> = {
+    type: 'split',
+    nodeId: 'cyc-s',
+    orientation: 'horizontal',
+    ratio: 0.5,
+  };
+  self.children = [PANE('cyc-p', 'cyc-g'), self];
+  return { version: 1, root: self as unknown as LayoutNode };
+}
+
+test('LTA-30 三个修改入口遇到循环引用都返回 cyclic-tree（不递归、不抛异常）', () => {
+  assert.equal(
+    err(
+      splitPane(cyclicLayout(), {
+        paneNodeId: 'cyc-p',
+        splitNodeId: 'new-s',
+        newPaneNodeId: 'new-p',
+        newGroupId: 'new-g',
+        orientation: 'vertical',
+        position: 'second',
+      }),
+    ),
+    'cyclic-tree',
+  );
+  assert.equal(err(setSplitRatio(cyclicLayout(), { splitNodeId: 'cyc-s', ratio: 0.6 })), 'cyclic-tree');
+  assert.equal(err(mergePane(cyclicLayout(), { groupId: 'cyc-p' })), 'cyclic-tree');
+});
+
+test('LTA-31 三个修改入口对结构非法的输入返回输入本身的错误码', () => {
+  const broken = {
+    version: 1,
+    root: {
+      type: 'split',
+      nodeId: 's1',
+      orientation: 'horizontal',
+      ratio: 5,
+      children: [PANE('p1', 'g1'), PANE('p2', 'g2')],
+    },
+  } as unknown as LayoutTree;
+  assert.equal(
+    err(
+      splitPane(broken, {
+        paneNodeId: 'p1',
+        splitNodeId: 's2',
+        newPaneNodeId: 'p3',
+        newGroupId: 'g3',
+        orientation: 'vertical',
+        position: 'second',
+      }),
+    ),
+    'invalid-ratio',
+  );
+  assert.equal(err(setSplitRatio(broken, { splitNodeId: 's1', ratio: 0.5 })), 'invalid-ratio');
+  assert.equal(err(mergePane(broken, { groupId: 'g1' })), 'invalid-ratio');
+
+  // 未知节点类型
+  const unknown = { version: 1, root: { type: 'grid', nodeId: 'x' } } as unknown as LayoutTree;
+  assert.equal(err(mergePane(unknown, { groupId: 'g' })), 'invalid-node');
+});
+
+/* ================================================================== */
+/* LTA-32：V1 比例必须合旧版真实规则（R1 / P2）                          */
+/*                                                                     */
+/* 旧 reducer 把 `splitRatio` 当**百分比整数**并钳在 25~75             */
+/* （workspace-reducer.ts:22-23,71-74）。20 / 80 / 25.5 从来不是合法的   */
+/* 旧值，转换时不能"四舍五入成能用的样子"。                             */
+/* ================================================================== */
+
+test('LTA-32 V1 splitRatio 只接受 25~75 的整数', () => {
+  const identity = {
+    primary: { nodeId: 'p1', groupId: 'g1' },
+    secondary: { nodeId: 'p2', groupId: 'g2' },
+    splitNodeId: 's1',
+  };
+  const panes = { primary: { tabIndex: 0 }, secondary: { tabIndex: 1 } };
+  const at = (splitRatio: unknown) => ({ ui: { layout: 'vertical', splitRatio }, panes });
+
+  for (const bad of [20, 80, 0, 100, 25.5, 50.0001, 24, 76, -50, 1000]) {
+    assert.equal(err(layoutTreeFromV1(at(bad), identity)), 'invalid-ratio', `应拒绝 ${String(bad)}`);
+  }
+  for (const good of [25, 26, 50, 74, 75]) {
+    const tree = ok(layoutTreeFromV1(at(good), identity));
+    assert.equal(tree.root.type, 'split');
+    assert.equal(tree.root.type === 'split' ? tree.root.ratio : null, good / 100);
+  }
+  // 常量与旧 reducer 的钳制区间一致，且不等于模型的 0.1~0.9
+  assert.equal(V1_MIN_SPLIT_RATIO, 25);
+  assert.equal(V1_MAX_SPLIT_RATIO, 75);
+  assert.equal(V1_MIN_SPLIT_RATIO / 100, MIN_UI_SPLIT_RATIO);
+  assert.equal(V1_MAX_SPLIT_RATIO / 100, MAX_UI_SPLIT_RATIO);
+});
+
+/* ================================================================== */
+/* LTA-33：分屏位置必须显式校验（R1 / P2）                               */
+/* ================================================================== */
+
+test('LTA-33 splitPane 的 position 只接受 first / second', () => {
+  const base = ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+  const make = (position: unknown) =>
+    splitPane(base, {
+      paneNodeId: 'p1',
+      splitNodeId: 's1',
+      newPaneNodeId: 'p2',
+      newGroupId: 'g2',
+      orientation: 'horizontal',
+      position: position as 'first',
+    });
+
+  assert.equal(ok(make('first')).root.type, 'split');
+  assert.equal(ok(make('second')).root.type, 'split');
+  for (const bad of ['third', '', 'FIRST', null, 0, undefined]) {
+    assert.equal(err(make(bad)), 'invalid-position', `应拒绝 ${String(bad)}`);
+  }
+});
+
+/* ================================================================== */
+/* LTA-34：模型结构比例与 UI 拖动比例是两件事（R1 / E）                  */
+/* ================================================================== */
+
+test('LTA-34 结构区间 0.1~0.9 与 UI 拖动区间 0.25~0.75 分别定义，互不替代', () => {
+  // 模型：只在结构上防止窗格被压成 0
+  assert.equal(MIN_SPLIT_RATIO, 0.1);
+  assert.equal(MAX_SPLIT_RATIO, 0.9);
+  // UI：沿用旧 reducer 的 25~75，保证拖动手感与既有界面一致
+  assert.equal(MIN_UI_SPLIT_RATIO, 0.25);
+  assert.equal(MAX_UI_SPLIT_RATIO, 0.75);
+
+  assert.equal(clampLayoutRatio(0.05), MIN_SPLIT_RATIO);
+  assert.equal(clampLayoutRatio(0.95), MAX_SPLIT_RATIO);
+  assert.equal(clampLayoutRatio(0.42), 0.42);
+
+  assert.equal(clampUiSplitRatio(0.05), MIN_UI_SPLIT_RATIO);
+  assert.equal(clampUiSplitRatio(0.95), MAX_UI_SPLIT_RATIO);
+  assert.equal(clampUiSplitRatio(0.5), 0.5);
+
+  // 结构接受 0.15，但 UI 拖动不会把它拖到那儿
+  const base = ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+  const two = ok(
+    splitPane(base, {
+      paneNodeId: 'p1',
+      splitNodeId: 's1',
+      newPaneNodeId: 'p2',
+      newGroupId: 'g2',
+      orientation: 'horizontal',
+      position: 'second',
+      ratio: 0.15,
+    }),
+  );
+  assert.equal(two.root.type === 'split' ? two.root.ratio : null, 0.15);
+  assert.equal(clampUiSplitRatio(0.15), MIN_UI_SPLIT_RATIO);
 });
