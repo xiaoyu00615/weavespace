@@ -2,6 +2,7 @@
 import type { ProjectSummary, TrashEntryDto, TreeEntry, WorkspaceMode } from '../client/client-api.ts';
 import type { TreeLevels } from '../components/tree-model.ts';
 import type { LayoutTree } from './layout-tree.ts';
+import type { ViewGroups } from './workspace-view-groups.ts';
 
 export type ViewMode = 'editor' | 'preview';
 export type LayoutMode = 'single' | 'vertical';
@@ -185,8 +186,33 @@ export interface WorkspaceState {
   expanded: Record<string, boolean>;
   selectedPath: string | null;
   tabs: DocTab[];
+  /**
+   * 旧 UI 的窗格投影：`primary` / `secondary` 两个兼容槽（UI-F03-B2 起是**派生值**）。
+   *
+   * 真相在 `viewGroups`：primary 槽 = `legacy-group:primary` 的活动文档与模式，
+   * secondary 槽 = `legacy-group:secondary` 的。任何 action 都不许再直接写它，
+   * 否则投影与组状态会分叉（`withViewGroupProjection` 是唯一的写入口）。
+   */
   panes: Record<PaneId, PaneState>;
+  /** 旧 UI 的焦点投影：由 `focusedGroupId` 反算，单视图恒为 primary。 */
   focusedPane: PaneId;
+  /**
+   * **视图组运行时状态**（UI-F03-B2）。
+   *
+   * `LayoutTree` 只决定"哪些组在什么位置"；每个组自己管：组内有哪些标签
+   * （`tabDocIds`）、正在看哪一份（`activeDocId`）、用源码还是预览（`mode`）。
+   * 组里只存 `docId` 引用，文档本体（缓冲、会话、版本）仍然只有 `tabs` 里一份。
+   *
+   * 键集可以比可见组更大：单视图时 secondary 是**休眠组**，标签与模式原样保留。
+   */
+  viewGroups: ViewGroups;
+  /**
+   * 当前操作焦点所在的组。
+   *
+   * 必须始终是 `LayoutTree` 里真实存在的组（休眠组拿不到焦点）；
+   * 投影函数会在结构变化后把它收敛回可见组。
+   */
+  focusedGroupId: string;
   /**
    * **布局结构的权威模型**（UI-F03-B1）。
    *
@@ -413,6 +439,13 @@ export type WorkspaceAction =
     }
   | { type: 'SET_PANE_MODE'; pane: PaneId; mode: ViewMode }
   | { type: 'FOCUS_PANE'; pane: PaneId }
+  /**
+   * 通用焦点接口（UI-F03-B2）：聚焦一个**真实存在**的视图组。
+   *
+   * 只有 `LayoutTree` 里有 Pane 的组能拿到焦点；休眠组（单视图时的 secondary）
+   * 一律忽略——聚焦一个用户看不见的窗格，等于把下一次打开文档扔进黑洞。
+   */
+  | { type: 'FOCUS_GROUP'; groupId: string }
   | { type: 'SET_LAYOUT'; layout: LayoutMode }
   | { type: 'SET_SPLIT_RATIO'; ratio: number }
   | { type: 'EDIT_DOC'; docId: string; text: string }

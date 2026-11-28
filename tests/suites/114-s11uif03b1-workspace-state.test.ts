@@ -33,7 +33,7 @@ import {
   type SplitNode,
 } from '../../apps/shell/src/state/layout-tree.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
-import type { DocTab, PaneId, WorkspaceState } from '../../apps/shell/src/state/types.ts';
+import type { DocTab, PaneId, WorkspaceAction, WorkspaceState } from '../../apps/shell/src/state/types.ts';
 
 /* ------------------------------------------------------------------ */
 /* 兼容桥的保留身份（刻意在测试里写字面值：reducer 改了就该红）          */
@@ -553,30 +553,34 @@ test('B1-F03 编辑缓冲 / dirty / sessionId 不进入布局树', () => {
 /* G. 状态一致性                                                       */
 /* ================================================================== */
 
-test('B1-G01 每一次结构操作后树都合法，且旧投影与树完全一致', () => {
+test('B1-G01 每一次结构操作后树都合法，且旧投影与树完全一致（连续执行）', () => {
+  /*
+   * 注意：这些操作是**连续**作用在同一条状态上的（UI-F03-B2 修正）。
+   *
+   * 旧版本每个操作都用同一个闭包里的初始 `state`，于是只能证明"每个动作单独看
+   * 没错"，证明不了"连续迁移不会累积漂移"——而后者才是状态机真正的风险：
+   * 前一步把树改成分屏、后一步按单视图假设去改，才会炸。
+   */
   let state = withTwoTabs();
   assertConsistent(state, '起点');
 
-  const ops: ReadonlyArray<readonly [string, () => WorkspaceState]> = [
-    ['分屏', () => workspaceReducer(state, { type: 'SET_LAYOUT', layout: 'vertical' })],
-    ['改比例 30', () => workspaceReducer(state, { type: 'SET_SPLIT_RATIO', ratio: 30 })],
-    ['改比例 75', () => workspaceReducer(state, { type: 'SET_SPLIT_RATIO', ratio: 75 })],
-    ['合并', () => workspaceReducer(state, { type: 'SET_LAYOUT', layout: 'single' })],
-    [
-      '恢复分屏',
-      () => workspaceReducer(state, { type: 'HYDRATE_UI', ui: uiOf({ layout: 'vertical', splitRatio: 58 }) }),
-    ],
-    [
-      '恢复单视图',
-      () => workspaceReducer(state, { type: 'HYDRATE_UI', ui: uiOf({ layout: 'single', splitRatio: 44 }) }),
-    ],
+  const ops: ReadonlyArray<readonly [string, WorkspaceAction]> = [
+    ['分屏', { type: 'SET_LAYOUT', layout: 'vertical' }],
+    ['改比例 30', { type: 'SET_SPLIT_RATIO', ratio: 30 }],
+    ['改比例 75', { type: 'SET_SPLIT_RATIO', ratio: 75 }],
+    ['合并', { type: 'SET_LAYOUT', layout: 'single' }],
+    ['恢复分屏', { type: 'HYDRATE_UI', ui: uiOf({ layout: 'vertical', splitRatio: 58 }) }],
+    ['恢复单视图', { type: 'HYDRATE_UI', ui: uiOf({ layout: 'single', splitRatio: 44 }) }],
   ];
 
-  for (const [label, run] of ops) {
-    const next = run();
-    assertConsistent(next, label);
+  const trail: string[] = [];
+  for (const [label, action] of ops) {
+    state = workspaceReducer(state, action);
+    trail.push(label);
+    const where = `连续迁移 @ ${trail.join(' → ')}`;
+    assertConsistent(state, where);
     // 旧 UI 能表达的两种形状都要能被树解释：不允许"投影说有 split、树里没有"
-    assert.equal(next.layout === 'single', next.layoutTree.root.type === 'pane', `${label}：投影与树同形`);
+    assert.equal(state.layout === 'single', state.layoutTree.root.type === 'pane', `${where}：投影与树同形`);
   }
 });
 

@@ -11,7 +11,6 @@ import {
 } from '../components/tree-model.ts';
 import { TRASH_TERMINAL_STATES } from './types.ts';
 import type {
-  DocTab,
   LayoutMode,
   PaneId,
   ResourceNodeState,
@@ -30,24 +29,27 @@ import {
   splitPane,
   type LayoutTree,
 } from './layout-tree.ts';
+import {
+  LEGACY_LAYOUT_IDS,
+  activateTab,
+  addTab,
+  clearAllTabs,
+  createInitialViewGroups,
+  ensureGroups,
+  groupOf,
+  legacyGroupIdOf,
+  projectPanes,
+  removeDoc,
+  setActiveDoc,
+  setGroupMode,
+  visibleGroupIds,
+} from './workspace-view-groups.ts';
 
 const MIN_RATIO = 25;
 const MAX_RATIO = 75;
 
-/**
- * 兼容桥的保留身份（UI-F03-B1）。
- *
- * 布局树的身份必须由调用方注入且**确定**：reducer 一旦用随机数或时间戳，
- * 每次分屏都会得到一棵"新树"，恢复流程与测试就再也没法逐字节比对。
- * 这五个字符串是双窗格时代的固定映射，多窗格协议落地时整体替换。
- */
-const LEGACY_LAYOUT_IDS = {
-  primaryNodeId: 'legacy-pane:primary',
-  primaryGroupId: 'legacy-group:primary',
-  secondaryNodeId: 'legacy-pane:secondary',
-  secondaryGroupId: 'legacy-group:secondary',
-  splitNodeId: 'legacy-split:root',
-} as const;
+const PRIMARY_GROUP = LEGACY_LAYOUT_IDS.primaryGroupId;
+const SECONDARY_GROUP = LEGACY_LAYOUT_IDS.secondaryGroupId;
 
 /**
  * 初始布局：单 Pane。
@@ -65,6 +67,14 @@ const INITIAL_LAYOUT_TREE: LayoutTree = (() => {
   return created.value;
 })();
 
+/**
+ * 初始视图组：primary（源码）+ secondary（预览）。
+ *
+ * secondary 初始是**休眠组**（`LayoutTree` 只有 primary 的 Pane）：它现在存在，
+ * 只是不可见、拿不到焦点，等"打开分屏"时才进入布局。
+ */
+const INITIAL_VIEW_GROUPS = createInitialViewGroups();
+
 export const INITIAL_STATE: WorkspaceState = {
   navCollapsed: false,
   navKey: 'projects',
@@ -77,6 +87,8 @@ export const INITIAL_STATE: WorkspaceState = {
     secondary: { docId: null, mode: 'preview' },
   },
   focusedPane: 'primary',
+  viewGroups: INITIAL_VIEW_GROUPS,
+  focusedGroupId: PRIMARY_GROUP,
   layoutTree: INITIAL_LAYOUT_TREE,
   layout: 'single',
   splitRatio: 50,
@@ -212,16 +224,57 @@ function legacyTreeFromUi(ui: WorkspaceUiSnapshot): LayoutTree | null {
   return result.ok ? result.value : null;
 }
 
-/** 关闭标签后为窗格挑选替代文档：优先右侧邻居，其次左侧，最后为空。 */
-function pickFallback(tabs: DocTab[], removedIndex: number): string | null {
-  if (tabs.length === 0) return null;
-  const next = tabs[removedIndex] ?? tabs[removedIndex - 1];
-  return next ? next.docId : null;
+/**
+ * 用视图组反算旧 UI 的窗格投影（UI-F03-B2）。
+ *
+ * `panes` / `focusedPane` 从这以后是**派生值**：真相在 `viewGroups` 与
+ * `focusedGroupId`。所有 action 都不许再直接写它们，否则投影与组状态立刻分叉
+ * （"组里还有标签、窗格却空了"这类错误最难查）。
+ *
+ * 焦点收敛规则：**只有 `LayoutTree` 里真实存在的组能获得焦点**。这一条同时覆盖
+ * "单视图时焦点必须 primary"（此时 secondary 是休眠组）与"休眠组不能被聚焦"。
+ */
+function withViewGroupProjection(state: WorkspaceState): WorkspaceState {
+  const visible = visibleGroupIds(state.layoutTree);
+  const focusedGroupId = visible.includes(state.focusedGroupId)
+    ? state.focusedGroupId
+    : (visible[0] ?? PRIMARY_GROUP);
+  const panes = projectPanes(state.viewGroups);
+  const focusedPane: PaneId =
+    focusedGroupId === SECONDARY_GROUP ? 'secondary' : 'primary';
+
+  const panesUnchanged =
+    state.panes.primary.docId === panes.primary.docId &&
+    state.panes.primary.mode === panes.primary.mode &&
+    state.panes.secondary.docId === panes.secondary.docId &&
+    state.panes.secondary.mode === panes.secondary.mode;
+  if (panesUnchanged && focusedGroupId === state.focusedGroupId && focusedPane === state.focusedPane) {
+    return state;
+  }
+  return { ...state, panes, focusedGroupId, focusedPane };
 }
 
-function setPaneTarget(state: WorkspaceState, pane: PaneId): PaneId {
-  // 单视图模式下一切操作都落在主窗格，避免出现“看不见的活动窗格”。
-  return state.layout === 'single' ? 'primary' : pane;
+/**
+ * 一次性重算全部派生字段（布局投影 + 窗格投影）。
+ *
+ * 每个会改结构或改组的 action 都必须走这里，而不是各写一半：两份投影之间没有
+ * 先后依赖（字段互不重叠），但**漏掉任何一个**都会让状态自相矛盾。
+ */
+function withDerivedUi(state: WorkspaceState): WorkspaceState {
+  return withLayoutProjection(withViewGroupProjection(state));
+}
+
+/**
+ * 焦点落到某个组（`FOCUS_PANE` / `FOCUS_GROUP` 的共同实现）。
+ *
+ * 两条守卫：组必须存在、且必须在当前布局里可见。休眠组拿不到焦点——那会让下一次
+ * 打开文档的归属落进一个用户看不见的窗格。
+ */
+function focusViewGroup(state: WorkspaceState, groupId: string): WorkspaceState {
+  if (groupOf(state.viewGroups, groupId) === null) return state;
+  if (!visibleGroupIds(state.layoutTree).includes(groupId)) return state;
+  if (state.focusedGroupId === groupId) return state;
+  return withDerivedUi({ ...state, focusedGroupId: groupId });
 }
 
 /** 进入 live 时自动展开一级目录，避免首屏全是收起状态。 */
@@ -320,7 +373,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case 'SET_MODE': {
       if (action.mode === state.mode) return state;
-      return {
+      return withDerivedUi({
         ...state,
         mode: action.mode,
         // 切换模式等于换一个工作区：未保存内容不允许被静默丢弃，调用方需先拦截
@@ -341,15 +394,18 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         workspaceMode: 'legacy',
         // 工作区身份属于"上一个工作区"：切模式后必须重新从 Host 取得
         workspaceKey: null,
-        panes: {
-          primary: { docId: null, mode: 'editor' },
-          secondary: { docId: null, mode: 'preview' },
-        },
+        /*
+         * 视图组：**保留组身份**、清空文档引用、模式复位到默认。
+         *
+         * 组身份属于布局结构（同一个 Pane 在下个模式里还要用它），不属于工作区；
+         * 标签引用属于旧工作区，必须清掉——否则新模式下会引用一批不存在的文档。
+         */
+        viewGroups: clearAllTabs(state.viewGroups),
         notice:
           action.mode === 'live'
             ? '真实文件模式：读取本机测试项目（写入经 Core）'
             : '演示数据：不读取、不写入本机文件',
-      };
+      });
     }
 
     case 'SET_RESOURCES':
@@ -370,21 +426,29 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       const tabs = existing
         ? state.tabs.map((tab) => (tab.docId === action.tab.docId ? { ...tab, ...action.tab } : tab))
         : [...state.tabs, action.tab];
-      const pane = setPaneTarget(state, state.focusedPane);
-      return {
+      /*
+       * 归属：**当前焦点组**（不是 primary、也不是"当前窗格"）。
+       * 单视图时焦点组必然是 primary；分屏时可能是 secondary——把文档塞进另一组
+       * 会让用户看着右边、文档却出现在左边。
+       */
+      const viewGroups = addTab(state.viewGroups, state.focusedGroupId, action.tab.docId);
+      return withDerivedUi({
         ...state,
         tabs,
+        viewGroups,
         selectedPath: action.tab.docId,
-        panes: { ...state.panes, [pane]: { ...state.panes[pane], docId: action.tab.docId } },
         notice: existing
           ? '已在标签中打开该文档'
           : `已打开（${action.tab.mode === 'live' ? '真实文件' : '演示'}）：${action.tab.title}`,
-      };
+      });
     }
 
     /**
      * 后台登记标签（G2-R2）：标签出现，但当前窗格、焦点与选中项都不动。
      * 用于"请求发出后用户已经切走"的迟到响应——不能覆盖用户的新选择。
+     *
+     * 它**不建立任何组内引用**：后台标签只是"存在"，归属留给 SET_PANE_TAB 或
+     * 后续的组操作。否则一次迟到的后台打开就会悄悄改掉某个组的活动文档。
      */
     case 'OPEN_TAB_BACKGROUND': {
       if (state.tabs.some((tab) => tab.docId === action.tab.docId)) return state;
@@ -404,25 +468,25 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     case 'ACTIVATE_TAB': {
-      const pane = setPaneTarget(state, state.focusedPane);
-      return {
-        ...state,
-        panes: { ...state.panes, [pane]: { ...state.panes[pane], docId: action.docId } },
-      };
+      // 只允许激活真实存在的文档：让活动文档指向一个不存在的标签就是状态损坏
+      if (!state.tabs.some((tab) => tab.docId === action.docId)) return state;
+      const viewGroups = activateTab(state.viewGroups, state.focusedGroupId, action.docId);
+      if (viewGroups === state.viewGroups) return state;
+      return withDerivedUi({ ...state, viewGroups });
     }
 
     case 'CLOSE_TAB': {
       const index = state.tabs.findIndex((tab) => tab.docId === action.docId);
       if (index < 0) return state;
       const remaining = state.tabs.filter((tab) => tab.docId !== action.docId);
-      const fallback = pickFallback(remaining, index);
-      const panes = { ...state.panes };
-      (['primary', 'secondary'] as const).forEach((pane) => {
-        if (panes[pane].docId === action.docId) {
-          panes[pane] = { ...panes[pane], docId: fallback };
-        }
-      });
-      return { ...state, tabs: remaining, panes, notice: '已关闭标签' };
+      /*
+       * 从**所有**组里清理这个引用（不只看焦点组）。
+       *
+       * 组内活动文档被关掉时按组内顺序选替代项；若某个组因此一个引用都不剩，
+       * 沿用旧版行为接管"还开着的第一个标签"，避免留下一个空白窗格。
+       */
+      const viewGroups = removeDoc(state.viewGroups, action.docId, remaining[0]?.docId ?? null);
+      return withDerivedUi({ ...state, tabs: remaining, viewGroups, notice: '已关闭标签' });
     }
 
     case 'SAVE_RESULT':
@@ -445,36 +509,40 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         notice: action.notice,
       };
 
-    case 'SET_PANE_MODE':
-      return {
-        ...state,
-        panes: { ...state.panes, [action.pane]: { ...state.panes[action.pane], mode: action.mode } },
-      };
-
-    case 'FOCUS_PANE': {
-      if (state.layout === 'single' && action.pane === 'secondary') return state;
-      return { ...state, focusedPane: action.pane };
+    case 'SET_PANE_MODE': {
+      // 只改这一个组的模式；休眠组的模式照样可以改，下次分屏原样回来
+      const viewGroups = setGroupMode(state.viewGroups, legacyGroupIdOf(action.pane), action.mode);
+      if (viewGroups === state.viewGroups) return state;
+      return withDerivedUi({ ...state, viewGroups });
     }
+
+    case 'FOCUS_PANE':
+      // 旧接口：窗格 → 组身份，再走同一条焦点规则
+      return focusViewGroup(state, legacyGroupIdOf(action.pane));
+
+    case 'FOCUS_GROUP':
+      return focusViewGroup(state, action.groupId);
 
     case 'SET_LAYOUT': {
       /**
        * 单视图：用 `mergePane` 让父 split 塌陷，兄弟（primary）顶上来。
        *
-       * `panes.secondary` 的文档指向**保留**：旧版重新开分屏时会复用它，
-       * 用户不会因为"切一下单视图"就丢掉右侧之前看的东西。
+       * secondary **组**保留：标签集合与模式原样不动，只是它的 Pane 从布局里消失，
+       * 于是成为休眠组。旧版重新开分屏时右侧会回到原来的文档，用户不会因为
+       * "切一下单视图"就丢掉之前那一路的工作。
        */
       if (action.layout === 'single') {
         // 已经是单窗格：合并会被模型以 last-pane 拒绝（那不是错误），只收敛焦点与提示
         if (state.layoutTree.root.type === 'pane') {
-          return withLayoutProjection({ ...state, focusedPane: 'primary', notice: '单视图' });
+          return withDerivedUi({ ...state, focusedGroupId: PRIMARY_GROUP, notice: '单视图' });
         }
-        const merged = mergePane(state.layoutTree, { groupId: LEGACY_LAYOUT_IDS.secondaryGroupId });
-        // 合并被拒（树里没有这个视图组）：整体不动。绝不出现"旧字段说单视图、树还是分屏"
+        const merged = mergePane(state.layoutTree, { groupId: SECONDARY_GROUP });
+        // 合并被拒（树里没有这个视图组）：整体不动。绝不出现"投影说单视图、树还是分屏"
         if (!merged.ok) return state;
-        return withLayoutProjection({
+        return withDerivedUi({
           ...state,
           layoutTree: merged.value,
-          focusedPane: 'primary',
+          focusedGroupId: PRIMARY_GROUP,
           notice: '单视图',
         });
       }
@@ -482,15 +550,25 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       const tree = splitLegacyPane(state.layoutTree, uiRatioPercent(state.splitRatio));
       // 结构没构造出来就整体不动：宁可这次点击无效，也不留下半套状态
       if (tree === null) return state;
-      const anchor = state.panes.primary.docId ?? state.tabs[0]?.docId ?? null;
-      return withLayoutProjection({
+
+      /*
+       * 分屏前把两个组都补齐，并沿用旧版的 anchor 行为：某一边还没有活动文档时，
+       * 退到 primary 当前的文档、再退到第一个标签。**不重置模式**——用户上次把右侧
+       * 切成源码视图，这次分屏应该还是源码（休眠组的意义就在这里）。
+       */
+      const anchor =
+        groupOf(state.viewGroups, PRIMARY_GROUP)?.activeDocId ?? state.tabs[0]?.docId ?? null;
+      let viewGroups = ensureGroups(state.viewGroups, [PRIMARY_GROUP, SECONDARY_GROUP]);
+      for (const groupId of [PRIMARY_GROUP, SECONDARY_GROUP]) {
+        if (groupOf(viewGroups, groupId)?.activeDocId == null && anchor !== null) {
+          viewGroups = activateTab(viewGroups, groupId, anchor);
+        }
+      }
+      return withDerivedUi({
         ...state,
         layoutTree: tree,
-        focusedPane: 'primary',
-        panes: {
-          primary: { ...state.panes.primary, docId: state.panes.primary.docId ?? anchor },
-          secondary: { docId: state.panes.secondary.docId ?? anchor, mode: 'preview' },
-        },
+        viewGroups,
+        focusedGroupId: PRIMARY_GROUP,
         notice: '左右分屏：左侧源码 / 右侧预览',
       });
     }
@@ -583,7 +661,12 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
        */
       if (tree === null) return base;
 
-      const projected = withLayoutProjection({ ...base, layoutTree: tree });
+      /*
+       * 布局恢复的同时补齐"这棵树需要的组"：组已存在就**原样保留**（标签与模式
+       * 一律不动），缺了才补一个空组。恢复布局不该清掉用户已经打开的标签。
+       */
+      const viewGroups = ensureGroups(state.viewGroups, visibleGroupIds(tree));
+      const projected = withLayoutProjection({ ...base, layoutTree: tree, viewGroups });
       /*
        * 单视图的树里没有 ratio，投影只能保留"当前偏好"；恢复时要让**记录里的**比例
        * 成为新偏好，否则用户上次拖到的 55% 会在这次恢复后变回 50，下次分屏也不是
@@ -591,27 +674,33 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
        */
       const restored =
         tree.root.type === 'pane' ? { ...projected, splitRatio: clampRatio(ui.splitRatio) } : projected;
-      // 单视图只有主窗格：不接受"焦点在副窗格"这种不可见的组合
-      return {
+      /*
+       * 焦点：单视图只有 primary 可见，记录里的"焦点在副窗格"必须被收敛掉；
+       * 分屏时按记录还原。`withDerivedUi` 随后再按可见组兜一次底。
+       */
+      return withDerivedUi({
         ...restored,
-        focusedPane: restored.layout === 'single' ? 'primary' : ui.focusedPane,
-      };
+        focusedGroupId:
+          restored.layout === 'single' ? PRIMARY_GROUP : legacyGroupIdOf(ui.focusedPane),
+      });
     }
 
+    /**
+     * 旧接口：`primary` / `secondary` 是**旧 UI 的窗格名**，不是视图组身份。
+     * 这里映射到保留组再走通用逻辑；文档不存在时仍然 fail-closed。
+     */
     case 'SET_PANE_TAB': {
-      const pane = state.panes[action.pane];
+      const groupId = legacyGroupIdOf(action.pane);
       if (!action.docId) {
-        return { ...state, panes: { ...state.panes, [action.pane]: { ...pane, docId: null } } };
+        const viewGroups = setActiveDoc(state.viewGroups, groupId, null);
+        if (viewGroups === state.viewGroups) return state;
+        return withDerivedUi({ ...state, viewGroups });
       }
       // 只允许指向真实存在的标签：恢复不能让窗格指向一个不存在的文档
       if (!state.tabs.some((tab) => tab.docId === action.docId)) return state;
-      return {
-        ...state,
-        panes: {
-          ...state.panes,
-          [action.pane]: { docId: action.docId, mode: action.mode ?? pane.mode },
-        },
-      };
+      const viewGroups = activateTab(state.viewGroups, groupId, action.docId, action.mode);
+      if (viewGroups === state.viewGroups) return state;
+      return withDerivedUi({ ...state, viewGroups });
     }
 
     case 'SET_PROJECTS': {
@@ -675,21 +764,25 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
        * 草稿与选中状态**原样保留**——这里只按 `projectId` 精确过滤。
        */
       const tabs = state.tabs.filter((tab) => tab.projectId !== removed);
-      const panes = { ...state.panes };
+      /*
+       * 视图组：从**所有**组里摘掉被移除项目的文档引用，并按组内顺序补上替代项。
+       *
+       * 旧版是"窗格指向还开着的第一个标签"，这里保留同样的兜底（`adopt`），
+       * 但只作用于"因为这次移除一个引用都不剩"的组——不会顺手改掉别的组的活动文档。
+       */
+      let viewGroups = state.viewGroups;
       if (tabs.length !== state.tabs.length) {
-        const nextDocId = tabs.length > 0 ? tabs[0].docId : null;
-        (['primary', 'secondary'] as const).forEach((pane) => {
-          const docId = panes[pane].docId;
-          if (docId && !tabs.some((tab) => tab.docId === docId)) {
-            panes[pane] = { ...panes[pane], docId: nextDocId };
-          }
-        });
+        const adopt = tabs[0]?.docId ?? null;
+        for (const tab of state.tabs) {
+          if (tab.projectId !== removed) continue;
+          viewGroups = removeDoc(viewGroups, tab.docId, adopt);
+        }
       }
-      return {
+      return withDerivedUi({
         ...state,
         projects,
         tabs,
-        panes,
+        viewGroups,
         activeProjectId:
           state.activeProjectId === removed ? fallback : state.activeProjectId,
         resourcesByProject: drop(state.resourcesByProject),
@@ -700,7 +793,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         // 项目已移出工作台：回收区入口不再存在，视图状态一并丢弃。
         // 磁盘上的记录与文件仍由 Host 保留（撤销不删除任何东西）。
         trashByProject: drop(state.trashByProject),
-      };
+      });
     }
 
     case 'SET_PROJECT_RESOURCES': {

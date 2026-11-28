@@ -340,6 +340,20 @@ test('R1-03-07 PROJECT_REMOVED 收掉被移除项目的标签，其它项目的�
       { projectId: 'p-b', name: 'B', status: 'READY' as const },
     ],
     tabs: [tab('a1', 'p-a', 'draft-a', true), tab('b1', 'p-b', 'draft-b', true)],
+    /*
+     * UI-F03-B2：`panes` 是 `viewGroups` 的投影，组状态才是真相。
+     * 这里显式声明"primary 组里开着 a1"，否则窗格看起来是空的，
+     * 也就无法验证"移除项目后窗格不能继续指向已消失的标签"。
+     */
+    viewGroups: {
+      ...INITIAL_STATE.viewGroups,
+      'legacy-group:primary': {
+        groupId: 'legacy-group:primary',
+        tabDocIds: ['a1'],
+        activeDocId: 'a1',
+        mode: 'editor' as const,
+      },
+    },
     panes: { primary: { docId: 'a1', mode: 'editor' as const }, secondary: { docId: null, mode: 'preview' as const } },
   };
   const next = workspaceReducer(before, { type: 'PROJECT_REMOVED', projectId: 'p-a' });

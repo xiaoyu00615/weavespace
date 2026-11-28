@@ -22,6 +22,7 @@ import {
   makeDocId,
 } from './doc-identity.ts';
 import type { DocTab, ResourceNodeState, WorkspaceAction, WorkspaceState } from './types.ts';
+import { groupOf } from './workspace-view-groups.ts';
 
 /** 本地编辑代次：纯 UI 计数，用来识别"读取请求期间用户又敲了字"。 */
 export interface EditEpochs {
@@ -172,29 +173,35 @@ export function tabFromSnapshot(
 }
 
 /**
- * 用户"正在看什么"的快照（G2-R2）。
+ * 用户"正在看什么"的快照（G2-R2 / UI-F03-B2）。
  *
- * 只有项目、焦点窗格、活动文档三者都没变，才说明用户仍然期望把新打开的文档
- * 设为当前文档；任何一项变了，迟到的响应就只能后台登记标签。
+ * 只有项目、**焦点组**、该组的活动文档三者都没变，才说明用户仍然期望把新打开的
+ * 文档设为当前文档；任何一项变了，迟到的响应就只能后台登记标签。
+ *
+ * 为什么用组而不是窗格：`panes` 从 B2 起只是投影。用 `focusedPane` 判归属会把
+ * "primary 与 secondary 都叫 pane" 当成身份，将来多组布局里就会张冠李戴；
+ * `groupId` 才是视图组的真实身份，跨组抢焦点在它面前一眼可辨。
  */
 interface FocusSnapshot {
   projectId: string | null;
-  pane: WorkspaceState['focusedPane'];
+  groupId: string;
   docId: string | null;
 }
 
 function captureFocus(state: WorkspaceState): FocusSnapshot {
+  const groupId = state.focusedGroupId;
   return {
     projectId: state.activeProjectId,
-    pane: state.focusedPane,
-    docId: state.panes[state.focusedPane]?.docId ?? null,
+    groupId,
+    docId: groupOf(state.viewGroups, groupId)?.activeDocId ?? null,
   };
 }
 
 function canActivate(focus: FocusSnapshot, state: WorkspaceState): boolean {
   if (state.activeProjectId !== focus.projectId) return false;
-  if (state.focusedPane !== focus.pane) return false;
-  return (state.panes[state.focusedPane]?.docId ?? null) === focus.docId;
+  // 组身份不同就是"用户已经切到别的窗格"：迟到响应绝不能把文档塞进新组
+  if (state.focusedGroupId !== focus.groupId) return false;
+  return (groupOf(state.viewGroups, state.focusedGroupId)?.activeDocId ?? null) === focus.docId;
 }
 
 /** 单个标签刷新的结果；`skipped` 表示"这次不该动它"（有草稿 / 已在刷新 / 已关闭）。 */
