@@ -1144,3 +1144,147 @@ test('LTA-34 结构区间 0.1~0.9 与 UI 拖动区间 0.25~0.75 分别定义，�
   assert.equal(two.root.type === 'split' ? two.root.ratio : null, 0.15);
   assert.equal(clampUiSplitRatio(0.15), MIN_UI_SPLIT_RATIO);
 });
+
+/* ================================================================== */
+/* LTA-35 ~ LTA-37：查询入口防御（R2）                                   */
+/*                                                                     */
+/* 两个查询函数会被 UI 在渲染期高频调用，输入却不一定是 `validateLayoutTree` */
+/* 放行过的树（恢复流程、调试面板、测试夹具都能直接递进来）。这里钉的是：    */
+/* **查询不得有崩溃面**——未知类型不能穿透，损坏的 children 不能遍历，       */
+/* 也不能把损坏节点当成查询结果。                                          */
+/* ================================================================== */
+
+/** 把任意（可能损坏的）节点当成树的 root。 */
+const asTree = (root: unknown): LayoutTree => ({ version: 1, root }) as unknown as LayoutTree;
+
+test('LTA-35 未知节点类型既不能遍历、也不能作为查询结果', () => {
+  const tree = asTree({
+    type: 'grid',
+    nodeId: 'grid-root',
+    children: [PANE('p1', 'g1'), PANE('p2', 'g2')],
+  });
+
+  // 不得穿透未知类型去返回它内部的 Pane
+  assert.equal(findPaneByGroup(tree, 'g1'), null, 'grid 内部的 Pane 不得被找到');
+  assert.equal(findPaneByGroup(tree, 'g2'), null, 'grid 内部的 Pane 不得被找到');
+  // 未知类型本身也不是有效节点，哪怕 nodeId 命中
+  assert.equal(findLayoutNode(tree, 'grid-root'), null, 'grid 不得作为查询结果');
+  // 更不得借用它的 children 找到内部节点
+  assert.equal(findLayoutNode(tree, 'p1'), null, 'grid 的子节点不得被遍历');
+  assert.equal(findLayoutNode(tree, 'p2'), null, 'grid 的子节点不得被遍历');
+});
+
+test('LTA-36 Split 的 children 损坏：不抛异常、不遍历、不返回', () => {
+  const brokenSplits: ReadonlyArray<readonly [string, unknown]> = [
+    ['缺失 children', { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5 }],
+    [
+      'children 长度为 1',
+      { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [PANE('p1', 'g1')] },
+    ],
+    [
+      'children 长度为 3',
+      {
+        type: 'split',
+        nodeId: 's1',
+        orientation: 'horizontal',
+        ratio: 0.5,
+        children: [PANE('p1', 'g1'), PANE('p2', 'g2'), PANE('p3', 'g3')],
+      },
+    ],
+    [
+      'children 含 null',
+      { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [PANE('p1', 'g1'), null] },
+    ],
+    [
+      'children 含 undefined',
+      { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [undefined, PANE('p2', 'g2')] },
+    ],
+    [
+      'children 含基本类型',
+      { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: ['p1', PANE('p2', 'g2')] },
+    ],
+    [
+      'children 不是数组',
+      {
+        type: 'split',
+        nodeId: 's1',
+        orientation: 'horizontal',
+        ratio: 0.5,
+        children: { 0: PANE('p1', 'g1'), 1: PANE('p2', 'g2') },
+      },
+    ],
+  ];
+
+  for (const [label, root] of brokenSplits) {
+    const tree = asTree(root);
+    // 损坏的 split 自己不是有效结果
+    assert.equal(findLayoutNode(tree, 's1'), null, `${label}：损坏 split 不得作为结果`);
+    // 也不得穿越它去找（哪怕合法的）子节点
+    assert.equal(findLayoutNode(tree, 'p1'), null, `${label}：不得遍历 children`);
+    assert.equal(findLayoutNode(tree, 'p2'), null, `${label}：不得遍历 children`);
+    assert.equal(findPaneByGroup(tree, 'g1'), null, `${label}：不得遍历 children`);
+    assert.equal(findPaneByGroup(tree, 'g2'), null, `${label}：不得遍历 children`);
+  }
+
+  // 入口本身损坏（root 缺失 / 不是对象）也不得抛
+  assert.equal(findLayoutNode(asTree(null), 'x'), null);
+  assert.equal(findLayoutNode(asTree(undefined), 'x'), null);
+  assert.equal(findLayoutNode(asTree('root'), 'x'), null);
+  assert.equal(findPaneByGroup(asTree(null), 'x'), null);
+  assert.equal(findPaneByGroup(asTree(42), 'x'), null);
+});
+
+test('LTA-37 合法查询行为不变：定位、顺序、引用一致、未命中为 null', () => {
+  const base = ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+  const two = ok(
+    splitPane(base, {
+      paneNodeId: 'p1',
+      splitNodeId: 's1',
+      newPaneNodeId: 'p2',
+      newGroupId: 'g2',
+      orientation: 'horizontal',
+      position: 'second',
+    }),
+  );
+  const three = ok(
+    splitPane(two, {
+      paneNodeId: 'p2',
+      splitNodeId: 's2',
+      newPaneNodeId: 'p3',
+      newGroupId: 'g3',
+      orientation: 'vertical',
+      position: 'second',
+      ratio: 0.6,
+    }),
+  );
+
+  const root = asSplit(three.root);
+  const right = asSplit(root.children[1]);
+
+  // 引用一致：返回的就是树里那一个节点，不做任何复制
+  assert.equal(findLayoutNode(three, 's1'), root);
+  assert.equal(findLayoutNode(three, 'p1'), root.children[0]);
+  assert.equal(findLayoutNode(three, 's2'), right);
+  assert.equal(findLayoutNode(three, 'p3'), right.children[1]);
+  assert.equal(findPaneByGroup(three, 'g1'), root.children[0]);
+  assert.equal(findPaneByGroup(three, 'g2'), right.children[0]);
+  assert.equal(findPaneByGroup(three, 'g3'), right.children[1]);
+
+  // 未命中一律 null
+  assert.equal(findLayoutNode(three, 'nope'), null);
+  assert.equal(findPaneByGroup(three, 'nope'), null);
+
+  // 左右顺序：深度优先、左优先。用重复 groupId 的（非法）数据才能分辨顺序
+  const duplicated = asTree({
+    type: 'split',
+    nodeId: 's-dup',
+    orientation: 'horizontal',
+    ratio: 0.5,
+    children: [PANE('left', 'same'), PANE('right', 'same')],
+  });
+  assert.equal(findPaneByGroup(duplicated, 'same')?.nodeId, 'left', '必须返回左支那一个');
+  assert.equal(findLayoutNode(duplicated, 'left')?.nodeId, 'left');
+  assert.equal(findLayoutNode(duplicated, 'right')?.nodeId, 'right');
+  // split 的 nodeId 与 pane 共用命名空间：都能查到
+  assert.equal(findLayoutNode(duplicated, 's-dup')?.type, 'split');
+});

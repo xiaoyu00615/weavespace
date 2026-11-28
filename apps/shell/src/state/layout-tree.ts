@@ -584,46 +584,118 @@ export function mergePane(tree: LayoutTree, input: MergePaneInput): LayoutResult
 /* 3.5 查询（只读）                                                    */
 /* ------------------------------------------------------------------ */
 
+/** 普通对象（非 null、非数组）：布局节点只能是这种形状。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 这个值能不能当**布局节点**看待：必须是对象，且 `type` 是 pane / split。
+ *
+ * 查询函数用它做唯一的准入判定。未知类型（`grid`、`tree`、拼错的 `pnae`）
+ * 一律不算节点——既不能作为结果返回，也不能成为遍历的跳板。
+ */
+function isLayoutNode(value: unknown): value is LayoutNode {
+  if (!isRecord(value)) return false;
+  return value.type === 'pane' || value.type === 'split';
+}
+
+/**
+ * 取出一个 split 的**合法**两个孩子；结构不合格时返回 `null`。
+ *
+ * 合格 = 自身是 split + `children` 是长度恰好 2 的数组 + 两个子节点都是合法节点。
+ * 任一条不满足就返回 `null`，调用方据此**整支跳过**：不遍历、也不把它当成结果。
+ * 宁可少查一个损坏分支，也不能让 `null.nodeId` 这样的读取把渲染打崩。
+ */
+function splitChildrenOf(node: LayoutNode): readonly [LayoutNode, LayoutNode] | null {
+  if (node.type !== 'split') return null;
+  const children: unknown = node.children;
+  if (!Array.isArray(children) || children.length !== 2) return null;
+  const first: unknown = children[0];
+  const second: unknown = children[1];
+  if (!isLayoutNode(first) || !isLayoutNode(second)) return null;
+  return [first, second];
+}
+
+/**
+ * 取 root：树本身或 root 损坏时返回 `null`。
+ *
+ * 两个查询入口都从这里开始，所以"入口检查"只有一处实现。
+ */
+function rootOf(tree: unknown): LayoutNode | null {
+  if (!isRecord(tree)) return null;
+  const root = tree.root;
+  return isLayoutNode(root) ? root : null;
+}
+
 /**
  * 按 `nodeId` 找节点（pane 与 split 共用命名空间）。
  *
- * 走显式栈而不是递归，是为了即使拿到一棵（不该出现的）环状对象也只返回
- * `null` 而不是爆栈——查询函数会被 UI 在渲染期高频调用，不该有崩溃面。
+ * 走显式栈而不是递归，是因为查询函数会被 UI 在渲染期高频调用，不该有递归
+ * 深度上限或崩溃面。三条防御：
+ *
+ * - 未知类型的节点既不入栈、也不作为结果（否则 `{type:'grid', children:[...]}`
+ *   会被当成合法节点返回，调用方读它的字段就踩空）；
+ * - split 的 `children` 必须先通过 `splitChildrenOf` 的结构检查，才允许
+ *   "它自己算命中"并把子节点入栈——顺序是**先验结构、再判命中**，因为
+ *   一个 children 缺失的 split 交给调用方，等于把崩溃点往后挪；
+ * - `seen` 按对象引用去重，环状输入不会无限循环。
+ *
+ * 返回的是树里那**一个**节点（引用相等），不做任何复制。
  */
 export function findLayoutNode(tree: LayoutTree, nodeId: string): LayoutNode | null {
+  const root = rootOf(tree);
+  if (root === null) return null;
+
   const seen = new Set<object>();
-  const stack: LayoutNode[] = [tree.root];
+  const stack: LayoutNode[] = [root];
   while (stack.length > 0) {
     const node = stack.pop() as LayoutNode;
     if (seen.has(node)) continue;
     seen.add(node);
-    if (node.nodeId === nodeId) return node;
-    if (node.type === 'split') {
-      stack.push(node.children[1], node.children[0]); // 先压右再压左 → 弹出时左先
+
+    if (node.type === 'pane') {
+      if (node.nodeId === nodeId) return node;
+      continue;
     }
+
+    const children = splitChildrenOf(node);
+    if (children === null) continue;
+    if (node.nodeId === nodeId) return node;
+    stack.push(children[1], children[0]); // 先压右再压左 → 弹出时左先
   }
   return null;
 }
 
+/**
+ * 按 `groupId` 找 Pane。
+ *
+ * 与 `findLayoutNode` 共用同一套准入判定（`isLayoutNode` / `splitChildrenOf`）：
+ * 未知类型不穿透、损坏的 split 不遍历，因此 `{type:'grid', children:[pane]}` 里
+ * 的 Pane 不会被"顺手"找到——它不在任何合法的视图结构里。
+ *
+ * 遍历顺序仍是深度优先、左优先：同一 `groupId` 出现两次（损坏数据）时，
+ * 返回左边那一个。
+ */
 export function findPaneByGroup(tree: LayoutTree, groupId: string): PaneNode | null {
+  const root = rootOf(tree);
+  if (root === null) return null;
+
   const seen = new Set<object>();
-  const stack: LayoutNode[] = [tree.root];
+  const stack: LayoutNode[] = [root];
   while (stack.length > 0) {
     const node = stack.pop() as LayoutNode;
     if (seen.has(node)) continue;
     seen.add(node);
+
     if (node.type === 'pane') {
       if (node.groupId === groupId) return node;
       continue;
     }
-    /**
-     * 不写 `else` 就直接取 `children`：损坏数据里可能出现未知 `type`
-     * （如 `{type:'grid'}`），那样会读 `undefined[1]` 抛 TypeError。
-     * 查询函数不该有崩溃面 —— 想拦这种数据是 `validateLayoutTree` 的职责。
-     */
-    const children = (node as { children?: unknown }).children;
-    if (!Array.isArray(children) || children.length !== 2) continue;
-    stack.push(children[1] as LayoutNode, children[0] as LayoutNode);
+
+    const children = splitChildrenOf(node);
+    if (children === null) continue;
+    stack.push(children[1], children[0]);
   }
   return null;
 }
