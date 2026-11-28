@@ -14,6 +14,7 @@
  */
 import type { StructureChangeOutcome } from '../client/client-api.ts';
 import type { StructureIntent } from './structure-intent.ts';
+import { structureUnknownNotice, type StructureCheckOutcome } from './structure-refresh.ts';
 import {
   entryNameOf,
   isEntryUnder,
@@ -233,13 +234,21 @@ export interface StructureRunnerHost {
    * 它**不替代** Host 的核验：权威判据始终在 Host（客户端只看自己看到的树）。
    */
   verifyIntent(input: { readonly intent: StructureIntent }): string | null;
-  /** UNKNOWN 时恰好一次的只读核对：只刷新源父层与目标父层，不重发、不改草稿。 */
+  /**
+   * UNKNOWN 时恰好一次的只读核对：只刷新源父层与目标父层，不重发、不改草稿。
+   *
+   * 返回值是**核对本身的结论**，不是结构变更的结论（UX-02C-02-R2.2 / F03）：
+   * - `applied`：真的发了刷新请求并且完成；
+   * - `stale`：世界已经换了，闸门作废，一个请求都没发；
+   * - `failed`：请求失败或没跑完（抛错）。
+   * 提示文案必须按它来写，不能零请求还宣称"已刷新"。
+   */
   checkLocations(
     projectId: string,
     sourceParentDir: string,
     targetParentDir: string,
     intent: StructureIntent,
-  ): Promise<void>;
+  ): Promise<StructureCheckOutcome>;
   /** 只有 Host 明确 APPLIED 才调用：更新层表、作废旧路径、必要时展开目标。 */
   onApplied(
     outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>,
@@ -257,7 +266,17 @@ export interface StructureRunnerHost {
    */
   onRejected?(
     outcome: Extract<StructureChangeOutcome, { status: 'REJECTED' }>,
-    target: { readonly projectId: string; readonly sourcePath: string },
+    /**
+     * `targetParentDir` 是这次请求的**目标父目录**（R2.2 / F02）。
+     *
+     * 目标身份被拒时，过期的不是源那一层，而是目标所属父层：没有它，
+     * 调用方只能刷源层，用户永远无法重新确认目标。
+     */
+    target: {
+      readonly projectId: string;
+      readonly sourcePath: string;
+      readonly targetParentDir: string;
+    },
     intent: StructureIntent,
   ): void;
   /**
@@ -313,9 +332,6 @@ export interface StructureRunner {
   submit(input: StructureSubmitInput): Promise<StructureRunResult>;
   busy(): boolean;
 }
-
-const UNKNOWN_NOTICE =
-  '结构变更结果未确认：已只读刷新源位置与目标位置，请人工核对（不会自动重试、不会自行回滚）';
 
 /** 没有身份预期就不发请求（与 Host 的 `ERR_STRUCTURE_INTENT_MISSING` 同义，只是更早）。 */
 const MISSING_INTENT_NOTICE = '缺少源文件的身份信息：请刷新文件树后重新发起操作';
@@ -382,6 +398,23 @@ export function createStructureRunner(host: StructureRunnerHost): StructureRunne
           notify(intentProblem);
           return 'rejected';
         }
+        /**
+         * UNKNOWN 的只读核对（R2.2 / F03）：真的发了没有、发成功没有，
+         * 都要如实反映在提示里；它**不是**重发，也不是自动重试。
+         */
+        const runReadOnlyCheck = async (): Promise<StructureCheckOutcome> => {
+          try {
+            const checked = await host.checkLocations(
+              input.projectId,
+              parentDirOfEntry(input.sourcePath),
+              input.targetParentDir,
+              input.intent,
+            );
+            return checked === 'stale' ? 'stale' : 'applied';
+          } catch {
+            return 'failed';
+          }
+        };
         let outcome: StructureChangeOutcome;
         try {
           outcome =
@@ -402,15 +435,7 @@ export function createStructureRunner(host: StructureRunnerHost): StructureRunne
                 );
         } catch {
           // 传输层抛出：磁盘可能已经变了，只能 UNKNOWN，绝不重发
-          await host
-            .checkLocations(
-              input.projectId,
-              parentDirOfEntry(input.sourcePath),
-              input.targetParentDir,
-              input.intent,
-            )
-            .catch(() => {});
-          notify(UNKNOWN_NOTICE);
+          notify(structureUnknownNotice(await runReadOnlyCheck()));
           return 'unknown';
         }
         if (outcome.status === 'APPLIED') {
@@ -418,20 +443,16 @@ export function createStructureRunner(host: StructureRunnerHost): StructureRunne
           return 'applied';
         }
         if (outcome.status === 'UNKNOWN') {
-          await host
-            .checkLocations(
-              input.projectId,
-              parentDirOfEntry(input.sourcePath),
-              input.targetParentDir,
-              input.intent,
-            )
-            .catch(() => {});
-          notify(UNKNOWN_NOTICE);
+          notify(structureUnknownNotice(await runReadOnlyCheck()));
           return 'unknown';
         }
         host.onRejected?.(
           outcome,
-          { projectId: input.projectId, sourcePath: input.sourcePath },
+          {
+            projectId: input.projectId,
+            sourcePath: input.sourcePath,
+            targetParentDir: input.targetParentDir,
+          },
           input.intent,
         );
         notify(outcome.message || '改名或移动失败');

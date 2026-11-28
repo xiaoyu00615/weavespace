@@ -148,6 +148,54 @@ export async function refreshStructureSourceParent(input: {
   return 'applied';
 }
 
+/**
+ * 目标身份变化后刷新"目标目录所属父层"（UX-02C-02-R2.2 / F02）。
+ *
+ * `ERR_ENTRY_TARGET_CHANGED` 不只是一条错误：它同时是一条**磁盘事实**——
+ * 层表里那个文件夹行挂着的锚已经过期。只把错误显示出来、留着过期锚，
+ * 用户下一次提交还会撞在同一道墙上（永远无法重新确认目标）。
+ *
+ * 取的是**父层**而不是目标层本身：目标文件夹的锚存在父层的 `anchors[dir]` 里；
+ * 项目根（`''`）的锚在根层的 `projectAnchor` 里，所以根目标要重取根层。
+ *
+ * 归属仍按发起意图时的世界票据核验：跨工作区/跨代次不发请求。
+ */
+export async function refreshStructureTargetParent(input: {
+  readonly start: StructureWorld;
+  readonly projectId: string;
+  readonly targetParentDir: string;
+  readonly host: StructureRefreshHost;
+}): Promise<StructureApplyResult> {
+  const guard = createStaleGuard(input.start, () => input.host.world());
+  if (guard.check()) return 'stale';
+  const dir = input.targetParentDir === '' ? '' : parentDirOfEntry(input.targetParentDir);
+  await input.host.load(input.projectId, dir);
+  if (guard.check()) return 'stale';
+  return 'applied';
+}
+
+/**
+ * UNKNOWN 提示的**真实性**（UX-02C-02-R2.2 / F03）。
+ *
+ * 旧文案无条件写"已只读刷新源位置与目标位置"。可是只读核对也会不执行
+ * （世界已经换了 → 闸门作废、一个请求都不发），也可能失败（网络/服务不可用）。
+ * 零刷新请求却宣称"已刷新"，会让用户以为树已经是对的了。
+ *
+ * 三种结论分开说，且都不承诺"会自动重试"。
+ */
+export type StructureCheckOutcome = 'applied' | 'stale' | 'failed';
+
+export function structureUnknownNotice(check: StructureCheckOutcome): string {
+  const tail = '（不会自动重试、不会自行回滚）';
+  if (check === 'applied') {
+    return `结构变更结果未确认：已只读刷新源位置与目标位置，请人工核对${tail}`;
+  }
+  if (check === 'stale') {
+    return `结构变更结果未确认：当前界面已经切换，没有执行只读核对，请手动刷新后核对${tail}`;
+  }
+  return `结构变更结果未确认：只读核对没有完成，请手动刷新后核对${tail}`;
+}
+
 /** 给调用方的一句话：Host 已经完成，但这一屏没有回填。 */
 export function staleStructureNotice(
   outcome: AppliedOutcome,

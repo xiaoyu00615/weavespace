@@ -86,6 +86,7 @@ import {
   applyStructureChangeWithOwnership,
   checkStructureLocationsWithOwnership,
   refreshStructureSourceParent as refreshStructureSourceParentWithOwnership,
+  refreshStructureTargetParent as refreshStructureTargetParentWithOwnership,
   staleStructureNotice,
   type StructureApplyResult,
   type StructureRefreshHost,
@@ -255,6 +256,17 @@ export interface DocumentActions {
   refreshStructureSourceParent(
     projectId: string,
     sourcePath: string,
+    intent: StructureIntent,
+  ): Promise<StructureApplyResult>;
+  /**
+   * 目标身份变化后重取**目标目录所属父层**（UX-02C-02-R2.2 / F02）。
+   *
+   * `ERR_ENTRY_TARGET_CHANGED` 是磁盘事实：那一行的锚已经过期。只显示错误、
+   * 留着过期锚，用户永远无法重新确认目标。归属同样按意图的世界票据核验。
+   */
+  refreshStructureTargetParent(
+    projectId: string,
+    targetParentDir: string,
     intent: StructureIntent,
   ): Promise<StructureApplyResult>;
 
@@ -1228,6 +1240,16 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           start: intent.world,
           projectId,
           sourcePath,
+          host: structureRefreshHost(),
+        });
+      },
+
+      /** 目标身份变化：重取目标目录所属父层（根目标重取根层）。 */
+      async refreshStructureTargetParent(projectId, targetParentDir, intent) {
+        return refreshStructureTargetParentWithOwnership({
+          start: intent.world,
+          projectId,
+          targetParentDir,
           host: structureRefreshHost(),
         });
       },

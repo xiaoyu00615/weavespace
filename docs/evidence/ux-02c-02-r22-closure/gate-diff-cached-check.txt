@@ -1,0 +1,4 @@
+docs/evidence/ux-02c-02-r22-closure/gate-build-shell.txt:19: trailing whitespace.
++[33m[plugin builtin:vite-reporter]
+docs/evidence/ux-02c-02-r22-closure/gate-typecheck-apps.txt:12: new blank line at EOF.
+docs/evidence/ux-02c-02-r22-closure/gate-typecheck.txt:4: new blank line at EOF.

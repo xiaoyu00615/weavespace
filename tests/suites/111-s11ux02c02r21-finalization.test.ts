@@ -585,6 +585,7 @@ function runnerHarness(input: {
     },
     checkLocations: async () => {
       state.checked += 1;
+      return 'applied';
     },
     onApplied: (_outcome, intent) => void applied.push(intent),
     onRejected: (outcome, _target, intent) =>
@@ -1016,7 +1017,10 @@ test('F-07 目标目录被删除重建（同路径、新身份）→ ERR_ENTRY_T
   });
 });
 
-test('F-08 占位阶段目标目录被换掉 → 拒绝；新目录里没有本次操作的痕迹', async () => {
+test('F-08 占位阶段目标目录被整体移走 → UNKNOWN（占位去向不可证明）', async () => {
+  // R2.2 / F01：原期望 REJECTED 是**错的**。占位 `archive/a.md` 随目录一起
+  // 被外部移到了 `archive-old`，我们既不能声称它已被清理（零副作用），
+  // 也不能去别处找它删掉。只有 UNKNOWN 是诚实的。
   await withProvider(
     async (ctx) => {
       const expected = await ctx.identity('a.md');
@@ -1024,13 +1028,14 @@ test('F-08 占位阶段目标目录被换掉 → 拒绝；新目录里没有本�
       const targetIdentity = await ctx.identity('archive');
       assert.equal(typeof targetIdentity, 'string');
       const result = await ctx.move('a.md', 'archive', 'a.md', expected, targetIdentity);
-      assert.equal(result.status, 'REJECTED', JSON.stringify(result));
-      assert.equal(result.status === 'REJECTED' ? result.errorCode : '', 'ERR_ENTRY_TARGET_CHANGED');
+      assert.equal(result.status, 'UNKNOWN', JSON.stringify(result));
       assert.equal(existsSync(join(ctx.root, 'a.md')), true, '源必须保持原位');
-      // rename 之前就发现了：没有搬进新目录，新目录保持空
+      // 新同名目录里没有本次操作的痕迹（没有在新目录重新占位、也没有搬进去）
       assert.deepEqual(await readdir(join(ctx.root, 'archive')), []);
-      // 旧目录（被外部挪走）里留着占位与原有文件，但它已经不在用户选择的位置上
+      // 旧目录里仍留着我们的占位——这正是无法宣称"零副作用"的原因
       assert.deepEqual((await readdir(join(ctx.root, 'archive-old'))).sort(), ['a.md', 'keep.md']);
+      // 外部原有文件一个都没被动过
+      assert.equal(await readFile(join(ctx.root, 'archive-old', 'keep.md'), 'utf8'), 'KEEP\n');
     },
     {
       faults: ({ root }) => ({

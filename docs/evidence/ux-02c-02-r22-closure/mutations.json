@@ -1,0 +1,106 @@
+{
+  "at": "2026-11-28T00:27:26.107Z",
+  "results": [
+    {
+      "id": "C02R22-M31",
+      "desc": "目标父目录失效后仍重新占位（在新同名目录里留下痕迹）",
+      "file": "packages/storage/local-provider.ts",
+      "suite": "tests/suites/112-s11ux02c02r22-closure.test.ts",
+      "baselineSha256": "95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8",
+      "mutatedSha256": "0903ba71e6051b974f8b2ffa4f9abe7582b16408df86235db7caa40265e47dcb",
+      "sourceChanged": true,
+      "restoredSha256": "95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "P-02 占位后目标目录被整体移走（afterMoveReserve）→ UNKNOWN，旧目录里留着占位",
+        "P-04 新目录里有外部同名文件 → UNKNOWN，外部对象一字节不动",
+        "P-06 10b 重新占位前先认目录：不会在新同名目录里补一个占位"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R22-M32",
+      "desc": "占位收敛只看原路径（目录被整体移走也敢说零副作用）",
+      "file": "packages/storage/local-provider.ts",
+      "suite": "tests/suites/112-s11ux02c02r22-closure.test.ts",
+      "baselineSha256": "95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8",
+      "mutatedSha256": "fd83d40ea84f18e3d12c1b3a78abb15df3500afec69659874dd8bc301b64f3b1",
+      "sourceChanged": true,
+      "restoredSha256": "95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "P-07 目录被移走 + 源同时被换掉 → 仍只能 UNKNOWN（不能宣称零副作用）"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R22-M33",
+      "desc": "目标父目录失效后仍返回 REJECTED（占位残留在旧目录却宣称零副作用）",
+      "file": "packages/storage/local-provider.ts",
+      "suite": "tests/suites/112-s11ux02c02r22-closure.test.ts",
+      "baselineSha256": "95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8",
+      "mutatedSha256": "96bda37d8b283a50fc6b3e4fd9858bc85d7efc8a138144d0764179b2c835d2ad",
+      "sourceChanged": true,
+      "restoredSha256": "95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "P-03 占位后目标目录被整体移走（beforeMoveRename）→ 同样 UNKNOWN"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R22-M34",
+      "desc": "UNKNOWN 跨世界仍声称\"已只读刷新\"",
+      "file": "apps/shell/src/state/structure-refresh.ts",
+      "suite": "tests/suites/112-s11ux02c02r22-closure.test.ts",
+      "baselineSha256": "7c0a25c8e656f3a75a3aa62cad520072891ae7a936a73bb880ff097c6aa2aede",
+      "mutatedSha256": "0e98cacfebad9be00e4dbd3c032e46ed6e18abe59572d9eb5099619b69963458",
+      "sourceChanged": true,
+      "restoredSha256": "7c0a25c8e656f3a75a3aa62cad520072891ae7a936a73bb880ff097c6aa2aede",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "N-02 世界已切换：必须说明\"没有执行只读核对\"",
+        "N-04 UNKNOWN + 核对被闸门作废 → 提示不得声称已刷新，且不重发"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R22-M35",
+      "desc": "删除目标恢复路径（重取目标自己那一层而不是父层，锚永远刷不到）",
+      "file": "apps/shell/src/state/structure-refresh.ts",
+      "suite": "tests/suites/112-s11ux02c02r22-closure.test.ts",
+      "baselineSha256": "7c0a25c8e656f3a75a3aa62cad520072891ae7a936a73bb880ff097c6aa2aede",
+      "mutatedSha256": "c6b4cfb6a629b54eaff875a550312fc08c0cf2d346814d1c6fa465f7824185f5",
+      "sourceChanged": true,
+      "restoredSha256": "7c0a25c8e656f3a75a3aa62cad520072891ae7a936a73bb880ff097c6aa2aede",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "R-01 目标身份被拒后重取**目标所属父层**（顶层目录 → 根层）",
+        "R-02 嵌套目标重取它的父目录层，而不是目标自己那一层"
+      ],
+      "verdict": "BITTEN"
+    },
+    {
+      "id": "C02R22-M36",
+      "desc": "删除最终**目标对象**身份核验（内容相同即算搬运成功）",
+      "file": "packages/storage/local-provider.ts",
+      "suite": "tests/suites/111-s11ux02c02r21-finalization.test.ts",
+      "baselineSha256": "95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8",
+      "mutatedSha256": "3a0aaf5c9af097546a1a72ac1e97f3cf5ecfe12efbfe689b9040a32e53de0717",
+      "sourceChanged": true,
+      "restoredSha256": "95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8",
+      "restoreExact": true,
+      "suiteExitCode": 1,
+      "failedTests": [
+        "F-04 rename 之后目标被换成内容相同的新对象 → UNKNOWN（绝不当 MOVED）",
+        "F-10 UNKNOWN 之后没有第二次尝试：占位只建立一次、目标保持外部对象"
+      ],
+      "verdict": "BITTEN"
+    }
+  ]
+}

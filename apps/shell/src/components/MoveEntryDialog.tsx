@@ -88,6 +88,19 @@ export function MoveEntryDialog() {
           if (event.key === 'Enter') {
             if (event.target instanceof HTMLElement && event.target.tagName === 'TEXTAREA') return;
             event.preventDefault();
+            /**
+             * 次要按钮上的 Enter 走它自己的动作（R2.2 / F02）：
+             * 键盘用户 Tab 到「重新确认目标」再按 Enter，不能变成"再提交一次"。
+             */
+            const action = event.target instanceof HTMLElement ? event.target.dataset.action : undefined;
+            if (action === 'reconfirm') {
+              commands.reconfirmMoveTarget();
+              return;
+            }
+            if (action === 'cancel') {
+              commands.cancelMove();
+              return;
+            }
             if (dialog.submitting || dialog.options.length === 0) return;
             void commands.confirmMove();
           }
@@ -122,11 +135,35 @@ export function MoveEntryDialog() {
         {dialog.options.length === 0 && (
           <p className="modal__hint">当前项目还没有其它可选文件夹：请先展开目录加载后再试。</p>
         )}
+        {dialog.targetStale && (
+          /**
+           * 目标被外部替换后的**明确恢复入口**（UX-02C-02-R2.2 / F02）。
+           *
+           * 为什么需要它：重新选「同一个路径」不会触发 `<select>` 的 change，
+           * 所以没有这个按钮，用户只能关掉对话框重开——而重开并不保证他会做。
+           * 这里只重新捕获身份，不自动提交、不自动重发。
+           */
+          <div className="move__stale">
+            <p className="modal__hint">
+              这个文件夹已经在磁盘上被替换或移动过，原来的身份预期已经失效（不会自动改用新目录）。
+            </p>
+            <button
+              type="button"
+              className="button button--ghost"
+              data-action="reconfirm"
+              disabled={dialog.submitting}
+              onClick={commands.reconfirmMoveTarget}
+            >
+              重新确认目标
+            </button>
+          </div>
+        )}
         {dialog.error && <p className="move__error">{dialog.error}</p>}
         <div className="modal__actions">
           <button
             type="button"
             className="button button--ghost"
+            data-action="cancel"
             disabled={dialog.submitting}
             onClick={commands.cancelMove}
           >

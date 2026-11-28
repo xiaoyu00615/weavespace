@@ -1,0 +1,12 @@
+== 已把 Provider 的占位收敛判定退回 R2.1（修复前）==
+sha256(before) = 95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8
+sha256(mutated)= 65470128c0495c2f6c1945580e7787f409b4b81d114871529fde2bb0f2ab3605
+not ok 2 - P-02 占位后目标目录被整体移走（afterMoveReserve）→ UNKNOWN，旧目录里留着占位
+not ok 3 - P-03 占位后目标目录被整体移走（beforeMoveRename）→ 同样 UNKNOWN
+not ok 4 - P-04 新目录里有外部同名文件 → UNKNOWN，外部对象一字节不动
+not ok 6 - P-06 10b 重新占位前先认目录：不会在新同名目录里补一个占位
+not ok 7 - P-07 目录被移走 + 源同时被换掉 → 仍只能 UNKNOWN（不能宣称零副作用）
+# tests 24
+# pass 19
+# fail 5
+sha256(restored)= 95c87dc4a3d240fa7ade91902d2753b615b57f7af9c75d15dd9059e1e75b28a8 restoreExact= true

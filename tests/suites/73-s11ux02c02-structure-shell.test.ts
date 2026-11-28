@@ -198,6 +198,7 @@ function harness(outcome: StructureChangeOutcome | (() => never), opts: { blocke
     },
     checkLocations: async (pid, src, dst) => {
       calls.push(`check:${pid}:${src}:${dst}`);
+      return 'applied';
     },
     onApplied: (value) => calls.push(`applied:${value.targetPath}`),
     onNotice: (message) => notices.push(message),

@@ -2399,6 +2399,15 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       // 10b) rename 前再次核对占位归属：Windows 的 rename 会覆盖已存在目标，
       // 因此"目标是不是我的占位"必须在动手前确认，而不是事后靠外观猜测。
       if (reserved) {
+        /**
+         * 先认目录、再认占位（UX-02C-02-R2.2 / F01）。
+         *
+         * 目标父目录已经被换掉时，`reservationState()` 读的是**新目录里的同名路径**，
+         * 它当然会报 `missing` —— 旧实现据此在新目录里重新占位，等于在一个用户
+         * 从未确认过的目录里留下本次操作的痕迹。这里必须提前返回 UNKNOWN：
+         * 占位已随旧目录离开，去向不可证明。
+         */
+        if (!(await targetDirStillMatches())) return unknown();
         const state = await reservationState();
         if (state === 'foreign') {
           // 同名路径上是外部对象：拒绝覆盖，且绝不删除它（源保持原位）
@@ -2407,6 +2416,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         if (state === 'missing') {
           // 占位被外部删除但这个名字还空着：重新占一次，把竞争窗口重新收紧。
           // 与初次占位**同一段实现**、同一套失败语义（R1.2-04）。
+          // 这里已经确认过目标父目录仍是选中的那个，所以重新占位不会落到别处。
           const again = await reserveExclusive(2);
           if (again.status === 'FAILED') return again.result;
           reservedIdentity = again.identity;
@@ -2432,6 +2442,17 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
        */
       const rejectSourceChanged = async (errorCode: ErrorCode): Promise<MoveEntryResult> => {
         if (!reserved) return reject(errorCode);
+        /**
+         * 占位已建立，但**目标父目录已经不是用户选中的那一个**（UX-02C-02-R2.2 / F01）。
+         *
+         * 占位是建在目录里的：目录被整体挪走/删除重建后，占位随之去了别处
+         * （或随旧目录一起消失）。此刻：
+         * - 不能声称"零副作用"——占位可能仍在旧目录里（F-08 的真实磁盘事实）；
+         * - 不能去扫描项目把它找出来删掉——那是用户的目录，不是回收区；
+         * - 不能在新同名目录里重新占位——那是用户从未确认过的目录。
+         * 三件事都做不了，就只能 UNKNOWN。
+         */
+        if (!(await targetDirStillMatches())) return unknown();
         const owned = await reservationState();
         if (owned === 'foreign') return unknown();
         if (owned === 'owned') {
@@ -2484,9 +2505,14 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
        *
        * 目录已经不是用户选中的那个时，绝不能"顺手重新占位"——那会在一个
        * 用户从未确认过的目录里留下（哪怕立刻删除）本次操作的痕迹。
+       *
+       * 结果语义（UX-02C-02-R2.2 / F01）：
+       * - **未建立过占位**：零副作用，明确拒绝（用户可以重选目标后重试）；
+       * - **已建立过占位**：占位随旧目录离开，去向不可证明 → UNKNOWN。
+       *   不能再用"新路径上没有占位"来宣称零副作用（F-08 的旧错误）。
        */
       if (!(await targetDirStillMatches())) {
-        return await rejectSourceChanged('ERR_ENTRY_TARGET_CHANGED');
+        return reserved ? unknown() : reject('ERR_ENTRY_TARGET_CHANGED');
       }
       if (reserved) {
         const state = await reservationState();

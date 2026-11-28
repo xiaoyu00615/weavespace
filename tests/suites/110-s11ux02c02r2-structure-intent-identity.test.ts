@@ -570,7 +570,7 @@ function makeRunner(options: {
     },
     localBlockers: () => [],
     verifyIntent: (input) => (options.verify ? options.verify(input.intent) : null),
-    checkLocations: async () => {},
+    checkLocations: async () => 'applied',
     onApplied: () => {
       probe.applied += 1;
     },

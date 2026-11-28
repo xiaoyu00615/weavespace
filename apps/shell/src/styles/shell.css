@@ -1762,6 +1762,26 @@ button {
   line-height: 1.55;
 }
 
+/*
+ * 目标身份过期（UX-02C-02-R2.2 / F02）：说明 + 明确的"重新确认目标"入口。
+ * 视觉上比普通提示更显眼，因为它要求用户做一个动作才能继续。
+ */
+.move__stale {
+  margin: 0 0 12px;
+  padding: 9px 10px;
+  border: 1px dashed #e0c9a6;
+  border-radius: 7px;
+  background: #fdfaf4;
+}
+
+.move__stale .modal__hint {
+  margin: 0 0 8px;
+}
+
+.move__stale .button {
+  font-size: 12px;
+}
+
 /* ---------- 工作台隐藏（UX-02C-03-P1） ---------- */
 
 /*
