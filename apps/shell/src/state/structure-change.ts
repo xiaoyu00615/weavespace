@@ -404,13 +404,16 @@ export function createStructureRunner(host: StructureRunnerHost): StructureRunne
          */
         const runReadOnlyCheck = async (): Promise<StructureCheckOutcome> => {
           try {
-            const checked = await host.checkLocations(
+            /**
+             * 原样交回核对结论（R2.2-PATCH / P02）：`partial`（只完成一部分）
+             * 与 `failed`（全都没成功）是不同的现实，不能都压成 `applied`。
+             */
+            return await host.checkLocations(
               input.projectId,
               parentDirOfEntry(input.sourcePath),
               input.targetParentDir,
               input.intent,
             );
-            return checked === 'stale' ? 'stale' : 'applied';
           } catch {
             return 'failed';
           }

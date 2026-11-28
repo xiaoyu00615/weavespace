@@ -1,0 +1,38 @@
+
+--- 环境 ---
+  PASS S-01 fixture 就绪
+  PASS S-02 工作区已加载
+
+--- M 目标被外部替换 → 拒绝 → 刷新父层 → 用户重新确认 → 成功 ---
+  PASS M-00 找到 move-me.md
+  PASS M-01 移动对话框打开
+  PASS M-02 外部替换后目标目录仍存在但已是新对象
+  FACT firstError "目标文件夹已被外部替换，未执行任何移动（请重新选择目标）"
+  PASS M-03 第一次提交被拒且原因明确
+  PASS M-04 只发出一次移动请求
+  FACT sourceBefore {"exists":true,"size":10,"ino":"1407374884772112","sha256":"804d44e34afcde8c97aa2fd9c4db6157585d2a832bf1729c6f6ef21e6d9f9360"}
+  FACT sourceAfterFirst {"exists":true,"size":10,"ino":"1407374884772112","sha256":"804d44e34afcde8c97aa2fd9c4db6157585d2a832bf1729c6f6ef21e6d9f9360"}
+  PASS M-05 第一次请求源文件不动（inode 与摘要都不变）
+  PASS M-06 第一次请求目标未创建
+  PASS M-07 被拒后重取了目标所属父层（新的 /api/tree 请求）
+  FACT staleHint "这个文件夹已经在磁盘上被替换或移动过，原来的身份预期已经失效（不会自动改用新目录）。重新确认目标"
+  PASS M-08 对话框出现"目标已过期"的说明
+  PASS M-09 提供了明确的"重新确认目标"入口
+  FACT staleEnterError "目标文件夹的身份已经过期：请先点「重新确认目标」再提交"
+  PASS M-10 目标过期时按 Enter 不发请求
+  PASS M-11 并且明确要求先重新确认
+  PASS M-12 重新确认后"已过期"说明消失
+  FACT moved {"exists":true,"size":10,"ino":"1407374884772112","sha256":"804d44e34afcde8c97aa2fd9c4db6157585d2a832bf1729c6f6ef21e6d9f9360"}
+  PASS M-13 第二次提交真的移动成功
+  FACT moveTargetAnchors ["3f0dfc8d9f0a4dd2a50d22e0f7d696a1","7e1324dcfcd44b6fd2a06583e81d0826"]
+  PASS M-14 一共只有两次移动请求（没有自动重发）
+  PASS M-15 两次请求的目标锚不同（第二次是新身份）
+  PASS M-16 第二次请求的锚不是第一次那个（冻结锚没有被悄悄替换）
+
+--- E Escape 回归 ---
+  PASS E-01 对话框可再次打开
+  PASS E-02 打开即聚焦确认按钮
+  PASS E-03 Escape 关闭对话框
+  PASS E-04 Escape 零请求
+
+ALL PASS: 23 checks, 0 failed

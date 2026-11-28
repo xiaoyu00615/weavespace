@@ -1,0 +1,17 @@
+== 已把 P01 / P02 按运行语义退回补丁前 ==
+  packages/storage/local-provider.ts  sha256 = a5ff27230d5eb12fc99d4923a2ac29aec2399dbc0f9b372c5a33823f39b295e0
+  apps/shell/src/state/structure-refresh.ts  sha256 = 9b3c3c4432636ad45631e502a92aacc6235d72ff86619a3ed34b55f0d8aa784b
+== 套件 112 在补丁前代码上的结果 ==
+not ok 8 - Q-01 普通改名：占位建立后父目录被整体移走 → UNKNOWN；旧目录里源与占位都在，新目录为空
+not ok 9 - Q-02 初次父目录读取之后、第一次占位之前替换目录 → 明确拒绝，且一次占位都不尝试
+not ok 19 - N-07 底层 load 返回 failed（不抛异常）→ 核对失败，不得当作已刷新
+not ok 20 - N-08 底层 load 返回 rejected → 同样不算刷新成功
+not ok 21 - N-09 底层 load 返回 skipped-inflight → 同层请求还在途，核对未完成
+not ok 22 - N-10 第一层成功、第二层失败 → 只完成了一部分，仍不得宣称已刷新
+not ok 23 - N-11 第一层完成后切换世界 → 已发出的请求不算核对完成
+not ok 26 - N-14 生产编排：核对失败时结构变更请求全程只发送一次，且不宣称已刷新
+# tests 37
+# pass 29
+# fail 8
+  还原 packages/storage/local-provider.ts: 2f4bc3010acf69fbc7d2917081a9af1914fe7a42dfbf7775cadba3b8a1109361（逐字节一致 = true）
+  还原 apps/shell/src/state/structure-refresh.ts: 2905c35b473134c468fd5d3b4176653bc5444cbc62e3a7f815505b02c1194494（逐字节一致 = true）

@@ -383,6 +383,8 @@ function refreshHarness(input: {
       loads.push(dir);
       effects.push(`load:${dir}`);
       if (input.worldAfterFirstLoad && loads.length === 1) state.world = input.worldAfterFirstLoad;
+      // P02：`load` 必须交回真实结论；本套件的落地编排用默认成功
+      return 'applied' as const;
     },
     notice: (message) => void effects.push(`notice:${message}`),
   };

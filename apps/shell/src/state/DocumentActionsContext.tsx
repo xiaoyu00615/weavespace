@@ -89,6 +89,7 @@ import {
   refreshStructureTargetParent as refreshStructureTargetParentWithOwnership,
   staleStructureNotice,
   type StructureApplyResult,
+  type StructureCheckOutcome,
   type StructureRefreshHost,
 } from './structure-refresh.ts';
 import { useWorkspace } from './WorkspaceContext';
@@ -240,13 +241,18 @@ export interface DocumentActions {
     outcome: Extract<StructureChangeOutcome, { status: 'APPLIED' }>,
     intent: StructureIntent,
   ): Promise<StructureApplyResult>;
-  /** UNKNOWN 时恰好一次的只读核对：只刷新源父层与目标父层，不重发、不改草稿。 */
+  /**
+   * UNKNOWN 时恰好一次的只读核对：只刷新源父层与目标父层，不重发、不改草稿。
+   *
+   * 返回的是**这次核对本身**的结论（applied / partial / stale / failed），
+   * 不是结构变更的结论（R2.2-PATCH / P02）。
+   */
   checkStructureLocations(
     projectId: string,
     sourceParentDir: string,
     targetParentDir: string,
     intent: StructureIntent,
-  ): Promise<StructureApplyResult>;
+  ): Promise<StructureCheckOutcome>;
   /**
    * 拒绝之后重取源父层（R2 的 `onRejected` 落地）。
    *
@@ -257,7 +263,7 @@ export interface DocumentActions {
     projectId: string,
     sourcePath: string,
     intent: StructureIntent,
-  ): Promise<StructureApplyResult>;
+  ): Promise<StructureCheckOutcome>;
   /**
    * 目标身份变化后重取**目标目录所属父层**（UX-02C-02-R2.2 / F02）。
    *
@@ -268,7 +274,7 @@ export interface DocumentActions {
     projectId: string,
     targetParentDir: string,
     intent: StructureIntent,
-  ): Promise<StructureApplyResult>;
+  ): Promise<StructureCheckOutcome>;
 
   /* ---- UX-02C-03-P1：工作台隐藏 / 取消隐藏 ---- */
 
@@ -559,9 +565,13 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         dispatch({ type: 'TREE_STRUCTURE_CHANGED', projectId, sourcePath, targetPath }),
       expandFolder: (projectId, path) =>
         dispatch({ type: 'EXPAND_PROJECT_NODE', projectId, path }),
-      load: async (projectId, dir) => {
-        await treeLoader.current.load(projectId, dir, false);
-      },
+      /**
+       * 真实加载结果原样交回（R2.2-PATCH / P02）。
+       *
+       * 旧写法 `await treeLoader.load(...)` 把 `TreeLoadOutcome` 就地丢了：
+       * 编排层因此无法区分"加载成功"与"failed / rejected / skipped-inflight"。
+       */
+      load: (projectId, dir) => treeLoader.current.load(projectId, dir, false),
       notice: (message) => dispatch({ type: 'NOTICE', message }),
     }),
     [dispatch],

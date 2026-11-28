@@ -17,6 +17,7 @@
 import type { StructureChangeOutcome } from '../client/client-api.ts';
 import { parentDirOfEntry } from '../../../../packages/storage/entry-name.ts';
 import type { TreeLevels } from '../components/tree-model.ts';
+import type { TreeLoadOutcome } from './tree-load.ts';
 import {
   createStaleGuard,
   structureWorldChanged,
@@ -34,11 +35,31 @@ export interface StructureRefreshHost {
   /** `TREE_STRUCTURE_CHANGED`：删旧层缓存 / 展开 / 选择记录。 */
   markStructureChanged(projectId: string, sourcePath: string, targetPath: string): void;
   expandFolder(projectId: string, path: string): void;
-  load(projectId: string, dir: string): Promise<unknown>;
+  /**
+   * 重新取一层。**必须**把真实的 `TreeLoadOutcome` 交回来
+   * （UX-02C-02-R2.2-PATCH / P02）。
+   *
+   * 旧签名是 `Promise<unknown>`，实现里写 `await treeLoader.load(...)` —— 返回值
+   * 被就地丢掉。于是"底层返回 failed / rejected / skipped-inflight"与"真的加载成功"
+   * 在编排层看起来一模一样，界面据此宣称"已只读刷新源位置与目标位置"。
+   */
+  load(projectId: string, dir: string): Promise<TreeLoadOutcome>;
   notice(message: string): void;
 }
 
 export type StructureApplyResult = 'applied' | 'stale';
+
+/**
+ * 一次只读核对的结论（UX-02C-02-R2.2-PATCH / P02）。
+ *
+ * - `applied`：每个必要位置都明确加载成功，这一屏的数据确实刷新了；
+ * - `partial`：请求发出去了，但有位置没被确认加载完成（或世界在途中变了）；
+ * - `stale`：一个请求都没发（世界已切换，闸门作废）；
+ * - `failed`：请求都发了，但没有一个位置成功。
+ *
+ * 提示文案必须按它来写：只有 `applied` 允许说"已只读刷新"。
+ */
+export type StructureCheckOutcome = 'applied' | 'partial' | 'stale' | 'failed';
 
 /**
  * APPLIED 之后的层表同步。
@@ -101,9 +122,33 @@ export function ancestorDirsOf(dir: string): string[] {
 }
 
 /**
+ * 一次（或多次）真实加载的**合并结论**（UX-02C-02-R2.2-PATCH / P02）。
+ *
+ * 四种情况必须分开，不能再用"没抛异常就是成功"来糊：
+ * - 零请求（世界已切换，一次都没发）→ `stale`；
+ * - 请求发出去了，但世界在途中变了 / 有的位置没确认加载完成 → `partial`；
+ * - 请求都发了、全都失败 → `failed`；
+ * - 每个必要位置都明确 `applied` → `applied`。
+ */
+export function structureLoadVerdict(
+  outcomes: readonly TreeLoadOutcome[],
+  worldChanged: boolean,
+): StructureCheckOutcome {
+  if (outcomes.length === 0) return worldChanged ? 'stale' : 'failed';
+  if (worldChanged) return 'partial';
+  if (outcomes.every((outcome) => outcome === 'applied')) return 'applied';
+  return outcomes.some((outcome) => outcome === 'applied') ? 'partial' : 'failed';
+}
+
+/**
  * UNKNOWN 的只读核对（恰好一次）。
  *
  * 作废时**一个请求都不发**：旧世界的 UNKNOWN 不该让新工作区去读旧路径的层。
+ *
+ * 返回值是**核对本身**的结论，不是结构变更的结论。`load` 的真实
+ * `TreeLoadOutcome` 必须逐个收集：`failed` / `rejected` / `changed` /
+ * `skipped-inflight` / `skipped-mode` 都意味着"这一层没被确认加载成功"，
+ * 一个都不能当成"已刷新"。
  */
 export async function checkStructureLocationsWithOwnership(input: {
   readonly start: StructureWorld;
@@ -111,16 +156,21 @@ export async function checkStructureLocationsWithOwnership(input: {
   readonly sourceParentDir: string;
   readonly targetParentDir: string;
   readonly host: StructureRefreshHost;
-}): Promise<StructureApplyResult> {
+}): Promise<StructureCheckOutcome> {
   const guard = createStaleGuard(input.start, () => input.host.world());
-  if (guard.check()) return 'stale';
-  await input.host.load(input.projectId, input.sourceParentDir);
-  if (guard.check()) return 'stale';
-  if (input.targetParentDir !== input.sourceParentDir) {
-    await input.host.load(input.projectId, input.targetParentDir);
-    if (guard.check()) return 'stale';
+  const dirs =
+    input.targetParentDir !== input.sourceParentDir
+      ? [input.sourceParentDir, input.targetParentDir]
+      : [input.sourceParentDir];
+  const outcomes: TreeLoadOutcome[] = [];
+  for (const dir of dirs) {
+    // 每次请求之前重新核验归属：中途换世界就不再发下一个
+    if (guard.check()) return structureLoadVerdict(outcomes, true);
+    outcomes.push(await input.host.load(input.projectId, dir));
   }
-  return 'applied';
+  // 最后这次看的是"数据到底进没进这一屏"：世界变了就不算完成
+  if (guard.check()) return structureLoadVerdict(outcomes, true);
+  return structureLoadVerdict(outcomes, false);
 }
 
 /**
@@ -140,12 +190,11 @@ export async function refreshStructureSourceParent(input: {
   readonly projectId: string;
   readonly sourcePath: string;
   readonly host: StructureRefreshHost;
-}): Promise<StructureApplyResult> {
+}): Promise<StructureCheckOutcome> {
   const guard = createStaleGuard(input.start, () => input.host.world());
   if (guard.check()) return 'stale';
-  await input.host.load(input.projectId, parentDirOfEntry(input.sourcePath));
-  if (guard.check()) return 'stale';
-  return 'applied';
+  const outcome = await input.host.load(input.projectId, parentDirOfEntry(input.sourcePath));
+  return structureLoadVerdict([outcome], guard.check());
 }
 
 /**
@@ -165,13 +214,12 @@ export async function refreshStructureTargetParent(input: {
   readonly projectId: string;
   readonly targetParentDir: string;
   readonly host: StructureRefreshHost;
-}): Promise<StructureApplyResult> {
+}): Promise<StructureCheckOutcome> {
   const guard = createStaleGuard(input.start, () => input.host.world());
   if (guard.check()) return 'stale';
   const dir = input.targetParentDir === '' ? '' : parentDirOfEntry(input.targetParentDir);
-  await input.host.load(input.projectId, dir);
-  if (guard.check()) return 'stale';
-  return 'applied';
+  const outcome = await input.host.load(input.projectId, dir);
+  return structureLoadVerdict([outcome], guard.check());
 }
 
 /**
@@ -183,8 +231,6 @@ export async function refreshStructureTargetParent(input: {
  *
  * 三种结论分开说，且都不承诺"会自动重试"。
  */
-export type StructureCheckOutcome = 'applied' | 'stale' | 'failed';
-
 export function structureUnknownNotice(check: StructureCheckOutcome): string {
   const tail = '（不会自动重试、不会自行回滚）';
   if (check === 'applied') {
@@ -192,6 +238,9 @@ export function structureUnknownNotice(check: StructureCheckOutcome): string {
   }
   if (check === 'stale') {
     return `结构变更结果未确认：当前界面已经切换，没有执行只读核对，请手动刷新后核对${tail}`;
+  }
+  if (check === 'partial') {
+    return `结构变更结果未确认：只读刷新只完成了一部分（有位置未确认加载完成），请手动刷新后核对${tail}`;
   }
   return `结构变更结果未确认：只读核对没有完成，请手动刷新后核对${tail}`;
 }

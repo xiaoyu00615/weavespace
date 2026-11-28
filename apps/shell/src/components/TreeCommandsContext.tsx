@@ -51,8 +51,11 @@ import {
   type StructureIntent,
 } from '../state/structure-intent.ts';
 import { inlineNoticeTargets } from '../state/structure-ownership.ts';
-import { updateSessionIfOwned } from '../state/structure-session.ts';
-import { structureRejectionInvalidatesSource } from '../state/structure-refresh.ts';
+import { moveTargetReconfirmProblem, updateSessionIfOwned } from '../state/structure-session.ts';
+import {
+  structureRejectionInvalidatesSource,
+  type StructureCheckOutcome,
+} from '../state/structure-refresh.ts';
 import { entryNameOf } from '../../../../packages/storage/entry-name.ts';
 import {
   visibilityNoopNotice,
@@ -163,6 +166,19 @@ export interface MoveDialogState {
    * （UX-02C-02-R2.2 / F02）。
    */
   readonly targetStale: boolean;
+  /**
+   * 目标父层的**真实刷新结果**（UX-02C-02-R2.2-PATCH / P02）。
+   *
+   * `targetStale` 只说"锚过期了"，不够：重取父层可能返回 `failed` /
+   * `skipped-inflight`，那时层表里仍是**旧锚**。若把旧锚当最新身份交给
+   * "重新确认目标"，用户会拿着同一个过期锚再撞一次墙。
+   *
+   * - `idle`：没发生过目标相关的拒绝；
+   * - `pending`：Host 已回 `ERR_ENTRY_TARGET_CHANGED`，正在重取父层；
+   * - `done`：父层确实加载成功，当前层表里的锚就是磁盘当前身份；
+   * - `failed`：没读到（请求失败 / 同层在途 / 世界切换），锚仍是旧的。
+   */
+  readonly targetRefresh: 'idle' | 'pending' | 'done' | 'failed';
   readonly options: readonly string[];
   readonly error: string | null;
   readonly submitting: boolean;
@@ -445,9 +461,32 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
       updateSessionIfOwned(current, sessionId, (state) => state.intent.sessionId, (state) => ({
         ...state,
         targetStale: true,
+        targetRefresh: 'pending',
       })),
     );
   }, []);
+
+  /**
+   * 目标父层重取的**真实结果**（UX-02C-02-R2.2-PATCH / P02）。
+   *
+   * 只有 `applied` 才能说"层表里现在是磁盘当前身份"。其余（failed / partial /
+   * stale）都必须让对话框明确：锚还是旧的，先刷新文件树再重新确认。
+   */
+  const settleMoveTargetRefresh = useCallback(
+    (sessionId: number, outcome: StructureCheckOutcome) => {
+      setMoveDialog((current) =>
+        updateSessionIfOwned(current, sessionId, (state) => state.intent.sessionId, (state) => {
+          if (outcome === 'applied') return { ...state, targetRefresh: 'done' };
+          return {
+            ...state,
+            targetRefresh: 'failed',
+            error: '没有读到目标文件夹的最新状态：请刷新文件树后再点「重新确认目标」',
+          };
+        }),
+      );
+    },
+    [],
+  );
 
   const runner = useMemo(
     () =>
@@ -606,11 +645,14 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         }
         if (outcome.errorCode === 'ERR_ENTRY_TARGET_CHANGED') {
           markMoveTargetStale(intent.sessionId);
-          void actionsRef.current.refreshStructureTargetParent(
-            target.projectId,
-            target.targetParentDir,
-            intent,
-          );
+          /**
+           * 重取结果必须回到对话框（P02）：父层没读成功时，层表里仍是旧锚，
+           * 不能让它看起来像"最新身份"。
+           */
+          void actionsRef.current
+            .refreshStructureTargetParent(target.projectId, target.targetParentDir, intent)
+            .then((checked) => settleMoveTargetRefresh(intent.sessionId, checked))
+            .catch(() => settleMoveTargetRefresh(intent.sessionId, 'failed'));
         }
       },
       onNotice: (message, sessionId) => noticeRef.current(message, sessionId),
@@ -864,6 +906,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
         targetAnchor: targetIdentity.anchor,
         targetVerification: targetIdentity.verification,
         targetStale: false,
+        targetRefresh: 'idle',
         options,
         error: null,
         submitting: false,
@@ -891,6 +934,7 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
           targetVerification: identity.verification,
           // 重新选择 = 重新捕获身份：过期标记随之清掉
           targetStale: false,
+          targetRefresh: 'idle',
           error: null,
         };
       });
@@ -918,11 +962,25 @@ export function TreeCommandsProvider({ children }: { children: ReactNode }) {
           error: '无法确认这个文件夹的身份：请刷新文件树后重试，或换一个目标文件夹',
         };
       }
+      /**
+       * 锚还是**被拒前那一个**，说明父层并没有被真正重取（P02）：
+       * 此刻"重新确认"只会把同一个过期锚再交一次。只有真实加载成功
+       * （`targetRefresh === 'done'`）或层表里的锚确实变了（用户手工刷新过）
+       * 才算拿到了磁盘当前身份。
+       */
+      const problem = moveTargetReconfirmProblem({
+        targetStale: current.targetStale,
+        targetRefresh: current.targetRefresh,
+        frozenAnchor: current.targetAnchor,
+        currentAnchor: identity.anchor,
+      });
+      if (problem !== null) return { ...current, error: problem };
       return {
         ...current,
         targetAnchor: identity.anchor,
         targetVerification: identity.verification,
         targetStale: false,
+        targetRefresh: 'idle',
         error: null,
       };
     });

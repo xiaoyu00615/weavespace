@@ -2154,7 +2154,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       if (!parentCheck.ok) return reject(parentCheck.errorCode);
       const parentAbs = resolvePath(boundary.canonicalRoot, normalize(targetDir === '' ? '.' : targetDir));
       /**
-       * 目标目录的预期身份（UX-02C-02-R2.1 / D）：`null` = 不适用（改名）。
+       * 目标目录的预期身份（UX-02C-02-R2.1 / D）：`null` = 调用方没有给（改名 / 项目根）。
        *
        * 空串按"没提供"处理，与源身份同一处理：否则会被误报成"目标变了"。
        */
@@ -2162,31 +2162,58 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         typeof expectedTargetIdentity === 'string' && expectedTargetIdentity.trim() !== ''
           ? expectedTargetIdentity
           : null;
+      /**
+       * 本次执行的**内部目录基准**（UX-02C-02-R2.2-PATCH / P01）。
+       *
+       * 旧实现只在调用方给了 `expectedTargetIdentity` 时才核目录连续性：普通改名与
+       * 项目根目标传 `null`，`targetDirStillMatches()` 直接 `return true`——于是
+       * "占位建立后父目录被整体移走"这件事在改名路径上**完全检测不到**，而占位
+       * 其实已经随目录离开了。
+       *
+       * 现在的基准来源有两层，缺一不可：
+       * - 用户显式选了移动目标 → 用他确认过的那一个（外部变了必须拒绝）；
+       * - 没有预期（改名 / 项目根）→ 用第 4 步 lstat **本次读到的实际身份**。
+       * 两者都要有基准，`null` 视为"无法确认"，一律 fail-closed。
+       */
+      let targetBaseline: string | null = expectedTarget;
       /** 目标目录连续性：仍是同一个目录项、普通目录、不是链接/重解析点。 */
       const targetDirStillMatches = async (): Promise<boolean> => {
-        if (expectedTarget === null) return true;
+        if (targetBaseline === null) return false;
         try {
           const info = await lstat(parentAbs);
           if (!info.isDirectory() || info.isSymbolicLink() || isUntrustedResolution(parentAbs)) {
             return false;
           }
-          return `${info.dev}:${info.ino}` === expectedTarget;
+          return `${info.dev}:${info.ino}` === targetBaseline;
         } catch {
           return false;
         }
       };
+      /**
+       * 目录身份变了、但本次操作**还没有建立占位**时的拒绝码。
+       *
+       * 同一件磁盘事实（父目录被换掉）在两条路径上要用户做的事不同：
+       * - 移动：用户显式选过目标 → `ERR_ENTRY_TARGET_CHANGED`（重新选目标）；
+       * - 原地改名：目标父目录就是源所在目录 → `ERR_ENTRY_SOURCE_CHANGED`
+       *   （这一行已不在原位，界面该刷新的是源那一行，不是"重选目标"）。
+       */
+      const parentChangedCode = (): ErrorCode =>
+        expectedTarget === null ? 'ERR_ENTRY_SOURCE_CHANGED' : 'ERR_ENTRY_TARGET_CHANGED';
       try {
         const info = await lstat(parentAbs);
         if (!info.isDirectory() || info.isSymbolicLink() || isUntrustedResolution(parentAbs)) {
           return reject('ERR_ENTRY_PARENT_INVALID');
         }
+        const observed = `${info.dev}:${info.ino}`;
         /**
          * 身份不符 → 明确的"目标变了"，**不是**"父目录非法"：
          * 用户要做的是重新选择目标，不是去检查路径合法性。
          */
-        if (expectedTarget !== null && `${info.dev}:${info.ino}` !== expectedTarget) {
+        if (expectedTarget !== null && observed !== expectedTarget) {
           return reject('ERR_ENTRY_TARGET_CHANGED');
         }
+        // 没有显式预期：把**这一次**读到的身份记为基准，后续每一处都拿它比
+        if (targetBaseline === null) targetBaseline = observed;
       } catch (err) {
         if (isMissing(err)) return reject('ERR_ENTRY_PARENT_INVALID');
         return reject(mapStorageError(err) as ErrorCode);
@@ -2388,6 +2415,15 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
       if (!isCaseOnly) {
         // 仅测试注入：模拟"目标存在性检查之后、占位之前外部创建了同名对象"
         faults.beforeMoveReserve?.();
+        /**
+         * 第一次占位之前也认一次目录（UX-02C-02-R2.2-PATCH / P01）。
+         *
+         * 第 4 步读目录与这里之间隔着目标不存在性检查与指纹计算。目录若在这段时间
+         * 里被换掉，`open('wx')` 会在**新目录**里创建占位——那是一个用户从未确认过
+         * 的目录（改名时更是用户没提起过的位置）。此刻还没有任何副作用，
+         * 明确拒绝是最诚实的结论。
+         */
+        if (!(await targetDirStillMatches())) return reject(parentChangedCode());
         const first = await reserveExclusive(1);
         if (first.status === 'FAILED') return first.result;
         reservedIdentity = first.identity;
@@ -2512,7 +2548,7 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
        *   不能再用"新路径上没有占位"来宣称零副作用（F-08 的旧错误）。
        */
       if (!(await targetDirStillMatches())) {
-        return reserved ? unknown() : reject('ERR_ENTRY_TARGET_CHANGED');
+        return reserved ? unknown() : reject(parentChangedCode());
       }
       if (reserved) {
         const state = await reservationState();
@@ -2536,6 +2572,12 @@ export function createLocalProvider(options: LocalProviderOptions): StorageProvi
         if (state === 'ambiguous') return unknown();
         // 确认零变更：只有目标仍是本次占位（dev+ino 一致）才允许清理
         if (reserved) {
+          /**
+           * 目录已经不是基准那一个（R2.2-PATCH / P01）：占位随旧目录离开，
+           * `reservationState()` 读的是新目录里的同名路径（必然 missing）。
+           * 此刻"原路径上没有占位"**不能**当作零副作用的证明。
+           */
+          if (!(await targetDirStillMatches())) return unknown();
           const owned = await reservationState();
           if (owned === 'foreign') return unknown(); // 外部对象：绝不删除
           if (owned === 'owned') {

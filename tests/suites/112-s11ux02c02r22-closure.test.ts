@@ -25,15 +25,22 @@ import {
 } from '../../apps/shell/src/state/structure-intent.ts';
 import type { StructureWorld } from '../../apps/shell/src/state/structure-ownership.ts';
 import {
+  checkStructureLocationsWithOwnership,
   refreshStructureTargetParent,
   structureUnknownNotice,
+  type StructureCheckOutcome,
   type StructureRefreshHost,
 } from '../../apps/shell/src/state/structure-refresh.ts';
+import type { TreeLoadOutcome } from '../../apps/shell/src/state/tree-load.ts';
 import {
   createStructureRunner,
   type StructureRunnerHost,
 } from '../../apps/shell/src/state/structure-change.ts';
-import { updateSessionIfOwned } from '../../apps/shell/src/state/structure-session.ts';
+import {
+  MOVE_TARGET_UNREFRESHED,
+  moveTargetReconfirmProblem,
+  updateSessionIfOwned,
+} from '../../apps/shell/src/state/structure-session.ts';
 import type { TreeLevels, TreeLevelState } from '../../apps/shell/src/components/tree-model.ts';
 import type { ResourceNodeState } from '../../apps/shell/src/state/types.ts';
 import type { StructureChangeOutcome } from '../../apps/shell/src/client/client-api.ts';
@@ -294,6 +301,121 @@ test('P-07 目录被移走 + 源同时被换掉 → 仍只能 UNKNOWN（不能�
 });
 
 /* ================================================================== */
+/* Q：Provider 内部的父目录连续性（R2.2-PATCH / P01）                   */
+/*                                                                     */
+/* 为什么单独一段：R2.2 的目录连续性只在"用户显式选了移动目标"时生效      */
+/* （`expectedTargetIdentity` 非空）。普通改名与项目根目标不传这个参数，   */
+/* 于是 `targetDirStillMatches()` 直接返回 true —— 改名其实完全没有目录   */
+/* 连续性保护。这一段测的就是"调用方没给预期时，Provider 自己也要有基准"。*/
+/* ================================================================== */
+
+/** 造一个普通改名场景：`docs/a.md` → `docs/b.md`（父目录就是源所在的目录）。 */
+async function seedRename(ctx: DiskCtx): Promise<string> {
+  await mkdir(join(ctx.root, 'docs'), { recursive: true });
+  await writeFile(join(ctx.root, 'docs', 'a.md'), 'A-CONTENT\n', 'utf8');
+  const expected = await ctx.identity('docs/a.md');
+  if (expected === null) assert.fail('夹具必须读到源对象身份');
+  return expected;
+}
+
+test('Q-01 普通改名：占位建立后父目录被整体移走 → UNKNOWN；旧目录里源与占位都在，新目录为空', async () => {
+  await withProvider(
+    async (ctx) => {
+      const expected = await seedRename(ctx);
+      const result = await ctx.move('docs/a.md', 'docs', 'b.md', expected);
+      /**
+       * 旧实现：`expectedTarget === null` → `targetDirStillMatches()` 恒真 →
+       * 在新目录里重新占位 → 源终检发现源没了 → 把新占位删掉 → REJECTED。
+       * 它宣称"零副作用"，可旧目录里那个 0 字节占位根本没人处理过。
+       */
+      assert.equal(result.status, 'UNKNOWN', JSON.stringify(result));
+      const disk = await facts(ctx.root);
+      assert.deepEqual(
+        Object.keys(disk).filter((key) => key.startsWith('docs/')),
+        [],
+        '新的同名目录里不得留下任何东西（更不得重新占位）',
+      );
+      assert.equal(await readFile(join(ctx.root, 'docs-old', 'a.md'), 'utf8'), 'A-CONTENT\n', '源随目录离开，仍在旧目录');
+      assert.equal(disk['docs-old/b.md']?.startsWith('f|0|'), true, '占位也在旧目录里 —— 无法证明收敛');
+    },
+    {
+      faults: ({ root }) => ({
+        afterMoveReserve: () => {
+          renameSync(join(root, 'docs'), join(root, 'docs-old'));
+          mkdirSync(join(root, 'docs'), { recursive: true });
+        },
+      }),
+    },
+  );
+});
+
+test('Q-02 初次父目录读取之后、第一次占位之前替换目录 → 明确拒绝，且一次占位都不尝试', async () => {
+  let attempts = 0;
+  await withProvider(
+    async (ctx) => {
+      const expected = await seedRename(ctx);
+      const result = await ctx.move('docs/a.md', 'docs', 'b.md', expected);
+      assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+      /**
+       * 原地改名时"目标父目录"就是源所在的目录：它变了意味着这一行已不在原位，
+       * 用户要做的动作是刷新那一行，而不是"重新选择目标"（那是移动的语义）。
+       */
+      assert.equal(result.status === 'REJECTED' ? result.errorCode : '', 'ERR_ENTRY_SOURCE_CHANGED');
+      assert.equal(attempts, 0, '目录已经不是基准那一个：一次占位都不许尝试');
+      const disk = await facts(ctx.root);
+      assert.deepEqual(Object.keys(disk).filter((key) => key.startsWith('docs/')), [], '新目录必须干净');
+      assert.equal(await readFile(join(ctx.root, 'docs-old', 'a.md'), 'utf8'), 'A-CONTENT\n', '源文件原样');
+    },
+    {
+      faults: ({ root }) => ({
+        beforeMoveReserve: () => {
+          renameSync(join(root, 'docs'), join(root, 'docs-old'));
+          mkdirSync(join(root, 'docs'), { recursive: true });
+        },
+        reserveFault: () => {
+          attempts += 1;
+        },
+      }),
+    },
+  );
+});
+
+test('Q-03 普通改名成功：内部基准不误伤正常路径', async () => {
+  await withProvider(async (ctx) => {
+    const expected = await seedRename(ctx);
+    const result = await ctx.move('docs/a.md', 'docs', 'b.md', expected);
+    assert.equal(result.status, 'MOVED', JSON.stringify(result));
+    assert.equal(existsSync(join(ctx.root, 'docs/a.md')), false);
+    assert.equal(await readFile(join(ctx.root, 'docs/b.md'), 'utf8'), 'A-CONTENT\n');
+  });
+});
+
+test('Q-04 移动成功回归：显式目标身份仍然照旧生效', async () => {
+  await withProvider(async (ctx) => {
+    const expected = await ctx.identity('a.md');
+    const selected = await ctx.identity('archive');
+    const result = await ctx.move('a.md', 'archive', 'a.md', expected, selected);
+    assert.equal(result.status, 'MOVED', JSON.stringify(result));
+    assert.equal(await readFile(join(ctx.root, 'archive/a.md'), 'utf8'), 'A-CONTENT\n');
+    assert.equal(existsSync(join(ctx.root, 'a.md')), false);
+  });
+});
+
+test('Q-05 改名时目标位置已有外部同名对象 → 拒绝覆盖，外部对象一字节不动', async () => {
+  await withProvider(async (ctx) => {
+    const expected = await seedRename(ctx);
+    await writeFile(join(ctx.root, 'docs', 'b.md'), 'EXTERNAL\n', 'utf8');
+    const externalIdentity = await entryIdentity(join(ctx.root, 'docs', 'b.md'));
+    const result = await ctx.move('docs/a.md', 'docs', 'b.md', expected);
+    assert.equal(result.status, 'REJECTED', JSON.stringify(result));
+    assert.equal(result.status === 'REJECTED' ? result.errorCode : '', 'ERR_ENTRY_EXISTS');
+    assert.equal(await readFile(join(ctx.root, 'docs/b.md'), 'utf8'), 'EXTERNAL\n');
+    assert.equal(await entryIdentity(join(ctx.root, 'docs/b.md')), externalIdentity, '不得删除重建');
+    assert.equal(await readFile(join(ctx.root, 'docs/a.md'), 'utf8'), 'A-CONTENT\n', '源保持原位');
+  });
+});
+
+/* ================================================================== */
 /* N：UNKNOWN 提示的真实性                                              */
 /* ================================================================== */
 test('N-01 已执行只读核对：才可以说"已刷新"', () => {
@@ -323,7 +445,7 @@ interface CheckHarness {
 }
 
 function runnerWithCheck(
-  check: () => Promise<'applied' | 'stale'> ,
+  check: () => Promise<StructureCheckOutcome>,
   outcome: StructureChangeOutcome,
 ): CheckHarness {
   const state = { requests: 0, notices: [] as string[] };
@@ -401,6 +523,150 @@ test('N-06 UNKNOWN + 核对成功 → 提示"已只读刷新"，Host 的 UNKNOWN
   assert.match(h.notices.at(-1) ?? '', /已只读刷新源位置与目标位置/);
 });
 
+/**
+ * P02 的核心：**底层真实加载结果**必须一路传上来。
+ *
+ * 旧实现 `StructureRefreshHost.load` 的签名是 `Promise<unknown>`，
+ * `DocumentActionsContext` 里写的是 `await treeLoader.load(...)` —— 返回值被吞掉。
+ * 于是 `checkStructureLocationsWithOwnership` 只要没抛异常就返回 `'applied'`：
+ * 底层返回 `failed` / `rejected` / `skipped-inflight` 时，界面照样宣称
+ * "已只读刷新源位置与目标位置"。这里用真实 `TreeLoadOutcome` 逐个钉住。
+ */
+function checkHarness(
+  outcomes: TreeLoadOutcome[],
+  options: { flipOnCall?: number } = {},
+): { host: StructureRefreshHost; state: { world: StructureWorld; loads: string[] } } {
+  const state = { world: WORLD, loads: [] as string[] };
+  const host: StructureRefreshHost = {
+    world: () => state.world,
+    levels: () => ({}),
+    invalidateLevel: () => {},
+    markStructureChanged: () => {},
+    expandFolder: () => {},
+    load: async (_projectId, dir) => {
+      state.loads.push(dir);
+      const call = state.loads.length;
+      // "第一层完成后切换世界"：这一层真的发出去并且回来了，世界才变
+      if (options.flipOnCall === call) state.world = world({ epoch: 2 });
+      return outcomes[call - 1] ?? 'applied';
+    },
+    notice: () => {},
+  };
+  return { host, state };
+}
+
+function checked(input: {
+  outcomes: TreeLoadOutcome[];
+  flipOnCall?: number;
+}): Promise<StructureCheckOutcome> {
+  const h = checkHarness(input.outcomes, input.flipOnCall ? { flipOnCall: input.flipOnCall } : {});
+  return checkStructureLocationsWithOwnership({
+    start: world(),
+    projectId: PROJ,
+    sourceParentDir: 'docs',
+    targetParentDir: 'archive',
+    host: h.host,
+  });
+}
+
+test('N-07 底层 load 返回 failed（不抛异常）→ 核对失败，不得当作已刷新', async () => {
+  assert.equal(await checked({ outcomes: ['failed', 'failed'] }), 'failed');
+  assert.doesNotMatch(structureUnknownNotice('failed'), /已只读刷新/);
+});
+
+test('N-08 底层 load 返回 rejected → 同样不算刷新成功', async () => {
+  assert.equal(await checked({ outcomes: ['rejected', 'rejected'] }), 'failed');
+});
+
+test('N-09 底层 load 返回 skipped-inflight → 同层请求还在途，核对未完成', async () => {
+  assert.equal(await checked({ outcomes: ['skipped-inflight', 'skipped-inflight'] }), 'failed');
+});
+
+test('N-10 第一层成功、第二层失败 → 只完成了一部分，仍不得宣称已刷新', async () => {
+  const result = await checked({ outcomes: ['applied', 'failed'] });
+  assert.equal(result, 'partial');
+  assert.match(structureUnknownNotice(result), /只完成了一部分/);
+  assert.doesNotMatch(structureUnknownNotice(result), /已只读刷新/);
+});
+
+test('N-11 第一层完成后切换世界 → 已发出的请求不算核对完成', async () => {
+  const h = checkHarness(['applied', 'applied'], { flipOnCall: 1 });
+  const result = await checkStructureLocationsWithOwnership({
+    start: world(),
+    projectId: PROJ,
+    sourceParentDir: 'docs',
+    targetParentDir: 'archive',
+    host: h.host,
+  });
+  assert.equal(result, 'partial', '已经发过一个请求，不能报成"没有执行核对"');
+  assert.deepEqual(h.state.loads, ['docs'], '世界变了就不再发第二个请求');
+});
+
+test('N-12 两层都成功加载 → 才允许说"已只读刷新"', async () => {
+  const h = checkHarness(['applied', 'applied']);
+  const result = await checkStructureLocationsWithOwnership({
+    start: world(),
+    projectId: PROJ,
+    sourceParentDir: 'docs',
+    targetParentDir: 'archive',
+    host: h.host,
+  });
+  assert.equal(result, 'applied');
+  assert.deepEqual(h.state.loads, ['docs', 'archive']);
+  assert.match(structureUnknownNotice(result), /已只读刷新源位置与目标位置/);
+});
+
+test('N-13 零请求（世界已切换）与"已发部分请求"必须分开报', async () => {
+  const none = checkHarness(['applied', 'applied'], { flipOnCall: 0 });
+  none.state.world = world({ epoch: 9 });
+  const stale = await checkStructureLocationsWithOwnership({
+    start: world(),
+    projectId: PROJ,
+    sourceParentDir: 'docs',
+    targetParentDir: 'archive',
+    host: none.host,
+  });
+  assert.equal(stale, 'stale');
+  assert.deepEqual(none.state.loads, []);
+  assert.match(structureUnknownNotice(stale), /没有执行只读核对/);
+});
+
+test('N-14 生产编排：核对失败时结构变更请求全程只发送一次，且不宣称已刷新', async () => {
+  const h = checkHarness(['failed', 'failed']);
+  let requests = 0;
+  const notices: string[] = [];
+  const host: StructureRunnerHost = {
+    rename: async () => {
+      requests += 1;
+      return UNKNOWN_OUTCOME;
+    },
+    move: async () => {
+      requests += 1;
+      return UNKNOWN_OUTCOME;
+    },
+    localBlockers: () => [],
+    verifyIntent: () => null,
+    checkLocations: (projectId, sourceParentDir, targetParentDir) =>
+      checkStructureLocationsWithOwnership({
+        start: world(),
+        projectId,
+        sourceParentDir,
+        targetParentDir,
+        host: h.host,
+      }),
+    onApplied: () => {},
+    onNotice: (message) => void notices.push(message),
+  };
+  const runner = createStructureRunner(host);
+  const result = await runner.submit(RENAME_INPUT);
+  assert.equal(result, 'unknown');
+  assert.equal(requests, 1, '核对失败不得触发第二次结构变更');
+  // 改名的目标父目录是项目根（`''`），所以两个必要位置是 docs 与根层
+  assert.deepEqual(h.state.loads, ['docs', ''], '必要位置都真的尝试过');
+  assert.match(notices.at(-1) ?? '', /只读核对没有完成/);
+  assert.doesNotMatch(notices.at(-1) ?? '', /已只读刷新/);
+});
+
 /* ================================================================== */
 /* R：目标身份变化后的恢复                                              */
 /* ================================================================== */
@@ -446,7 +712,10 @@ function refreshHarness(initial: StructureWorld = WORLD): {
       invalidateLevel: () => {},
       markStructureChanged: () => {},
       expandFolder: () => {},
-      load: async (_projectId, dir) => void loads.push(dir),
+      load: async (_projectId, dir) => {
+        loads.push(dir);
+        return 'applied';
+      },
       notice: () => {},
     },
   };
@@ -537,6 +806,72 @@ test('R-05 拒绝上报会带出目标父目录（否则调用方只能刷源层
   });
   assert.equal(result, 'rejected');
   assert.deepEqual(seen, [{ errorCode: 'ERR_ENTRY_TARGET_CHANGED', targetParentDir: 'archive', sessionId: 9 }]);
+});
+
+/* ================================================================== */
+/* T：目标重新确认的"新鲜度"（R2.2-PATCH / P02）                        */
+/*                                                                     */
+/* 只有"层表里的锚真的换了"才允许用户重新确认。重取失败时层表里仍是旧锚， */
+/* 把旧锚当最新身份交出去，等于让用户拿同一个过期锚再撞一次。            */
+/* ================================================================== */
+
+test('T-01 父层重取失败 → 不允许把旧锚当作最新身份', () => {
+  const problem = moveTargetReconfirmProblem({
+    targetStale: true,
+    targetRefresh: 'failed',
+    frozenAnchor: 'a'.repeat(32),
+    currentAnchor: 'a'.repeat(32),
+  });
+  assert.equal(problem, MOVE_TARGET_UNREFRESHED);
+  assert.match(problem ?? '', /还没有读到目标文件夹的最新状态/);
+});
+
+test('T-02 父层重取仍在途（pending）→ 同样不放行', () => {
+  assert.equal(
+    moveTargetReconfirmProblem({
+      targetStale: true,
+      targetRefresh: 'pending',
+      frozenAnchor: 'a'.repeat(32),
+      currentAnchor: 'a'.repeat(32),
+    }),
+    MOVE_TARGET_UNREFRESHED,
+  );
+});
+
+test('T-03 父层重取明确成功 → 放行', () => {
+  assert.equal(
+    moveTargetReconfirmProblem({
+      targetStale: true,
+      targetRefresh: 'done',
+      frozenAnchor: 'a'.repeat(32),
+      currentAnchor: 'b'.repeat(32),
+    }),
+    null,
+  );
+});
+
+test('T-04 用户手工刷新过（锚已变）→ 放行，不必等重取结论', () => {
+  assert.equal(
+    moveTargetReconfirmProblem({
+      targetStale: true,
+      targetRefresh: 'failed',
+      frozenAnchor: 'a'.repeat(32),
+      currentAnchor: 'b'.repeat(32),
+    }),
+    null,
+  );
+});
+
+test('T-05 没有过期（targetStale=false）→ 不拦截', () => {
+  assert.equal(
+    moveTargetReconfirmProblem({
+      targetStale: false,
+      targetRefresh: 'idle',
+      frozenAnchor: 'a'.repeat(32),
+      currentAnchor: 'a'.repeat(32),
+    }),
+    null,
+  );
 });
 
 /* ================================================================== */
