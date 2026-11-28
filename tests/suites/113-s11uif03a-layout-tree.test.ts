@@ -1288,3 +1288,103 @@ test('LTA-37 合法查询行为不变：定位、顺序、引用一致、未命�
   // split 的 nodeId 与 pane 共用命名空间：都能查到
   assert.equal(findLayoutNode(duplicated, 's-dup')?.type, 'split');
 });
+
+/* ================================================================== */
+/* LTA-38 ~ LTA-40：查询节点的**字段完整性**（R3）                        */
+/*                                                                     */
+/* `type` 对不代表是个节点。`{type:'pane'}` 缺 `groupId`、`{type:'split'} `*/
+/* 缺 `nodeId`/`orientation`/`ratio` 时，它仍是"对象"，但作为 `LayoutNode`  */
+/* 是残废的：返回给调用方，下一次读 `groupId` 就是 `undefined`。           */
+/* 类型守卫必须证明**必要字段齐备**，而不是只认一个标签。                   */
+/* ================================================================== */
+
+test('LTA-38 Pane 缺少 nodeId / groupId 或身份为空时必须被拒绝', () => {
+  const brokenPanes: ReadonlyArray<readonly [string, unknown]> = [
+    ['缺 nodeId', { type: 'pane', groupId: 'g1' }],
+    ['缺 groupId', { type: 'pane', nodeId: 'p1' }],
+    ['nodeId 为空串', { type: 'pane', nodeId: '', groupId: 'g1' }],
+    ['nodeId 全空白', { type: 'pane', nodeId: '   ', groupId: 'g1' }],
+    ['groupId 为空串', { type: 'pane', nodeId: 'p1', groupId: '' }],
+    ['groupId 全空白', { type: 'pane', nodeId: 'p1', groupId: '\t\n' }],
+    ['nodeId 不是字符串', { type: 'pane', nodeId: 1, groupId: 'g1' }],
+    ['groupId 不是字符串', { type: 'pane', nodeId: 'p1', groupId: null }],
+  ];
+
+  for (const [label, root] of brokenPanes) {
+    const tree = asTree(root);
+    // 既是"不作为结果"，也是"不作为入口"
+    assert.equal(findLayoutNode(tree, 'p1'), null, `${label}：不得返回残废 Pane`);
+    assert.equal(findPaneByGroup(tree, 'g1'), null, `${label}：不得返回残废 Pane`);
+    assert.equal(findLayoutNode(tree, ''), null, `${label}：空 nodeId 查询也不得命中`);
+  }
+});
+
+test('LTA-39 Split 缺少 nodeId / 非法方向 / 比例越界时必须被拒绝', () => {
+  const children = [PANE('p1', 'g1'), PANE('p2', 'g2')];
+  const brokenSplits: ReadonlyArray<readonly [string, unknown]> = [
+    ['缺 nodeId', { type: 'split', orientation: 'horizontal', ratio: 0.5, children }],
+    ['nodeId 为空串', { type: 'split', nodeId: '', orientation: 'horizontal', ratio: 0.5, children }],
+    ['缺 orientation', { type: 'split', nodeId: 's1', ratio: 0.5, children }],
+    ['未知方向', { type: 'split', nodeId: 's1', orientation: 'diagonal', ratio: 0.5, children }],
+    ['缺 ratio', { type: 'split', nodeId: 's1', orientation: 'horizontal', children }],
+    ['ratio 低于下界', { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.05, children }],
+    ['ratio 高于上界', { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.95, children }],
+    ['ratio 为 NaN', { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: Number.NaN, children }],
+    ['ratio 为 Infinity', { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: Number.POSITIVE_INFINITY, children }],
+    ['ratio 是字符串', { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: '0.5', children }],
+    ['children 长度为 1', { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [PANE('p1', 'g1')] }],
+  ];
+
+  for (const [label, root] of brokenSplits) {
+    const tree = asTree(root);
+    // 结构非法的 split 不得作为结果
+    assert.equal(findLayoutNode(tree, 's1'), null, `${label}：不得返回非法 Split`);
+    // 也不得借它穿透到（本身合法的）子 Pane
+    assert.equal(findPaneByGroup(tree, 'g1'), null, `${label}：不得穿透`);
+    assert.equal(findLayoutNode(tree, 'p1'), null, `${label}：不得穿透`);
+  }
+});
+
+test('LTA-40 Split 含字段不完整的子节点：不穿透、不返回损坏节点', () => {
+  const halfPanes: ReadonlyArray<readonly [string, unknown]> = [
+    ['子节点缺 groupId', { type: 'pane', nodeId: 'p2' }],
+    ['子节点缺 nodeId', { type: 'pane', groupId: 'g2' }],
+    ['子节点 groupId 为空', { type: 'pane', nodeId: 'p2', groupId: '' }],
+    ['子节点是未知类型', { type: 'grid', nodeId: 'p2', groupId: 'g2' }],
+    ['子节点为 null', null],
+  ];
+
+  for (const [label, brokenChild] of halfPanes) {
+    const tree = asTree({
+      type: 'split',
+      nodeId: 's1',
+      orientation: 'horizontal',
+      ratio: 0.5,
+      children: [PANE('p1', 'g1'), brokenChild],
+    });
+    // 整棵树被判定为不可用：左支那一个本来合法的 Pane 也不能被"顺手"找到
+    assert.equal(findPaneByGroup(tree, 'g1'), null, `${label}：不得穿过损坏子节点`);
+    assert.equal(findLayoutNode(tree, 'p1'), null, `${label}：不得穿过损坏子节点`);
+    assert.equal(findLayoutNode(tree, 's1'), null, `${label}：父 split 也因残缺子节点而不可用`);
+  }
+
+  // 更深一层：孙节点残缺同样不得穿透
+  const nested = asTree({
+    type: 'split',
+    nodeId: 's1',
+    orientation: 'horizontal',
+    ratio: 0.5,
+    children: [
+      PANE('p1', 'g1'),
+      {
+        type: 'split',
+        nodeId: 's2',
+        orientation: 'vertical',
+        ratio: 0.4,
+        children: [PANE('p2', 'g2'), { type: 'pane', nodeId: 'p3' }],
+      },
+    ],
+  });
+  assert.equal(findPaneByGroup(nested, 'g2'), null, '孙节点残缺：整树不可用');
+  assert.equal(findLayoutNode(nested, 's2'), null, '孙节点残缺：中间 split 也不可用');
+});

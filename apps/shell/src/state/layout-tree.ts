@@ -590,14 +590,58 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * 这个值能不能当**布局节点**看待：必须是对象，且 `type` 是 pane / split。
+ * 一个节点**自身**的字段是否齐备（只看本层，不验证子节点内容）。
  *
- * 查询函数用它做唯一的准入判定。未知类型（`grid`、`tree`、拼错的 `pnae`）
- * 一律不算节点——既不能作为结果返回，也不能成为遍历的跳板。
+ * - pane：`nodeId` / `groupId` 都是 trim 后非空的字符串；
+ * - split：`nodeId` 非空、`orientation` 合法、`ratio` 是 0.1~0.9 的有限数值、
+ *   `children` 是长度恰好 2 的数组。
+ *
+ * 这里刻意**不**检查子节点：那是 `nodeFieldsOkAt` 的职责，分开写才能让
+ * "本层齐备"与"整棵可用"成为两件可分别推理的事。
+ */
+function nodeFieldsOk(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  if (!isIdentity(value.nodeId)) return false;
+  if (value.type === 'pane') return isIdentity(value.groupId);
+  if (value.type !== 'split') return false;
+  if (!isOrientation(value.orientation)) return false;
+  if (!isRatio(value.ratio)) return false;
+  const children = value.children;
+  return Array.isArray(children) && children.length === 2;
+}
+
+/**
+ * 递归版：本层齐备 + split 的两个子节点也各自齐备。
+ *
+ * `seen` + `depth` 是给**守卫自身**用的保险：环状输入不能让验证函数自己
+ * 无限递归（那就等于把"防崩溃"变成了另一种崩溃）。超过模型深度上限、
+ * 或同一对象被引用两次，一律不算合法节点。
+ */
+function nodeFieldsOkAt(value: unknown, depth: number, seen: Set<object>): boolean {
+  if (depth > MAX_LAYOUT_DEPTH) return false;
+  if (!nodeFieldsOk(value)) return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (value.type !== 'split') return true;
+  const children = (value as { children: readonly unknown[] }).children;
+  return (
+    nodeFieldsOkAt(children[0], depth + 1, seen) && nodeFieldsOkAt(children[1], depth + 1, seen)
+  );
+}
+
+/**
+ * 这个值能不能当**布局节点**看待：本层字段齐备，且整棵子树都齐备。
+ *
+ * 只认 `type` 是不够的：`{type:'pane'}` 缺 `groupId` 在运行时仍是一个"对象"，
+ * 但它作为 `LayoutNode` 是残废的——返回给调用方，下一次读 `groupId` 就是
+ * `undefined`，而调用方完全有理由相信查询结果已经过了校验。
+ *
+ * 所以守卫必须证明**必要字段齐备**：未知类型（`grid`、拼错的 `pnae`）不算节点，
+ * 字段残缺的 pane / split 也不算；任何一处残缺会让整棵树不可查（fail-closed，
+ * 而不是"跳过坏的、返回好的"——后者会让调用方拿到一棵它以为完整的树）。
  */
 function isLayoutNode(value: unknown): value is LayoutNode {
-  if (!isRecord(value)) return false;
-  return value.type === 'pane' || value.type === 'split';
+  return nodeFieldsOkAt(value, 1, new Set<object>());
 }
 
 /**
