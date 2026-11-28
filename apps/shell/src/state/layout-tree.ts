@@ -6,8 +6,7 @@
  * 上下分屏、嵌套分屏、多个独立视图组都写不出来。本模块先把"布局可以被表达、
  * 被校验、被序列化"这件事做成可测试的确定性，再让未来的 WorkspaceState 接上它。
  *
- * 四条纪律，违反任意一条都会让后续重构失去支点：
- *
+ * 五条纪律，违反任意一条都会让后续重构失去支点：
  * 1. **只做结构**。这里不知道文档、不知道未保存修改、不做授权判断。
  *    "关掉这个视图会不会丢草稿"是 ViewGroup / DocumentSession 管理层的事。
  * 2. **身份由调用方注入**。`nodeId` / `groupId` 一律从参数来，模块内部
@@ -20,6 +19,10 @@
  *    所以外部对象里混进来的 `docId` / `sessionId` / `path` / `viewId`
  *    不能跟着树一起被序列化、被恢复。`parseLayoutTree` 通过校验后仍会重建，
  *    返回值与入参不共享任何引用。
+ * 5. **读取先整树校验**。六个公开读取函数共用 `validateLayoutTree` 作为唯一
+ *    合法性权威入口，非法树返回 `null` / `[]` / `0`——不抛异常、不返回部分
+ *    结果、不把重复身份里的第一个当成可信答案。查询结论必须能被校验结论解释
+ *    （见 §3.5）。
  *
  * 比例有两套区间，**不要混用**（见 `MIN_SPLIT_RATIO` 与 `MIN_UI_SPLIT_RATIO`）：
  * 结构上允许 10%~90%，用户拖动只能到 25%~75%。
@@ -213,6 +216,36 @@ function isOrientation(value: unknown): value is LayoutOrientation {
  */
 function isPosition(value: unknown): value is 'first' | 'second' {
   return value === 'first' || value === 'second';
+}
+
+/**
+ * 节点**形状**：`type` 是 `pane` 或 `split` 的对象。
+ *
+ * 这**不是**合法性判定（那是 `validateLayoutTree` 的事），只是遍历时的兜底：
+ * 万一有代码绕过公开入口把损坏数据塞进遍历，也不该让 `null.type` 把进程打崩。
+ * "这棵树能不能用"由公开读取入口统一校验，见 §3.5。
+ */
+function isNodeShaped(value: unknown): value is LayoutNode {
+  if (typeof value !== 'object' || value === null) return false;
+  const type = (value as { readonly type?: unknown }).type;
+  return type === 'pane' || type === 'split';
+}
+
+/**
+ * 取 split 的两个孩子；形状不对返回 `null`。
+ *
+ * 只查形状（长度恰为 2、两个都是 `type` 已知的对象），**刻意不重复**字段白名单、
+ * 身份唯一性、深度与数量上限——那些已经由 `validateLayoutTree` 在入口处做过一次。
+ * 两套规则一旦分叉，就会出现"校验说非法、遍历说可用"的中间状态，那正是 R4 要
+ * 消除的东西。
+ */
+function childrenOf(node: SplitNode): readonly [LayoutNode, LayoutNode] | null {
+  const children: unknown = node.children;
+  if (!Array.isArray(children) || children.length !== 2) return null;
+  const first: unknown = children[0];
+  const second: unknown = children[1];
+  if (!isNodeShaped(first) || !isNodeShaped(second)) return null;
+  return [first, second];
 }
 
 /**
@@ -437,14 +470,22 @@ function removePane(node: LayoutNode, groupId: string, depth = 1): LayoutNode | 
   return { ...node, children: [left, right] };
 }
 
-/** 深度优先、左 → 右。这个顺序就是屏幕上的视觉顺序，测试据此断言。 */
+/**
+ * 深度优先、左 → 右，**父节点先于子节点**。这个顺序就是屏幕上的视觉顺序，
+ * 测试据此断言 `listPanes` / `listSplits` 的排列。
+ *
+ * 只遍历**已通过 `validateLayoutTree` 的结构**（三个列表/统计入口都先校验）。
+ * 这里的 `childrenOf` 与深度上限只是兜底：即使有人绕过入口，也不会无限递归或
+ * 抛 `TypeError`。但"这棵树合不合法"绝不靠这两个兜底判断。
+ */
 function walk(node: LayoutNode, visit: (node: LayoutNode, depth: number) => void, depth = 1): void {
-  if (depth > MAX_LAYOUT_DEPTH) return; // 兜底：损坏数据不得把查询拖进无限递归
+  if (depth > MAX_LAYOUT_DEPTH) return;
   visit(node, depth);
-  if (node.type === 'split') {
-    walk(node.children[0], visit, depth + 1);
-    walk(node.children[1], visit, depth + 1);
-  }
+  if (node.type !== 'split') return;
+  const children = childrenOf(node);
+  if (children === null) return;
+  walk(children[0], visit, depth + 1);
+  walk(children[1], visit, depth + 1);
 }
 
 /* ------------------------------------------------------------------ */
@@ -499,7 +540,8 @@ export function splitPane(tree: LayoutTree, input: SplitPaneInput): LayoutResult
       `position 只能是 first 或 second，实际：${String(input.position)}`,
     );
   }
-  const target = findLayoutNode(tree, input.paneNodeId);
+  // 输入已在上面验过，这里用**不做校验**的内部查找：避免同一次操作校验两遍
+  const target = findNodeIn(tree.root, input.paneNodeId);
   if (target === null || target.type !== 'pane') {
     return fail('node-not-found', `找不到可分的 pane：${input.paneNodeId}`);
   }
@@ -539,7 +581,7 @@ export interface SetSplitRatioInput {
 export function setSplitRatio(tree: LayoutTree, input: SetSplitRatioInput): LayoutResult<LayoutTree> {
   const broken = rejectBrokenInput(tree);
   if (broken !== null) return broken;
-  const target = findLayoutNode(tree, input.splitNodeId);
+  const target = findNodeIn(tree.root, input.splitNodeId);
   if (target === null || target.type !== 'split') {
     return fail('split-not-found', `找不到分屏节点：${input.splitNodeId}`);
   }
@@ -568,7 +610,7 @@ export interface MergePaneInput {
 export function mergePane(tree: LayoutTree, input: MergePaneInput): LayoutResult<LayoutTree> {
   const broken = rejectBrokenInput(tree);
   if (broken !== null) return broken;
-  if (findPaneByGroup(tree, input.groupId) === null) {
+  if (findPaneIn(tree.root, input.groupId) === null) {
     return fail('pane-not-found', `找不到视图组对应的 pane：${input.groupId}`);
   }
   if (tree.root.type === 'pane') {
@@ -584,193 +626,122 @@ export function mergePane(tree: LayoutTree, input: MergePaneInput): LayoutResult
 /* 3.5 查询（只读）                                                    */
 /* ------------------------------------------------------------------ */
 
-/** 普通对象（非 null、非数组）：布局节点只能是这种形状。 */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+/*
+ * 读取契约（R4 统一，架构裁决）：
+ *
+ * 六个公开读取函数——`findLayoutNode` / `findPaneByGroup` / `listPanes` /
+ * `listSplits` / `layoutTreeDepth` / `layoutPaneCount`——共用
+ * `validateLayoutTree` 作为**唯一**合法性权威入口：每次调用最多做一次完整校验，
+ * 随后只遍历这份已通过校验的结构。
+ *
+ * 为什么不再各自维护一套守卫：R2/R3 的 `isLayoutNode` / `splitChildrenOf` 是
+ * "逐层、逐支"的局部判定，允许"跳过坏分支、返回好结果"。于是同一棵树可能被
+ * `findLayoutNode` 判为部分可用、被 `validateLayoutTree` 判为非法——两套规则
+ * 一旦分叉，调用方就无法用校验结论解释查询结果。收敛成"**整树合法才可查**"
+ * 之后，六个入口的结论天然一致。
+ *
+ * 非法树的安全返回值是 `null` / `[]` / `0`。它们表示"读不到"，**不表示**存在
+ * 一个合法但零窗格的布局：Pane 是树的最小单位（`last-pane` 也不允许删到最后
+ * 一片）。需要区分损坏原因的调用方走 `validateLayoutTree`，它给出具体错误码。
+ */
+
+/**
+ * 公开读取入口的**唯一**前置闸门。
+ *
+ * 返回 `null` = 这棵树不合法，调用方据此返回各自的"空"结果。校验放在这里而不是
+ * 每个函数各写一遍，是为了让"合法"只有一种定义；也保证每次公开读取只做一次
+ * 完整校验（遍历本身不再逐层重复校验整棵子树）。
+ */
+function readRoot(tree: unknown): LayoutNode | null {
+  if (validateLayoutTree(tree) !== null) return null;
+  return (tree as LayoutTree).root;
 }
 
 /**
- * 一个节点**自身**的字段是否齐备（只看本层，不验证子节点内容）。
+ * 按 `nodeId` 找节点（pane 与 split 共用命名空间），先序、左优先。
  *
- * - pane：`nodeId` / `groupId` 都是 trim 后非空的字符串；
- * - split：`nodeId` 非空、`orientation` 合法、`ratio` 是 0.1~0.9 的有限数值、
- *   `children` 是长度恰好 2 的数组。
+ * `node` 必须来自 `readRoot` 放行的结构，所以这里可以直接读 `children`：
+ * 深度已被校验限制在 `MAX_LAYOUT_DEPTH` 内，递归不会爆栈，环也不可能存在。
+ * `childrenOf` 只是"万一被绕过"的兜底，不承担合法性判断。
  *
- * 这里刻意**不**检查子节点：那是 `nodeFieldsOkAt` 的职责，分开写才能让
- * "本层齐备"与"整棵可用"成为两件可分别推理的事。
+ * 返回树里那**一个**节点（引用相等），不做任何复制。
  */
-function nodeFieldsOk(value: unknown): value is Record<string, unknown> {
-  if (!isRecord(value)) return false;
-  if (!isIdentity(value.nodeId)) return false;
-  if (value.type === 'pane') return isIdentity(value.groupId);
-  if (value.type !== 'split') return false;
-  if (!isOrientation(value.orientation)) return false;
-  if (!isRatio(value.ratio)) return false;
-  const children = value.children;
-  return Array.isArray(children) && children.length === 2;
+function findNodeIn(node: LayoutNode, nodeId: string): LayoutNode | null {
+  if (node.nodeId === nodeId) return node;
+  if (node.type === 'pane') return null;
+  const children = childrenOf(node);
+  if (children === null) return null;
+  const left = findNodeIn(children[0], nodeId);
+  return left !== null ? left : findNodeIn(children[1], nodeId);
 }
 
-/**
- * 递归版：本层齐备 + split 的两个子节点也各自齐备。
- *
- * `seen` + `depth` 是给**守卫自身**用的保险：环状输入不能让验证函数自己
- * 无限递归（那就等于把"防崩溃"变成了另一种崩溃）。超过模型深度上限、
- * 或同一对象被引用两次，一律不算合法节点。
- */
-function nodeFieldsOkAt(value: unknown, depth: number, seen: Set<object>): boolean {
-  if (depth > MAX_LAYOUT_DEPTH) return false;
-  if (!nodeFieldsOk(value)) return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (value.type !== 'split') return true;
-  const children = (value as { children: readonly unknown[] }).children;
-  return (
-    nodeFieldsOkAt(children[0], depth + 1, seen) && nodeFieldsOkAt(children[1], depth + 1, seen)
-  );
-}
-
-/**
- * 这个值能不能当**布局节点**看待：本层字段齐备，且整棵子树都齐备。
- *
- * 只认 `type` 是不够的：`{type:'pane'}` 缺 `groupId` 在运行时仍是一个"对象"，
- * 但它作为 `LayoutNode` 是残废的——返回给调用方，下一次读 `groupId` 就是
- * `undefined`，而调用方完全有理由相信查询结果已经过了校验。
- *
- * 所以守卫必须证明**必要字段齐备**：未知类型（`grid`、拼错的 `pnae`）不算节点，
- * 字段残缺的 pane / split 也不算；任何一处残缺会让整棵树不可查（fail-closed，
- * 而不是"跳过坏的、返回好的"——后者会让调用方拿到一棵它以为完整的树）。
- */
-function isLayoutNode(value: unknown): value is LayoutNode {
-  return nodeFieldsOkAt(value, 1, new Set<object>());
-}
-
-/**
- * 取出一个 split 的**合法**两个孩子；结构不合格时返回 `null`。
- *
- * 合格 = 自身是 split + `children` 是长度恰好 2 的数组 + 两个子节点都是合法节点。
- * 任一条不满足就返回 `null`，调用方据此**整支跳过**：不遍历、也不把它当成结果。
- * 宁可少查一个损坏分支，也不能让 `null.nodeId` 这样的读取把渲染打崩。
- */
-function splitChildrenOf(node: LayoutNode): readonly [LayoutNode, LayoutNode] | null {
-  if (node.type !== 'split') return null;
-  const children: unknown = node.children;
-  if (!Array.isArray(children) || children.length !== 2) return null;
-  const first: unknown = children[0];
-  const second: unknown = children[1];
-  if (!isLayoutNode(first) || !isLayoutNode(second)) return null;
-  return [first, second];
-}
-
-/**
- * 取 root：树本身或 root 损坏时返回 `null`。
- *
- * 两个查询入口都从这里开始，所以"入口检查"只有一处实现。
- */
-function rootOf(tree: unknown): LayoutNode | null {
-  if (!isRecord(tree)) return null;
-  const root = tree.root;
-  return isLayoutNode(root) ? root : null;
+/** 按 `groupId` 找 Pane，先序、左优先。`groupId` 在合法树里唯一。 */
+function findPaneIn(node: LayoutNode, groupId: string): PaneNode | null {
+  if (node.type === 'pane') return node.groupId === groupId ? node : null;
+  const children = childrenOf(node);
+  if (children === null) return null;
+  const left = findPaneIn(children[0], groupId);
+  return left !== null ? left : findPaneIn(children[1], groupId);
 }
 
 /**
  * 按 `nodeId` 找节点（pane 与 split 共用命名空间）。
  *
- * 走显式栈而不是递归，是因为查询函数会被 UI 在渲染期高频调用，不该有递归
- * 深度上限或崩溃面。三条防御：
- *
- * - 未知类型的节点既不入栈、也不作为结果（否则 `{type:'grid', children:[...]}`
- *   会被当成合法节点返回，调用方读它的字段就踩空）；
- * - split 的 `children` 必须先通过 `splitChildrenOf` 的结构检查，才允许
- *   "它自己算命中"并把子节点入栈——顺序是**先验结构、再判命中**，因为
- *   一个 children 缺失的 split 交给调用方，等于把崩溃点往后挪；
- * - `seen` 按对象引用去重，环状输入不会无限循环。
- *
- * 返回的是树里那**一个**节点（引用相等），不做任何复制。
+ * 非法树一律 `null`：不抛异常、不返回部分结果、不把"重复身份里的第一个"当成
+ * 可信答案（重复 `nodeId` 是 `duplicate-node-id`，整棵树不再是布局）。
  */
 export function findLayoutNode(tree: LayoutTree, nodeId: string): LayoutNode | null {
-  const root = rootOf(tree);
+  const root = readRoot(tree);
   if (root === null) return null;
-
-  const seen = new Set<object>();
-  const stack: LayoutNode[] = [root];
-  while (stack.length > 0) {
-    const node = stack.pop() as LayoutNode;
-    if (seen.has(node)) continue;
-    seen.add(node);
-
-    if (node.type === 'pane') {
-      if (node.nodeId === nodeId) return node;
-      continue;
-    }
-
-    const children = splitChildrenOf(node);
-    if (children === null) continue;
-    if (node.nodeId === nodeId) return node;
-    stack.push(children[1], children[0]); // 先压右再压左 → 弹出时左先
-  }
-  return null;
+  return findNodeIn(root, nodeId);
 }
 
 /**
  * 按 `groupId` 找 Pane。
  *
- * 与 `findLayoutNode` 共用同一套准入判定（`isLayoutNode` / `splitChildrenOf`）：
- * 未知类型不穿透、损坏的 split 不遍历，因此 `{type:'grid', children:[pane]}` 里
- * 的 Pane 不会被"顺手"找到——它不在任何合法的视图结构里。
- *
- * 遍历顺序仍是深度优先、左优先：同一 `groupId` 出现两次（损坏数据）时，
- * 返回左边那一个。
+ * 与 `findLayoutNode` 共用同一个前置闸门（`readRoot`）与同一套遍历规则，
+ * 所以"查询说能查到"与"校验说这棵树合法"永远同真同假。
  */
 export function findPaneByGroup(tree: LayoutTree, groupId: string): PaneNode | null {
-  const root = rootOf(tree);
+  const root = readRoot(tree);
   if (root === null) return null;
-
-  const seen = new Set<object>();
-  const stack: LayoutNode[] = [root];
-  while (stack.length > 0) {
-    const node = stack.pop() as LayoutNode;
-    if (seen.has(node)) continue;
-    seen.add(node);
-
-    if (node.type === 'pane') {
-      if (node.groupId === groupId) return node;
-      continue;
-    }
-
-    const children = splitChildrenOf(node);
-    if (children === null) continue;
-    stack.push(children[1], children[0]);
-  }
-  return null;
+  return findPaneIn(root, groupId);
 }
 
-/** 所有 Pane，按屏幕从左到右 / 从上到下（深度优先先左后右）的顺序。 */
+/** 所有 Pane，按屏幕从左到右 / 从上到下（深度优先先左后右）的顺序。非法树为 `[]`。 */
 export function listPanes(tree: LayoutTree): readonly PaneNode[] {
+  const root = readRoot(tree);
+  if (root === null) return [];
   const out: PaneNode[] = [];
-  walk(tree.root, (node) => {
+  walk(root, (node) => {
     if (node.type === 'pane') out.push(node);
   });
   return out;
 }
 
-/** 所有 Split，先序（父在子前），同一层左先右后。 */
+/** 所有 Split，先序（父在子前），同一层左先右后。非法树为 `[]`。 */
 export function listSplits(tree: LayoutTree): readonly SplitNode[] {
+  const root = readRoot(tree);
+  if (root === null) return [];
   const out: SplitNode[] = [];
-  walk(tree.root, (node) => {
+  walk(root, (node) => {
     if (node.type === 'split') out.push(node);
   });
   return out;
 }
 
-/** 树的最大深度（只有一个 Pane 时为 1）。 */
+/** 树的最大深度（只有一个 Pane 时为 1）。非法树为 0——0 不是"零窗格"，是"读不到"。 */
 export function layoutTreeDepth(tree: LayoutTree): number {
+  const root = readRoot(tree);
+  if (root === null) return 0;
   let max = 0;
-  walk(tree.root, (_node, depth) => {
+  walk(root, (_node, depth) => {
     if (depth > max) max = depth;
   });
   return max;
 }
 
+/** Pane 数量。与 `listPanes` 共用同一次校验，非法树为 0。 */
 export function layoutPaneCount(tree: LayoutTree): number {
   return listPanes(tree).length;
 }

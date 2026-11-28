@@ -1274,7 +1274,19 @@ test('LTA-37 合法查询行为不变：定位、顺序、引用一致、未命�
   assert.equal(findLayoutNode(three, 'nope'), null);
   assert.equal(findPaneByGroup(three, 'nope'), null);
 
-  // 左右顺序：深度优先、左优先。用重复 groupId 的（非法）数据才能分辨顺序
+  // split 的 nodeId 与 pane 共用命名空间：都能查到
+  assert.equal(findLayoutNode(three, 's1')?.type, 'split');
+  assert.equal(findLayoutNode(three, 's2')?.type, 'split');
+
+  /*
+   * R4 契约变更（架构裁决，不是为了通过测试而放宽断言）：
+   *
+   * 旧版本用"两个 Pane 共用同一个 groupId"的**非法**树去分辨左右顺序，断言
+   * `findPaneByGroup` 返回左支那一个。这与 R4 统一的 fail-closed 读取契约直接
+   * 冲突——重复 `groupId` 破坏模型不变量（`duplicate-group-id`），而"把重复
+   * 身份里的第一个当成可信结果"正是本轮明令禁止的行为。所以改为：该树被整体
+   * 拒绝，顺序改由**合法**树的 `listPanes` / `listSplits` 钉住。
+   */
   const duplicated = asTree({
     type: 'split',
     nodeId: 's-dup',
@@ -1282,11 +1294,15 @@ test('LTA-37 合法查询行为不变：定位、顺序、引用一致、未命�
     ratio: 0.5,
     children: [PANE('left', 'same'), PANE('right', 'same')],
   });
-  assert.equal(findPaneByGroup(duplicated, 'same')?.nodeId, 'left', '必须返回左支那一个');
-  assert.equal(findLayoutNode(duplicated, 'left')?.nodeId, 'left');
-  assert.equal(findLayoutNode(duplicated, 'right')?.nodeId, 'right');
-  // split 的 nodeId 与 pane 共用命名空间：都能查到
-  assert.equal(findLayoutNode(duplicated, 's-dup')?.type, 'split');
+  assert.equal(validateLayoutTree(duplicated)?.error, 'duplicate-group-id');
+  assert.equal(findPaneByGroup(duplicated, 'same'), null, '重复身份不得返回"第一个"');
+  assert.equal(findLayoutNode(duplicated, 'left'), null, '非法树不得被部分查询');
+  assert.equal(findLayoutNode(duplicated, 'right'), null, '非法树不得被部分查询');
+  assert.equal(findLayoutNode(duplicated, 's-dup'), null, '非法树不得被部分查询');
+
+  // 左优先顺序在合法树上验证：Pane 从左到右、Split 父先于子
+  assert.deepEqual(listPanes(three).map((pane) => pane.nodeId), ['p1', 'p2', 'p3']);
+  assert.deepEqual(listSplits(three).map((node) => node.nodeId), ['s1', 's2']);
 });
 
 /* ================================================================== */
@@ -1387,4 +1403,507 @@ test('LTA-40 Split 含字段不完整的子节点：不穿透、不返回损坏�
   });
   assert.equal(findPaneByGroup(nested, 'g2'), null, '孙节点残缺：整树不可用');
   assert.equal(findLayoutNode(nested, 's2'), null, '孙节点残缺：中间 split 也不可用');
+});
+
+/* ================================================================== */
+/* LTA-41 ~ LTA-45：读取层统一（R4）                                     */
+/*                                                                     */
+/* 六个公开读取函数共用 `validateLayoutTree` 作为**唯一**合法性权威入口：   */
+/* 合法树 → 完整结果；非法树 → `null` / `[]` / `0`。既不抛异常，也不返回   */
+/* 部分结果，更不把"重复身份里的第一个"当成可信答案。                       */
+/*                                                                     */
+/* `null` / `[]` / `0` 是"读不到"，不代表存在一个合法但零窗格的布局：Pane   */
+/* 是树的最小单位，`mergePane` 也不允许删到最后一片。需要区分损坏原因的调用  */
+/* 方走 `validateLayoutTree`，它给出具体错误码。                          */
+/* ================================================================== */
+
+/**
+ * 包一层 try：读取入口对普通损坏数据抛异常，本身就是契约违背，
+ * 而且要能报出是哪个入口、哪条夹具。
+ */
+function readSafely<T>(label: string, run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    assert.fail(`${label}：读取入口不得因普通损坏数据抛异常，实际抛出 ${String(error)}`);
+  }
+}
+
+/** 非法树在六个读取入口上的统一安全结果（外加"权威校验必须拒绝"）。 */
+function expectSafeReject(input: unknown, label: string): void {
+  const tree = input as LayoutTree;
+  assert.equal(readSafely(label, () => findLayoutNode(tree, 'p1')), null, `${label}：findLayoutNode(pane) 必须为 null`);
+  assert.equal(readSafely(label, () => findLayoutNode(tree, 's1')), null, `${label}：findLayoutNode(split) 必须为 null`);
+  assert.equal(readSafely(label, () => findPaneByGroup(tree, 'g1')), null, `${label}：findPaneByGroup 必须为 null`);
+  assert.deepEqual(readSafely(label, () => listPanes(tree)), [], `${label}：listPanes 必须为空数组`);
+  assert.deepEqual(readSafely(label, () => listSplits(tree)), [], `${label}：listSplits 必须为空数组`);
+  assert.equal(readSafely(label, () => layoutTreeDepth(tree)), 0, `${label}：layoutTreeDepth 必须为 0`);
+  assert.equal(readSafely(label, () => layoutPaneCount(tree)), 0, `${label}：layoutPaneCount 必须为 0`);
+  // 安全返回值不等于"合法"：权威校验必须给出非空结论
+  assert.notEqual(validateLayoutTree(input), null, `${label}：validateLayoutTree 必须拒绝`);
+}
+
+/** 测试侧独立实现的左优先先序（不复用被测实现，避免"用被测代码验证被测代码"）。 */
+function referencePanes(root: LayoutNode): PaneNode[] {
+  const out: PaneNode[] = [];
+  const dfs = (node: LayoutNode): void => {
+    if (node.type === 'pane') {
+      out.push(node);
+      return;
+    }
+    dfs(node.children[0]);
+    dfs(node.children[1]);
+  };
+  dfs(root);
+  return out;
+}
+
+/** 测试侧独立实现：父节点先于子节点、同层左先右后。 */
+function referenceSplits(root: LayoutNode): SplitNode[] {
+  const out: SplitNode[] = [];
+  const dfs = (node: LayoutNode): void => {
+    if (node.type !== 'split') return;
+    out.push(node);
+    dfs(node.children[0]);
+    dfs(node.children[1]);
+  };
+  dfs(root);
+  return out;
+}
+
+/** 合法树上的完整读取契约：顺序、数量、深度、引用一致、只读。 */
+function expectCompleteReads(tree: LayoutTree, label: string): void {
+  assert.equal(validateLayoutTree(tree), null, `${label}：夹具本身必须是合法树`);
+  const before = JSON.stringify(tree);
+
+  const panes = referencePanes(tree.root);
+  const splits = referenceSplits(tree.root);
+  const maxDepth = Math.max(...paneDepths(tree).map((item) => item.depth));
+
+  assert.deepEqual(listPanes(tree), panes, `${label}：listPanes 必须是左优先先序`);
+  assert.deepEqual(listSplits(tree), splits, `${label}：listSplits 必须父先于子`);
+  assert.equal(layoutPaneCount(tree), panes.length, `${label}：Pane 数量`);
+  assert.equal(layoutTreeDepth(tree), maxDepth, `${label}：最大深度`);
+
+  // 引用一致：查到的就是树里那一个节点，不是副本
+  for (const pane of panes) {
+    assert.equal(findLayoutNode(tree, pane.nodeId), pane, `${label}：findLayoutNode(${pane.nodeId}) 引用一致`);
+    assert.equal(findPaneByGroup(tree, pane.groupId), pane, `${label}：findPaneByGroup(${pane.groupId}) 引用一致`);
+  }
+  for (const split of splits) {
+    assert.equal(findLayoutNode(tree, split.nodeId), split, `${label}：findLayoutNode(${split.nodeId}) 引用一致`);
+  }
+  assert.equal(findLayoutNode(tree, 'no-such-node'), null, `${label}：未命中为 null`);
+  assert.equal(findPaneByGroup(tree, 'no-such-group'), null, `${label}：未命中为 null`);
+
+  // 只读：六次查询前后输入一个字节都不变
+  assert.equal(JSON.stringify(tree), before, `${label}：查询不得改动输入`);
+}
+
+/* ------------------------------ 夹具 ------------------------------ */
+
+/** 非法夹具：结构损坏（null / 缺 root / 未知类型 / children 形状 / 字段残缺）。 */
+const BROKEN_STRUCTURE_FIXTURES: ReadonlyArray<readonly [string, unknown, string]> = [
+  ['整树为 null', null, 'invalid-tree'],
+  ['整树为 undefined', undefined, 'invalid-tree'],
+  ['整树是字符串', 'layout', 'invalid-tree'],
+  ['整树是数组', [], 'invalid-tree'],
+  ['缺少 root', { version: 1 }, 'invalid-tree'],
+  ['root 为 null', { version: 1, root: null }, 'invalid-node'],
+  ['未知节点类型', { version: 1, root: { type: 'grid', nodeId: 'p1', groupId: 'g1' } }, 'invalid-node'],
+  [
+    'split 缺少 children',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5 } },
+    'invalid-split',
+  ],
+  [
+    'children 长度为 1',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [PANE('p1', 'g1')] } },
+    'invalid-split',
+  ],
+  [
+    'children 长度为 3',
+    {
+      version: 1,
+      root: {
+        type: 'split',
+        nodeId: 's1',
+        orientation: 'horizontal',
+        ratio: 0.5,
+        children: [PANE('p1', 'g1'), PANE('p2', 'g2'), PANE('p3', 'g3')],
+      },
+    },
+    'invalid-split',
+  ],
+  [
+    'children 不是数组',
+    {
+      version: 1,
+      root: {
+        type: 'split',
+        nodeId: 's1',
+        orientation: 'horizontal',
+        ratio: 0.5,
+        children: { 0: PANE('p1', 'g1'), 1: PANE('p2', 'g2') },
+      },
+    },
+    'invalid-split',
+  ],
+  [
+    'children 含 null',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [PANE('p1', 'g1'), null] } },
+    'invalid-node',
+  ],
+  [
+    'children 含 undefined',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [undefined, PANE('p2', 'g2')] } },
+    'invalid-node',
+  ],
+  [
+    'children 含基本类型',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: ['p1', PANE('p2', 'g2')] } },
+    'invalid-node',
+  ],
+  [
+    '子节点字段残缺',
+    {
+      version: 1,
+      root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [PANE('p1', 'g1'), { type: 'pane', nodeId: 'p2' }] },
+    },
+    'empty-identity',
+  ],
+  [
+    '孙节点字段残缺',
+    {
+      version: 1,
+      root: {
+        type: 'split',
+        nodeId: 's1',
+        orientation: 'horizontal',
+        ratio: 0.5,
+        children: [
+          PANE('p1', 'g1'),
+          {
+            type: 'split',
+            nodeId: 's2',
+            orientation: 'vertical',
+            ratio: 0.4,
+            children: [PANE('p2', 'g2'), { type: 'pane', nodeId: 'p3' }],
+          },
+        ],
+      },
+    },
+    'empty-identity',
+  ],
+];
+
+/** 根 split 的第二个孩子指回自己。 */
+function selfReferencingTree(): unknown {
+  const self: Record<string, unknown> = { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5 };
+  self.children = [PANE('p1', 'g1'), self];
+  return { version: 1, root: self };
+}
+
+/** 两个 split 互相引用：a → b → a。 */
+function mutuallyReferencingTree(): unknown {
+  const a: Record<string, unknown> = { type: 'split', nodeId: 'sa', orientation: 'horizontal', ratio: 0.5 };
+  const b: Record<string, unknown> = { type: 'split', nodeId: 'sb', orientation: 'vertical', ratio: 0.5 };
+  a.children = [PANE('p1', 'g1'), b];
+  b.children = [PANE('p2', 'g2'), a];
+  return { version: 1, root: a };
+}
+
+/** 同一个 Pane 对象被两个分支复用（DAG，不是树）。 */
+function sharedNodeTree(): unknown {
+  const shared = PANE('p1', 'g1');
+  return {
+    version: 1,
+    root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [shared, shared] },
+  };
+}
+
+/** 循环 / 复用夹具：延迟构造，因为要先生成对象再互相引用。 */
+const CYCLIC_CASES: ReadonlyArray<readonly [string, () => unknown]> = [
+  ['根节点自引用', selfReferencingTree],
+  ['多层循环引用', mutuallyReferencingTree],
+  ['同一节点对象被两个分支复用', sharedNodeTree],
+];
+
+/** 非法夹具：模型不变量（身份唯一、版本、白名单、比例、深度、数量）。 */
+const INVARIANT_FIXTURES: ReadonlyArray<readonly [string, unknown, string]> = [
+  [
+    '重复 nodeId',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [PANE('dup', 'g1'), PANE('dup', 'g2')] } },
+    'duplicate-node-id',
+  ],
+  [
+    '重复 groupId',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.5, children: [PANE('p1', 'dup'), PANE('p2', 'dup')] } },
+    'duplicate-group-id',
+  ],
+  ['版本非法', { version: 2, root: PANE('p1', 'g1') }, 'invalid-tree'],
+  ['版本缺失', { root: PANE('p1', 'g1') }, 'invalid-tree'],
+  ['根对象注入额外字段', { version: 1, root: PANE('p1', 'g1'), savedAt: '2026-01-01' }, 'unexpected-field'],
+  ['Pane 注入额外字段', { version: 1, root: { type: 'pane', nodeId: 'p1', groupId: 'g1', docId: 'd1' } }, 'unexpected-field'],
+  [
+    'Split 注入额外字段',
+    {
+      version: 1,
+      root: {
+        type: 'split',
+        nodeId: 's1',
+        orientation: 'horizontal',
+        ratio: 0.5,
+        children: [PANE('p1', 'g1'), PANE('p2', 'g2')],
+        viewId: 'v1',
+      },
+    },
+    'unexpected-field',
+  ],
+  ['空 nodeId', { version: 1, root: PANE('', 'g1') }, 'empty-identity'],
+  ['nodeId 全空白', { version: 1, root: PANE('   ', 'g1') }, 'empty-identity'],
+  ['空 groupId', { version: 1, root: PANE('p1', '') }, 'empty-identity'],
+  [
+    '比例越界',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: 0.95, children: [PANE('p1', 'g1'), PANE('p2', 'g2')] } },
+    'invalid-ratio',
+  ],
+  [
+    '比例为 NaN',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: Number.NaN, children: [PANE('p1', 'g1'), PANE('p2', 'g2')] } },
+    'invalid-ratio',
+  ],
+  [
+    '比例是字符串',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'horizontal', ratio: '0.5', children: [PANE('p1', 'g1'), PANE('p2', 'g2')] } },
+    'invalid-ratio',
+  ],
+  [
+    '方向非法',
+    { version: 1, root: { type: 'split', nodeId: 's1', orientation: 'diagonal', ratio: 0.5, children: [PANE('p1', 'g1'), PANE('p2', 'g2')] } },
+    'invalid-orientation',
+  ],
+  ['超出最大深度', { version: 1, root: deepTreeWithDepth(MAX_LAYOUT_DEPTH + 1) }, 'depth-exceeded'],
+  ['超出最大 Pane 数量', { version: 1, root: balancedTreeWithPanes(MAX_LAYOUT_PANES + 1) }, 'pane-limit-exceeded'],
+];
+
+/** 造一棵深度恰为 `depth` 的链式树（叶子在最后一层）。 */
+function deepTreeWithDepth(depth: number): LayoutNode {
+  let node: LayoutNode = PANE('dp-leaf', 'dg-leaf');
+  for (let level = 1; level < depth; level += 1) {
+    node = {
+      type: 'split',
+      nodeId: `ds${level}`,
+      orientation: 'horizontal',
+      ratio: 0.5,
+      children: [node, PANE(`dp${level}`, `dg${level}`)],
+    };
+  }
+  return node;
+}
+
+/** 造一棵有 `count` 片 Pane 的平衡树：深度 ~log2，先撞数量上限而不是深度上限。 */
+function balancedTreeWithPanes(count: number): LayoutNode {
+  let serial = 0;
+  const build = (size: number): LayoutNode => {
+    serial += 1;
+    const id = serial;
+    if (size === 1) return PANE(`bw-n${id}`, `bw-g${id}`);
+    const leftSize = Math.floor(size / 2);
+    return {
+      type: 'split',
+      nodeId: `bw-s${id}`,
+      orientation: 'horizontal',
+      ratio: 0.5,
+      children: [build(leftSize), build(size - leftSize)],
+    };
+  };
+  return build(count);
+}
+
+/* --------------------------- 合法夹具 ----------------------------- */
+
+/** 单窗格。 */
+function singleLegalTree(): LayoutTree {
+  return ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+}
+
+/** 左右分屏：p1 | p2。 */
+function horizontalLegalTree(): LayoutTree {
+  const base = ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+  return ok(
+    splitPane(base, {
+      paneNodeId: 'p1',
+      splitNodeId: 's1',
+      newPaneNodeId: 'p2',
+      newGroupId: 'g2',
+      orientation: 'horizontal',
+      position: 'second',
+    }),
+  );
+}
+
+/** 上下分屏，新窗格占第一子位：g2 在上、g1 在下。 */
+function verticalLegalTree(): LayoutTree {
+  const base = ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+  return ok(
+    splitPane(base, {
+      paneNodeId: 'p1',
+      splitNodeId: 's1',
+      newPaneNodeId: 'p2',
+      newGroupId: 'g2',
+      orientation: 'vertical',
+      position: 'first',
+      ratio: 0.35,
+    }),
+  );
+}
+
+/** 三层嵌套：s1(p1, s2(p2, p3))。 */
+function nestedLegalTree(): LayoutTree {
+  const three = ok(
+    splitPane(horizontalLegalTree(), {
+      paneNodeId: 'p2',
+      splitNodeId: 's2',
+      newPaneNodeId: 'p3',
+      newGroupId: 'g3',
+      orientation: 'vertical',
+      position: 'second',
+      ratio: 0.6,
+    }),
+  );
+  return three;
+}
+
+/** 深度正好到模型上限：沿同一片叶子连续分屏，Pane 数同时等于深度。 */
+function deepestLegalTree(): LayoutTree {
+  const namer0 = namer();
+  let tree = ok(createLayoutTree({ nodeId: 'p1', groupId: 'g1' }));
+  let leaf = 'p1';
+  for (let index = 0; index < MAX_LAYOUT_DEPTH - 1; index += 1) {
+    const newPane = namer0.node();
+    tree = ok(
+      splitPane(tree, {
+        paneNodeId: leaf,
+        splitNodeId: namer0.split(),
+        newPaneNodeId: newPane,
+        newGroupId: namer0.group(),
+        orientation: 'vertical',
+        position: 'second',
+      }),
+    );
+    leaf = newPane;
+  }
+  return tree;
+}
+
+/** Pane 数量正好到模型上限：每次分最浅的叶子，构成平衡树。 */
+function widestLegalTree(): LayoutTree {
+  const namer0 = namer();
+  let tree = ok(createLayoutTree({ nodeId: 'n1', groupId: 'g1' }));
+  while (layoutPaneCount(tree) < MAX_LAYOUT_PANES) {
+    const depths = paneDepths(tree);
+    const shallowest = depths.reduce((best, item) => (item.depth < best.depth ? item : best));
+    tree = ok(
+      splitPane(tree, {
+        paneNodeId: shallowest.pane.nodeId,
+        splitNodeId: namer0.split(),
+        newPaneNodeId: namer0.node(),
+        newGroupId: namer0.group(),
+        orientation: 'horizontal',
+        position: 'second',
+      }),
+    );
+  }
+  return tree;
+}
+
+function legalFixtures(): ReadonlyArray<readonly [string, LayoutTree]> {
+  return [
+    ['单窗格', singleLegalTree()],
+    ['左右分屏', horizontalLegalTree()],
+    ['上下分屏', verticalLegalTree()],
+    ['多层嵌套', nestedLegalTree()],
+    ['合法最大深度', deepestLegalTree()],
+    ['合法最大 Pane 数量', widestLegalTree()],
+  ];
+}
+
+/* ------------------------------ 用例 ------------------------------ */
+
+test('LTA-41 损坏结构统一拒绝：六个读取入口一律安全失败，不抛异常也不返回部分结果', () => {
+  for (const [label, tree, code] of BROKEN_STRUCTURE_FIXTURES) {
+    assert.equal(validateLayoutTree(tree)?.error, code, `${label}：权威校验错误码`);
+    expectSafeReject(tree, label);
+  }
+});
+
+test('LTA-42 循环与重复对象统一拒绝：自引用 / 多层环 / 同一对象复用', () => {
+  for (const [label, build] of CYCLIC_CASES) {
+    const tree = build();
+    assert.equal(validateLayoutTree(tree)?.error, 'cyclic-tree', `${label}：环与 DAG 一律判为 cyclic-tree`);
+    expectSafeReject(tree, label);
+  }
+});
+
+test('LTA-43 模型不变量统一拒绝：读取入口不得接受校验已拒绝的布局', () => {
+  for (const [label, tree, code] of INVARIANT_FIXTURES) {
+    assert.equal(validateLayoutTree(tree)?.error, code, `${label}：权威校验错误码`);
+    expectSafeReject(tree, label);
+  }
+});
+
+test('LTA-44 合法布局读取一致：引用一致、左优先、深度与数量准确、查询不改输入', () => {
+  for (const [label, tree] of legalFixtures()) {
+    expectCompleteReads(tree, label);
+  }
+
+  // 边界夹具的边界值本身要被钉住，否则"最大深度"可能根本不是 8
+  const deep = deepestLegalTree();
+  assert.equal(layoutTreeDepth(deep), MAX_LAYOUT_DEPTH);
+  assert.equal(layoutPaneCount(deep), MAX_LAYOUT_DEPTH);
+  const wide = widestLegalTree();
+  assert.equal(layoutPaneCount(wide), MAX_LAYOUT_PANES);
+  assert.ok(layoutTreeDepth(wide) <= MAX_LAYOUT_DEPTH, '平衡构造不应触发深度上限');
+
+  // 顺序的三个具体形状：单窗格 / 左右 / 上下（新窗格在上）
+  assert.deepEqual(listPanes(singleLegalTree()).map((pane) => pane.groupId), ['g1']);
+  assert.deepEqual(listPanes(horizontalLegalTree()).map((pane) => pane.groupId), ['g1', 'g2']);
+  assert.deepEqual(listPanes(verticalLegalTree()).map((pane) => pane.groupId), ['g2', 'g1']);
+  assert.deepEqual(listSplits(nestedLegalTree()).map((node) => node.nodeId), ['s1', 's2']);
+});
+
+test('LTA-45 完整校验与读取契约一致：校验拒绝则读取全拒，校验通过则读取完整', () => {
+  // 1) 所有非法夹具：校验拒绝 ⇒ 六个入口全部安全拒绝
+  for (const [label, tree] of [...BROKEN_STRUCTURE_FIXTURES, ...INVARIANT_FIXTURES]) {
+    assert.notEqual(validateLayoutTree(tree), null, `${label}：校验必须拒绝`);
+    expectSafeReject(tree, label);
+  }
+  for (const [label, build] of CYCLIC_CASES) {
+    const tree = build();
+    assert.notEqual(validateLayoutTree(tree), null, `${label}：校验必须拒绝`);
+    expectSafeReject(tree, label);
+  }
+
+  // 2) 所有合法夹具：校验通过 ⇒ 读取完整、自洽、非空
+  for (const [label, tree] of legalFixtures()) {
+    assert.equal(validateLayoutTree(tree), null, `${label}：校验必须通过`);
+    const panes = listPanes(tree);
+    const splits = listSplits(tree);
+    const count = layoutPaneCount(tree);
+    const depth = layoutTreeDepth(tree);
+
+    // "安全失败值"不会出现在合法树上：0 / [] 只表示读不到，不表示零窗格
+    assert.ok(count > 0, `${label}：合法树不可能零窗格`);
+    assert.ok(depth > 0, `${label}：合法树深度至少为 1`);
+    assert.equal(panes.length, count, `${label}：listPanes 长度与数量一致`);
+    assert.equal(panes.length, referencePanes(tree.root).length, `${label}：Pane 集合完整`);
+    assert.equal(splits.length, referenceSplits(tree.root).length, `${label}：Split 集合完整`);
+    assert.equal(depth, Math.max(...paneDepths(tree).map((item) => item.depth)), `${label}：深度与结构一致`);
+    // 每个 Pane 都能按 nodeId 与 groupId 定位回同一引用
+    for (const pane of panes) {
+      assert.equal(findLayoutNode(tree, pane.nodeId), pane, `${label}：${pane.nodeId} 可定位`);
+      assert.equal(findPaneByGroup(tree, pane.groupId), pane, `${label}：${pane.groupId} 可定位`);
+    }
+  }
 });
