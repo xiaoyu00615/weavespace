@@ -17,6 +17,10 @@ import { join } from 'node:path';
 import { createShellServer } from '../../apps/server/src/server.ts';
 import { createLiveClient, type WeaveSpaceClient, type WorkspaceMode } from '../../apps/shell/src/client/client-api.ts';
 import { createDocumentOpener, createEditEpochs } from '../../apps/shell/src/state/open-document.ts';
+import {
+  createViewInstanceActions,
+  type ViewInstanceActions,
+} from '../../apps/shell/src/state/view-instance-actions.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import { createLoadEpoch, loadWorkspace, type LoadEpoch } from '../../apps/shell/src/state/workspace-load.ts';
 import {
@@ -168,6 +172,8 @@ export type HoldableRequest = 'identity' | 'projects' | 'resources';
 export interface Harness {
   readonly state: WorkspaceState;
   readonly opener: ReturnType<typeof createDocumentOpener>;
+  /** 视图实例动作（B3）：关闭一格 / 关闭整份文档 / 在另一组开第二个 Host View。 */
+  readonly viewActions: ViewInstanceActions;
   readonly restorer: ReturnType<typeof createWorkspaceRestorer>;
   readonly store: WorkspaceStore;
   readonly gate: WorkspaceWriteGate;
@@ -365,6 +371,14 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
     autosave.schedule();
   };
 
+  const viewActions = createViewInstanceActions({
+    getState: () => state,
+    getMode: () => mode,
+    dispatch,
+    clientFor,
+    editEpochs: createEditEpochs(),
+  });
+
   const opener = createDocumentOpener({
     getState: () => state,
     getMode: () => mode,
@@ -433,6 +447,14 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
     gate,
     connectLive,
     openInBackground: (node, projectId) => opener.openNode(node, projectId, { background: true }),
+    /*
+     * 两个窗格指向同一份文档时，第二格必须自己的 Host View（B3）：
+     * 复用第一格那个 viewId 会让"关一格死两格"。
+     */
+    openViewInGroup: async (docId, groupId) => {
+      const outcome = await viewActions.openInGroup(docId, groupId);
+      return outcome.status === 'activated' || outcome.status === 'created';
+    },
     onSettled: () => autosave.schedule(),
   });
 
@@ -478,6 +500,7 @@ export function makeHarness(url: string, storage: MemoryStorage): Harness {
       return state;
     },
     opener,
+    viewActions,
     restorer,
     store,
     gate,

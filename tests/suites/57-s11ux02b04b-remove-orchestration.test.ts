@@ -345,12 +345,22 @@ test('R1-03-07 PROJECT_REMOVED 收掉被移除项目的标签，其它项目的�
      * 这里显式声明"primary 组里开着 a1"，否则窗格看起来是空的，
      * 也就无法验证"移除项目后窗格不能继续指向已消失的标签"。
      */
+    /* B3：组里存的是视图实例身份，"primary 里开着 a1"要先有一条实例记录。 */
+    viewInstances: {
+      ...INITIAL_STATE.viewInstances,
+      'vi:primary|a1': {
+        viewInstanceId: 'vi:primary|a1',
+        docId: 'a1',
+        groupId: 'legacy-group:primary',
+        hostViewId: 'v-a1',
+      },
+    },
     viewGroups: {
       ...INITIAL_STATE.viewGroups,
       'legacy-group:primary': {
         groupId: 'legacy-group:primary',
-        tabDocIds: ['a1'],
-        activeDocId: 'a1',
+        viewInstanceIds: ['vi:primary|a1'],
+        activeViewInstanceId: 'vi:primary|a1',
         mode: 'editor' as const,
       },
     },

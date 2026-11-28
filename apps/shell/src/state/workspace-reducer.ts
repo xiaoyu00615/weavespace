@@ -11,9 +11,11 @@ import {
 } from '../components/tree-model.ts';
 import { TRASH_TERMINAL_STATES } from './types.ts';
 import type {
+  DocTab,
   LayoutMode,
   PaneId,
   ResourceNodeState,
+  ViewMode,
   WorkspaceAction,
   WorkspaceState,
   WorkspaceUiSnapshot,
@@ -31,19 +33,34 @@ import {
 } from './layout-tree.ts';
 import {
   LEGACY_LAYOUT_IDS,
-  activateTab,
-  addTab,
-  clearAllTabs,
+  activateInstance,
+  activeDocIdInGroup,
+  activeInstanceIdInGroup,
+  clearAllGroups,
   createInitialViewGroups,
   ensureGroups,
   groupOf,
   legacyGroupIdOf,
+  linkInstance,
   projectPanes,
-  removeDoc,
-  setActiveDoc,
+  removeInstance,
+  setActiveInstance,
   setGroupMode,
   visibleGroupIds,
 } from './workspace-view-groups.ts';
+import {
+  assignGroup,
+  bindHostView,
+  hostViewIdTaken,
+  instanceFor,
+  instanceOf,
+  instancesOfDoc,
+  registerInstance,
+  removeInstance as removeViewInstance,
+  ungroupedInstanceOfDoc,
+  viewInstanceIdOf,
+  type ViewInstances,
+} from './workspace-view-instances.ts';
 
 const MIN_RATIO = 25;
 const MAX_RATIO = 75;
@@ -82,6 +99,7 @@ export const INITIAL_STATE: WorkspaceState = {
   expanded: { ...DEFAULT_EXPANDED },
   selectedPath: null,
   tabs: [],
+  viewInstances: {},
   panes: {
     primary: { docId: null, mode: 'editor' },
     secondary: { docId: null, mode: 'preview' },
@@ -239,7 +257,7 @@ function withViewGroupProjection(state: WorkspaceState): WorkspaceState {
   const focusedGroupId = visible.includes(state.focusedGroupId)
     ? state.focusedGroupId
     : (visible[0] ?? PRIMARY_GROUP);
-  const panes = projectPanes(state.viewGroups);
+  const panes = projectPanes(state.viewGroups, state.viewInstances);
   const focusedPane: PaneId =
     focusedGroupId === SECONDARY_GROUP ? 'secondary' : 'primary';
 
@@ -275,6 +293,168 @@ function focusViewGroup(state: WorkspaceState, groupId: string): WorkspaceState 
   if (!visibleGroupIds(state.layoutTree).includes(groupId)) return state;
   if (state.focusedGroupId === groupId) return state;
   return withDerivedUi({ ...state, focusedGroupId: groupId });
+}
+
+/* ------------------------------------------------------------------ */
+/* 视图实例（UI-F03-B3）                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 候选 Host View 能不能挂到这个实例上。
+ *
+ * 唯一拒绝条件是"这个 viewId 已经被别的实例占用"：Live 下两个实例共用一个 Host View
+ * 就是"关一格死两格"，宁可让新实例先没有 viewId（稍后由 `openInGroup` 真开一个），
+ * 也不能让两条记录指向同一个 View。
+ */
+function claimHostViewId(
+  instances: ViewInstances,
+  candidate: string | null | undefined,
+  exceptViewInstanceId?: string,
+): string | null {
+  if (typeof candidate !== 'string' || candidate === '') return null;
+  return hostViewIdTaken(instances, candidate, exceptViewInstanceId) ? null : candidate;
+}
+
+/** 登记（或更新）一条文档记录：同 docId 只保留一条。 */
+function upsertDoc(tabs: readonly DocTab[], tab: DocTab): DocTab[] {
+  const index = tabs.findIndex((item) => item.docId === tab.docId);
+  if (index < 0) return [...tabs, tab];
+  return tabs.map((item) => (item.docId === tab.docId ? { ...item, ...tab } : item));
+}
+
+export interface InstanceTarget {
+  docId: string;
+  groupId: string;
+  hostViewId: string | null;
+  /** 期望的实例身份；缺省按 (组, 文档) 确定性生成。 */
+  viewInstanceId?: string;
+  activate: boolean;
+  mode?: ViewMode;
+}
+
+/**
+ * 让「(组, 文档)」成为该组的活动实例（或在 `activate: false` 时只挂进组）。
+ *
+ * 三种情形，顺序是有意的：
+ *
+ * 1. 该组已经有这一份文档的实例 → 只补空的 `hostViewId`，绝不重建（重建会让
+ *    上一次的 Host View 变成孤儿）。
+ * 2. 这份文档有**未分组**实例 → 收养它（恢复流程：先后台打开、再由窗格接管）。
+ *    只收养未分组的；**绝不**从另一个组抢，那是"右侧把左侧的视图搬走"。
+ * 3. 都没有 → 建一个新实例。Live 下两个组看同一份文档时，第二个实例的
+ *    `hostViewId` 会是 `null`：真正的第二个 Host View 由 `openInGroup` 异步创建。
+ *
+ * 返回 `null` 表示这次操作必须整体放弃（调用方给的实例身份与已有记录冲突）。
+ */
+function withInstanceInGroup(
+  state: WorkspaceState,
+  target: InstanceTarget,
+): WorkspaceState | null {
+  let instances = state.viewInstances;
+  const existing = instanceFor(instances, target.groupId, target.docId);
+  let viewInstanceId = existing?.viewInstanceId ?? null;
+
+  if (existing !== null) {
+    if (existing.hostViewId === null) {
+      instances = bindHostView(
+        instances,
+        existing.viewInstanceId,
+        claimHostViewId(instances, target.hostViewId, existing.viewInstanceId),
+      );
+    }
+  } else {
+    const ungrouped = ungroupedInstanceOfDoc(instances, target.docId);
+    if (ungrouped !== null) {
+      viewInstanceId = ungrouped.viewInstanceId;
+      instances = assignGroup(instances, ungrouped.viewInstanceId, target.groupId);
+      if (ungrouped.hostViewId === null) {
+        instances = bindHostView(
+          instances,
+          ungrouped.viewInstanceId,
+          claimHostViewId(instances, target.hostViewId, ungrouped.viewInstanceId),
+        );
+      }
+    } else {
+      const requested = target.viewInstanceId ?? viewInstanceIdOf(target.groupId, target.docId);
+      const clash = instanceOf(instances, requested);
+      if (clash !== null && clash.docId !== target.docId) return null;
+      const registered = registerInstance(instances, {
+        viewInstanceId: requested,
+        docId: target.docId,
+        groupId: target.groupId,
+        hostViewId: claimHostViewId(instances, target.hostViewId),
+      });
+      instances = registered.instances;
+      viewInstanceId = registered.instance.viewInstanceId;
+    }
+  }
+
+  if (viewInstanceId === null) return null;
+  const viewGroups = target.activate
+    ? activateInstance(state.viewGroups, target.groupId, viewInstanceId, target.mode)
+    : linkInstance(state.viewGroups, target.groupId, viewInstanceId);
+  if (viewGroups === state.viewGroups && instances === state.viewInstances) return state;
+  return withDerivedUi({ ...state, viewGroups, viewInstances: instances });
+}
+
+/**
+ * 释放一批文档在**所有**组与实例表里的痕迹。
+ *
+ * `adoptDocId` 是旧版行为的保留：某个组因为这次释放一个实例都不剩时，让它的窗格
+ * 指向"还开着的第一个文档"，而不是留一个空白窗格。收养按组逐个进行，因此不会出现
+ * "右侧把左侧的视图搬过来"——那是另一条路径的事。
+ */
+function releaseDocs(
+  state: WorkspaceState,
+  docIds: readonly string[],
+  adoptDocId: string | null,
+): WorkspaceState {
+  const doomed = new Set(docIds);
+  if (doomed.size === 0) return state;
+
+  let viewGroups = state.viewGroups;
+  let viewInstances = state.viewInstances;
+  for (const docId of doomed) {
+    for (const instance of instancesOfDoc(viewInstances, docId)) {
+      viewInstances = removeViewInstance(viewInstances, instance.viewInstanceId);
+      viewGroups = removeInstance(viewGroups, instance.viewInstanceId);
+    }
+  }
+
+  let next = withDerivedUi({
+    ...state,
+    viewGroups,
+    viewInstances,
+    tabs: state.tabs.filter((tab) => !doomed.has(tab.docId)),
+  });
+  if (adoptDocId === null || doomed.has(adoptDocId)) return next;
+  if (!next.tabs.some((tab) => tab.docId === adoptDocId)) return next;
+
+  // 收养只发生在"因为这次释放而空掉"的组：可见组里没有活动实例的那些
+  for (const groupId of visibleGroupIds(next.layoutTree)) {
+    if (activeInstanceIdInGroup(next.viewGroups, groupId) !== null) continue;
+    const adopted = withInstanceInGroup(next, {
+      docId: adoptDocId,
+      groupId,
+      hostViewId: next.tabs.find((tab) => tab.docId === adoptDocId)?.viewId ?? null,
+      activate: true,
+    });
+    if (adopted !== null) next = adopted;
+  }
+  return next;
+}
+
+/** 关闭一个实例：只移除这一格；它若是该文档的最后一格，文档记录一并清理。 */
+function closeInstanceIn(state: WorkspaceState, viewInstanceId: string): WorkspaceState {
+  const instance = instanceOf(state.viewInstances, viewInstanceId);
+  if (instance === null) return state;
+  const viewInstances = removeViewInstance(state.viewInstances, viewInstanceId);
+  const viewGroups = removeInstance(state.viewGroups, viewInstanceId);
+  const stillReferenced = instancesOfDoc(viewInstances, instance.docId).length > 0;
+  const tabs = stillReferenced
+    ? state.tabs
+    : state.tabs.filter((tab) => tab.docId !== instance.docId);
+  return withDerivedUi({ ...state, viewGroups, viewInstances, tabs });
 }
 
 /** 进入 live 时自动展开一级目录，避免首屏全是收起状态。 */
@@ -395,12 +575,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         // 工作区身份属于"上一个工作区"：切模式后必须重新从 Host 取得
         workspaceKey: null,
         /*
-         * 视图组：**保留组身份**、清空文档引用、模式复位到默认。
+         * 视图组与实例：**保留组身份**、清空实例引用、模式复位到默认。
          *
          * 组身份属于布局结构（同一个 Pane 在下个模式里还要用它），不属于工作区；
-         * 标签引用属于旧工作区，必须清掉——否则新模式下会引用一批不存在的文档。
+         * 实例与文档属于旧工作区，必须整块清掉——否则新模式下会引用一批不存在的
+         * 会话，更会把旧 Host View 的身份留在状态里。
          */
-        viewGroups: clearAllTabs(state.viewGroups),
+        viewGroups: clearAllGroups(state.viewGroups),
+        viewInstances: {},
         notice:
           action.mode === 'live'
             ? '真实文件模式：读取本机测试项目（写入经 Core）'
@@ -423,19 +605,25 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case 'OPEN_TAB': {
       const existing = state.tabs.find((tab) => tab.docId === action.tab.docId);
-      const tabs = existing
-        ? state.tabs.map((tab) => (tab.docId === action.tab.docId ? { ...tab, ...action.tab } : tab))
-        : [...state.tabs, action.tab];
+      const tabs = upsertDoc(state.tabs, action.tab);
       /*
        * 归属：**当前焦点组**（不是 primary、也不是"当前窗格"）。
        * 单视图时焦点组必然是 primary；分屏时可能是 secondary——把文档塞进另一组
        * 会让用户看着右边、文档却出现在左边。
        */
-      const viewGroups = addTab(state.viewGroups, state.focusedGroupId, action.tab.docId);
+      const opened = withInstanceInGroup(
+        { ...state, tabs },
+        {
+          docId: action.tab.docId,
+          groupId: state.focusedGroupId,
+          // 这次打开自己建的那个 Host View；已存在实例时它不会被覆盖
+          hostViewId: action.tab.viewId,
+          activate: true,
+        },
+      );
+      if (opened === null) return state;
       return withDerivedUi({
-        ...state,
-        tabs,
-        viewGroups,
+        ...opened,
         selectedPath: action.tab.docId,
         notice: existing
           ? '已在标签中打开该文档'
@@ -444,20 +632,127 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     }
 
     /**
-     * 后台登记标签（G2-R2）：标签出现，但当前窗格、焦点与选中项都不动。
+     * 后台登记（G2-R2）：文档出现，但当前窗格、焦点与选中项都不动。
      * 用于"请求发出后用户已经切走"的迟到响应——不能覆盖用户的新选择。
      *
-     * 它**不建立任何组内引用**：后台标签只是"存在"，归属留给 SET_PANE_TAB 或
-     * 后续的组操作。否则一次迟到的后台打开就会悄悄改掉某个组的活动文档。
+     * B3：Host 已经为这次打开建了一个 View，**必须留一条记录**，否则那个 View
+     * 就成了无人认领的孤儿（会永久拦住该项目的改名/移动）。因此这里登记一个
+     * **未分组实例**：它属于这份文档、可以被关闭，但不属于任何组，也就不会被
+     * 显示成某个组的活动视图。
      */
     case 'OPEN_TAB_BACKGROUND': {
-      if (state.tabs.some((tab) => tab.docId === action.tab.docId)) return state;
+      const known = state.tabs.some((tab) => tab.docId === action.tab.docId);
+      const tabs = known ? state.tabs : [...state.tabs, action.tab];
+      if (instancesOfDoc(state.viewInstances, action.tab.docId).length > 0) {
+        return known ? state : { ...state, tabs };
+      }
+      const claimed = claimHostViewId(state.viewInstances, action.tab.viewId);
+      const registered = registerInstance(state.viewInstances, {
+        viewInstanceId: viewInstanceIdOf(null, action.tab.docId),
+        docId: action.tab.docId,
+        groupId: null,
+        hostViewId: claimed,
+      });
       return {
         ...state,
-        tabs: [...state.tabs, action.tab],
+        tabs,
+        viewInstances: registered.instances,
         notice: `已在后台打开：${action.tab.title}（未切换当前文档）`,
       };
     }
+
+    /** 打开一个视图实例：登记文档 + 建实例 + 放进组（可选激活）。 */
+    case 'OPEN_VIEW_INSTANCE': {
+      const tabs = upsertDoc(state.tabs, action.tab);
+      const opened = withInstanceInGroup(
+        { ...state, tabs },
+        {
+          docId: action.tab.docId,
+          groupId: action.groupId,
+          hostViewId: action.hostViewId,
+          viewInstanceId: action.viewInstanceId,
+          activate: action.activate !== false,
+        },
+      );
+      if (opened === null) return state;
+      return { ...opened, selectedPath: action.tab.docId };
+    }
+
+    /**
+     * 后台登记实例：记录下来，但**绝不改任何组的活动实例**。
+     *
+     * 目标组仍会被记录（用户当初就是往那一组打开的），只是不抢显示；
+     * `groupId: null` 表示连组都不进。
+     */
+    case 'OPEN_VIEW_INSTANCE_BACKGROUND': {
+      const known = state.tabs.some((tab) => tab.docId === action.tab.docId);
+      const tabs = known ? state.tabs : [...state.tabs, action.tab];
+      if (instanceFor(state.viewInstances, action.groupId, action.tab.docId) !== null) {
+        return known ? state : { ...state, tabs };
+      }
+      const registered = registerInstance(state.viewInstances, {
+        viewInstanceId: action.viewInstanceId,
+        docId: action.tab.docId,
+        groupId: action.groupId,
+        hostViewId: claimHostViewId(state.viewInstances, action.hostViewId),
+      });
+      const viewGroups =
+        action.groupId === null
+          ? state.viewGroups
+          : linkInstance(state.viewGroups, action.groupId, registered.instance.viewInstanceId);
+      return withDerivedUi({
+        ...state,
+        tabs,
+        viewInstances: registered.instances,
+        viewGroups,
+        notice: `已在后台打开：${action.tab.title}（未切换当前文档）`,
+      });
+    }
+
+    /**
+     * 只登记实例，不动文档记录。
+     *
+     * 同一份文档开第二格时用它：Host 会给新的 viewId，但缓冲 / 会话 / 版本仍然是
+     * 那一条——把整条文档记录覆盖成响应快照，正是"第二个视图的旧响应覆盖第一个
+     * 视图草稿"的入口。
+     */
+    case 'REGISTER_VIEW_INSTANCE': {
+      if (!state.tabs.some((tab) => tab.docId === action.docId)) return state;
+      /*
+       * `groupId: null` 是**显式**的"未分组"，不是"没指定"：
+       * 归属核验失败的第二个 Host View 会走这条路（记录在案但不进任何窗格）。
+       */
+      if (action.groupId === null) {
+        if (instanceFor(state.viewInstances, null, action.docId) !== null) return state;
+        const registered = registerInstance(state.viewInstances, {
+          viewInstanceId: action.viewInstanceId,
+          docId: action.docId,
+          groupId: null,
+          hostViewId: claimHostViewId(state.viewInstances, action.hostViewId),
+        });
+        if (registered.instances === state.viewInstances) return state;
+        return withDerivedUi({ ...state, viewInstances: registered.instances });
+      }
+      const opened = withInstanceInGroup(state, {
+        docId: action.docId,
+        groupId: action.groupId,
+        hostViewId: action.hostViewId,
+        viewInstanceId: action.viewInstanceId,
+        activate: action.activate !== false,
+      });
+      return opened ?? state;
+    }
+
+    case 'ACTIVATE_VIEW_INSTANCE': {
+      const instance = instanceOf(state.viewInstances, action.viewInstanceId);
+      if (instance === null || instance.groupId === null) return state;
+      const viewGroups = activateInstance(state.viewGroups, instance.groupId, action.viewInstanceId);
+      if (viewGroups === state.viewGroups) return state;
+      return withDerivedUi({ ...state, viewGroups });
+    }
+
+    case 'CLOSE_VIEW_INSTANCE':
+      return closeInstanceIn(state, action.viewInstanceId);
 
     case 'TAB_PATCH':
       return {
@@ -468,25 +763,29 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     case 'ACTIVATE_TAB': {
-      // 只允许激活真实存在的文档：让活动文档指向一个不存在的标签就是状态损坏
-      if (!state.tabs.some((tab) => tab.docId === action.docId)) return state;
-      const viewGroups = activateTab(state.viewGroups, state.focusedGroupId, action.docId);
-      if (viewGroups === state.viewGroups) return state;
-      return withDerivedUi({ ...state, viewGroups });
+      // 只允许激活真实存在的文档：让活动实例指向一个不存在的文档就是状态损坏
+      const tab = state.tabs.find((item) => item.docId === action.docId);
+      if (!tab) return state;
+      const opened = withInstanceInGroup(state, {
+        docId: action.docId,
+        groupId: state.focusedGroupId,
+        hostViewId: tab.viewId,
+        activate: true,
+      });
+      return opened === null || opened === state ? state : opened;
     }
 
     case 'CLOSE_TAB': {
+      if (!state.tabs.some((tab) => tab.docId === action.docId)) return state;
       const index = state.tabs.findIndex((tab) => tab.docId === action.docId);
-      if (index < 0) return state;
       const remaining = state.tabs.filter((tab) => tab.docId !== action.docId);
       /*
-       * 从**所有**组里清理这个引用（不只看焦点组）。
-       *
-       * 组内活动文档被关掉时按组内顺序选替代项；若某个组因此一个引用都不剩，
+       * 关闭标签 = 关闭这份文档在**所有**组里的实例（全局标签栏的语义）。
+       * 组内活动实例被清掉时按组内顺序选替代项；若某个组因此一个实例都不剩，
        * 沿用旧版行为接管"还开着的第一个标签"，避免留下一个空白窗格。
        */
-      const viewGroups = removeDoc(state.viewGroups, action.docId, remaining[0]?.docId ?? null);
-      return withDerivedUi({ ...state, tabs: remaining, viewGroups, notice: '已关闭标签' });
+      const next = releaseDocs(state, [action.docId], remaining[index]?.docId ?? remaining[0]?.docId ?? null);
+      return { ...next, notice: '已关闭标签' };
     }
 
     case 'SAVE_RESULT':
@@ -552,25 +851,39 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       if (tree === null) return state;
 
       /*
-       * 分屏前把两个组都补齐，并沿用旧版的 anchor 行为：某一边还没有活动文档时，
+       * 分屏前把两个组都补齐，并沿用旧版的 anchor 行为：某一边还没有活动实例时，
        * 退到 primary 当前的文档、再退到第一个标签。**不重置模式**——用户上次把右侧
        * 切成源码视图，这次分屏应该还是源码（休眠组的意义就在这里）。
+       *
+       * 右侧实例的 `hostViewId` 由 `withInstanceInGroup` 去重：锚点文档已经在左侧
+       * 有一个 Host View 时，右侧不会复制同一个 viewId（那是"关一格死两格"）。
+       * 真正属于右侧的第二个 Host View 由 `DocumentActions` 在需要时异步创建。
        */
       const anchor =
-        groupOf(state.viewGroups, PRIMARY_GROUP)?.activeDocId ?? state.tabs[0]?.docId ?? null;
-      let viewGroups = ensureGroups(state.viewGroups, [PRIMARY_GROUP, SECONDARY_GROUP]);
-      for (const groupId of [PRIMARY_GROUP, SECONDARY_GROUP]) {
-        if (groupOf(viewGroups, groupId)?.activeDocId == null && anchor !== null) {
-          viewGroups = activateTab(viewGroups, groupId, anchor);
-        }
-      }
-      return withDerivedUi({
+        activeDocIdInGroup(state.viewGroups, state.viewInstances, PRIMARY_GROUP) ??
+        state.tabs[0]?.docId ??
+        null;
+      const next = ensureGroups(state.viewGroups, [PRIMARY_GROUP, SECONDARY_GROUP]);
+      let nextState: WorkspaceState = withDerivedUi({
         ...state,
         layoutTree: tree,
-        viewGroups,
+        viewGroups: next,
         focusedGroupId: PRIMARY_GROUP,
-        notice: '左右分屏：左侧源码 / 右侧预览',
       });
+      if (anchor !== null) {
+        const anchorTab = state.tabs.find((tab) => tab.docId === anchor) ?? null;
+        for (const groupId of [PRIMARY_GROUP, SECONDARY_GROUP]) {
+          if (activeInstanceIdInGroup(nextState.viewGroups, groupId) !== null) continue;
+          const opened = withInstanceInGroup(nextState, {
+            docId: anchor,
+            groupId,
+            hostViewId: anchorTab?.viewId ?? null,
+            activate: true,
+          });
+          if (opened !== null) nextState = opened;
+        }
+      }
+      return withDerivedUi({ ...nextState, notice: '左右分屏：左侧源码 / 右侧预览' });
     }
 
     case 'SET_SPLIT_RATIO': {
@@ -692,15 +1005,29 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case 'SET_PANE_TAB': {
       const groupId = legacyGroupIdOf(action.pane);
       if (!action.docId) {
-        const viewGroups = setActiveDoc(state.viewGroups, groupId, null);
+        const viewGroups = setActiveInstance(state.viewGroups, groupId, null);
         if (viewGroups === state.viewGroups) return state;
         return withDerivedUi({ ...state, viewGroups });
       }
-      // 只允许指向真实存在的标签：恢复不能让窗格指向一个不存在的文档
-      if (!state.tabs.some((tab) => tab.docId === action.docId)) return state;
-      const viewGroups = activateTab(state.viewGroups, groupId, action.docId, action.mode);
-      if (viewGroups === state.viewGroups) return state;
-      return withDerivedUi({ ...state, viewGroups });
+      // 只允许指向真实存在的文档：恢复不能让窗格指向一个不存在的文档
+      const tab = state.tabs.find((item) => item.docId === action.docId);
+      if (!tab) return state;
+      /*
+       * 恢复的主要入口：把一个**已经打开**的文档放进某个窗格。
+       *
+       * 它的实例可能还不存在（V1 只记了"哪个窗格看哪个标签"）——那就建一个，
+       * `hostViewId` 用这条文档记录上那个（恢复时刚打开、Host 认可的 View）。
+       * 如果这份文档已经在本组有实例（恢复重跑），只补空值、不重建。
+       */
+      return (
+        withInstanceInGroup(state, {
+          docId: action.docId,
+          groupId,
+          hostViewId: tab.viewId,
+          activate: true,
+          mode: action.mode,
+        }) ?? state
+      );
     }
 
     case 'SET_PROJECTS': {
@@ -757,32 +1084,23 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
       const fallback = projects.find((project) => project.status === 'READY')?.projectId ?? null;
       /**
-       * 被移除项目的标签必须一起收掉（R1-03）。
+       * 被移除项目的文档与实例必须一起收掉（R1-03 / B3）。
        *
        * 否则下一次自动保存会把"已不存在项目的标签"写进新摘要的记录里：下次启动
-       * 逐个重开时必然失败，用户会看到一批打不开的标签。其它项目的标签、
+       * 逐个重开时必然失败，用户会看到一批打不开的标签。其它项目的文档、
        * 草稿与选中状态**原样保留**——这里只按 `projectId` 精确过滤。
        */
-      const tabs = state.tabs.filter((tab) => tab.projectId !== removed);
+      const doomed = state.tabs.filter((tab) => tab.projectId === removed).map((tab) => tab.docId);
+      const survivors = state.tabs.filter((tab) => tab.projectId !== removed);
       /*
-       * 视图组：从**所有**组里摘掉被移除项目的文档引用，并按组内顺序补上替代项。
-       *
-       * 旧版是"窗格指向还开着的第一个标签"，这里保留同样的兜底（`adopt`），
-       * 但只作用于"因为这次移除一个引用都不剩"的组——不会顺手改掉别的组的活动文档。
+       * 实例：被移除项目的每一格都要消失（不能留下指向已删文档的实例），
+       * 并按组内顺序补替代项。旧版是"窗格指向还开着的第一个标签"，这里保留同样的
+       * 兜底，但只作用于"因为这次移除一个实例都不剩"的组。
        */
-      let viewGroups = state.viewGroups;
-      if (tabs.length !== state.tabs.length) {
-        const adopt = tabs[0]?.docId ?? null;
-        for (const tab of state.tabs) {
-          if (tab.projectId !== removed) continue;
-          viewGroups = removeDoc(viewGroups, tab.docId, adopt);
-        }
-      }
-      return withDerivedUi({
-        ...state,
+      const released = releaseDocs(state, doomed, survivors[0]?.docId ?? null);
+      return {
+        ...released,
         projects,
-        tabs,
-        viewGroups,
         activeProjectId:
           state.activeProjectId === removed ? fallback : state.activeProjectId,
         resourcesByProject: drop(state.resourcesByProject),
@@ -793,7 +1111,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         // 项目已移出工作台：回收区入口不再存在，视图状态一并丢弃。
         // 磁盘上的记录与文件仍由 Host 保留（撤销不删除任何东西）。
         trashByProject: drop(state.trashByProject),
-      });
+      };
     }
 
     case 'SET_PROJECT_RESOURCES': {

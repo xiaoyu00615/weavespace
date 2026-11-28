@@ -22,7 +22,8 @@ import {
   makeDocId,
 } from './doc-identity.ts';
 import type { DocTab, ResourceNodeState, WorkspaceAction, WorkspaceState } from './types.ts';
-import { groupOf } from './workspace-view-groups.ts';
+import { activeInstanceIdInGroup, visibleGroupIds } from './workspace-view-groups.ts';
+import { instanceFor, viewInstanceIdOf } from './workspace-view-instances.ts';
 
 /** 本地编辑代次：纯 UI 计数，用来识别"读取请求期间用户又敲了字"。 */
 export interface EditEpochs {
@@ -127,7 +128,7 @@ export interface OpenTabsRefreshReport {
 }
 
 export interface OpenNodeOptions {
-  /** true：只登记标签（后台），不激活、不刷新既有标签。 */
+  /** true：只登记（后台），不激活、不改任何组的显示。 */
   background?: boolean;
   /**
    * true：这是**页面恢复**（刷新/重开后重建标签），允许 Host 回收本页面上一轮
@@ -137,6 +138,13 @@ export interface OpenNodeOptions {
    * 它们必须保留当前标签正在使用的 View。
    */
   reclaimPage?: boolean;
+  /**
+   * 这次打开要落进哪一组（UI-F03-B3）。
+   *
+   * 缺省 = 调用时的 `focusedGroupId`。给出时必须是一个**可见组**，否则退回焦点组：
+   * 往休眠组里打开等于把文档扔进用户看不见的窗格。
+   */
+  targetGroupId?: string;
 }
 
 /** 打开结果：恢复流程需要"成功了没有、是哪个 docId"，普通调用方可以忽略。 */
@@ -173,27 +181,26 @@ export function tabFromSnapshot(
 }
 
 /**
- * 用户"正在看什么"的快照（G2-R2 / UI-F03-B2）。
+ * 用户"正在看什么"的快照（G2-R2 / UI-F03-B2 / B3）。
  *
- * 只有项目、**焦点组**、该组的活动文档三者都没变，才说明用户仍然期望把新打开的
- * 文档设为当前文档；任何一项变了，迟到的响应就只能后台登记标签。
+ * 只有项目、**目标组**、该组当前**活动视图实例**三者都没变，才说明用户仍然期望把
+ * 新打开的文档设为当前显示；任何一项变了，迟到的响应就只能后台登记。
  *
- * 为什么用组而不是窗格：`panes` 从 B2 起只是投影。用 `focusedPane` 判归属会把
- * "primary 与 secondary 都叫 pane" 当成身份，将来多组布局里就会张冠李戴；
- * `groupId` 才是视图组的真实身份，跨组抢焦点在它面前一眼可辨。
+ * 为什么是实例而不是文档：B3 起同一份文档可以在两个组里各有一格。用 `docId` 判归属，
+ * "左右两格看着同一份文档"就会被误判成"用户没动过"，迟到的响应于是能把显示抢回去；
+ * `viewInstanceId` 才能分辨"用户换了哪一格"。
  */
 interface FocusSnapshot {
   projectId: string | null;
   groupId: string;
-  docId: string | null;
+  viewInstanceId: string | null;
 }
 
-function captureFocus(state: WorkspaceState): FocusSnapshot {
-  const groupId = state.focusedGroupId;
+function captureFocus(state: WorkspaceState, groupId: string): FocusSnapshot {
   return {
     projectId: state.activeProjectId,
     groupId,
-    docId: groupOf(state.viewGroups, groupId)?.activeDocId ?? null,
+    viewInstanceId: activeInstanceIdInGroup(state.viewGroups, groupId),
   };
 }
 
@@ -201,7 +208,7 @@ function canActivate(focus: FocusSnapshot, state: WorkspaceState): boolean {
   if (state.activeProjectId !== focus.projectId) return false;
   // 组身份不同就是"用户已经切到别的窗格"：迟到响应绝不能把文档塞进新组
   if (state.focusedGroupId !== focus.groupId) return false;
-  return (groupOf(state.viewGroups, state.focusedGroupId)?.activeDocId ?? null) === focus.docId;
+  return activeInstanceIdInGroup(state.viewGroups, state.focusedGroupId) === focus.viewInstanceId;
 }
 
 /** 单个标签刷新的结果；`skipped` 表示"这次不该动它"（有草稿 / 已在刷新 / 已关闭）。 */
@@ -482,10 +489,18 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
     background: boolean,
     /** true 仅表示"这是页面恢复"，允许 Host 回收本页上一轮旧 View。 */
     reclaimPage: boolean,
+    /**
+     * 这次打开要落进哪一组（B3）。
+     *
+     * 必须是**调用时**捕获的组，而不是响应回来后的 `focusedGroupId`：用户在请求
+     * 期间切了窗格，迟到的响应只能回到发起时那一组，绝不能抢新组的显示。
+     * `null` = 纯后台（连组都不进，只作未分组实例登记）。
+     */
+    targetGroupId: string | null,
   ): Promise<OpenNodeResult> {
     const client = deps.clientFor(mode);
     const before = deps.getState();
-    const focus = captureFocus(before);
+    const focus = captureFocus(before, targetGroupId ?? before.focusedGroupId);
     const reclaim = shouldReclaim(reclaimPage, deps.isRestoring?.() === true);
     deps.dispatch({ type: 'NOTICE', message: `正在打开 ${node.name} …` });
 
@@ -521,9 +536,32 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
       return { ok: false, docId, errorCode: outcome.errorCode ?? null };
     }
 
-    // 打开期间标签已被别的入口创建：不新建标签，并释放本次多出来的 View
+    // 打开期间标签已被别的入口创建：本次响应是**第二个** Host View，不是多余的那个
     const raced = tabOf(docId);
     if (raced) {
+      /*
+       * B3：同一份文档向**不同组**并发打开时，两次 open 会各自拿到一个 Host View，
+       * 而文档记录只有一条。这里的响应属于"第二格"，必须留下来，不能当成多余 View
+       * 释放掉——否则那一格永远没有自己的 Host View（"两个 Pane 指向同一 docId"
+       * 的经典缺口）。
+       *
+       * 只有当发起组**已经有**这一份文档的实例时才释放：那种情况下这次响应是重复的。
+       */
+      const targetInstance =
+        targetGroupId === null
+          ? null
+          : instanceFor(deps.getState().viewInstances, targetGroupId, docId);
+      if (targetGroupId !== null && targetInstance === null) {
+        deps.dispatch({
+          type: 'REGISTER_VIEW_INSTANCE',
+          docId,
+          groupId: targetGroupId,
+          viewInstanceId: viewInstanceIdOf(targetGroupId, docId),
+          hostViewId: outcome.document.viewId,
+          activate: !background && canActivate(focus, deps.getState()),
+        });
+        return { ok: true, docId, reopened: true, dirty: raced.dirty };
+      }
       await releaseView(
         client,
         outcome.document.sessionId,
@@ -544,18 +582,40 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
       outcome.document,
     );
 
-    // 用户在这期间换了项目 / 窗格 / 活动文档：只后台登记标签，绝不改动当前焦点
-    // （G2-R2）。这同时覆盖"旧实现把焦点还原成发起时那个文档"的错误行为。
-    // 恢复流程（S11-C）则无条件走后台：它不是用户点击，没有"期望激活"可言。
-    if (!background && canActivate(focus, deps.getState())) {
-      deps.dispatch({ type: 'OPEN_TAB', tab });
+    /*
+     * 视图实例的身份在**发起时**就已经确定：它是"这次打开要落进哪一格"，
+     * 而不是"响应回来时界面变成什么样"。
+     */
+    const viewInstanceId = viewInstanceIdOf(targetGroupId, docId);
+    /*
+     * 用户在这期间换了项目 / 窗格 / 活动实例：只后台登记，绝不改动当前显示
+     * （G2-R2）。恢复流程（S11-C）则无条件走后台：它不是用户点击。
+     *
+     * B3 的差别：后台登记**仍然留下实例记录**（Host 那个 View 必须有人认领），
+     * 并按发起时的目标组挂进去——只是不激活，所以它不会显示出来，也不会抢焦点。
+     */
+    if (!background && targetGroupId !== null && canActivate(focus, deps.getState())) {
+      deps.dispatch({
+        type: 'OPEN_VIEW_INSTANCE',
+        tab,
+        groupId: targetGroupId,
+        viewInstanceId,
+        hostViewId: outcome.document.viewId,
+        activate: true,
+      });
     } else {
-      deps.dispatch({ type: 'OPEN_TAB_BACKGROUND', tab });
+      deps.dispatch({
+        type: 'OPEN_VIEW_INSTANCE_BACKGROUND',
+        tab,
+        groupId: targetGroupId,
+        viewInstanceId,
+        hostViewId: outcome.document.viewId,
+      });
     }
     if (projectId) {
       deps.dispatch({ type: 'SELECT_PROJECT_NODE', projectId, path: docId });
     }
-    // 放在 OPEN_TAB 之后：OPEN_TAB 会写"已打开"提示，不能让刷新提示被覆盖
+    // 放在打开之后：打开动作会写"已打开"提示，不能让刷新提示被覆盖
     if (outcome.reloaded) {
       deps.dispatch({
         type: 'NOTICE',
@@ -592,6 +652,31 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
 
       const path = node.path ?? node.id;
       const docId = makeDocId(targetProject, path);
+      /*
+       * 目标组在**这里**（同步段）定下来，之后整个异步流程都只认它。
+       *
+       * 只接受可见组：往休眠组里打开，用户看不见却以为打开了。缺省 = 当前焦点组。
+       */
+      const requested = options?.targetGroupId;
+      const visible = visibleGroupIds(deps.getState().layoutTree);
+      const fallbackGroupId = deps.getState().focusedGroupId ?? visible[0] ?? null;
+      /*
+       * 三条来源，优先级明确：
+       * 1. 显式 `targetGroupId`（且必须是可见组）——多窗格打开与"第二格"用它；
+       * 2. **后台**打开且没指定组 → 不分组（`null`）。
+       *    恢复流程走这条路：它只是把文件重新打开一遍，用户还没说它显示在哪一格；
+       *    直接塞进焦点组会让一屏之外的文档也变成"可见窗格的内容"，并且多建一个
+       *    Host View（`applyPanes` 随后还要再收养一次）。
+       * 3. 其余（用户点击打开）→ 当前焦点组。
+       */
+      const targetGroupId =
+        requested !== undefined
+          ? visible.includes(requested)
+            ? requested
+            : fallbackGroupId
+          : background
+            ? null
+            : fallbackGroupId;
 
       if (tabOf(docId)) {
         const existing = tabOf(docId) as DocTab;
@@ -599,18 +684,37 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         if (background) {
           return { ok: true, docId, reopened: true, dirty: existing.dirty };
         }
-        deps.dispatch({ type: 'ACTIVATE_TAB', docId });
+        /*
+         * 文档已经开着：把**这一组**切到它上面。
+         *
+         * 如果这一组还没有它的实例，reducer 会建一个（hostViewId 用文档记录上那个，
+         * 若已被别的组占用则为 null）。真正的第二格 Host View 由
+         * `view-instance-actions.openInGroup` 异步建立。
+         */
+        deps.dispatch({
+          type: 'REGISTER_VIEW_INSTANCE',
+          docId,
+          groupId: targetGroupId,
+          viewInstanceId: viewInstanceIdOf(targetGroupId, docId),
+          hostViewId: existing.viewId,
+          activate: true,
+        });
         await refreshCleanTab(docId);
         return { ok: true, docId, reopened: true, dirty: existing.dirty };
       }
 
       const mode = deps.getMode();
-      const key = `${mode}::${docId}`;
+      /*
+       * 单飞键带上目标组（B3）：同一份文档向**不同组**打开是两件不同的事
+       * （要两个 ViewInstance / 两个 Host View），合并它们会让第二格拿不到视图；
+       * 同一组内的重复请求仍然合并，不会各自在服务端造一个 View。
+       */
+      const key = `${mode}::${docId}::${targetGroupId ?? 'none'}`;
       const running = inFlight.get(key);
       if (running) {
         // 合并在途请求：等它结束后最多只做激活，不再发第二个 open（否则必然多一个 View）。
         // 等待期间用户可能已经切走，因此这里**同样**要按焦点快照判断（G2-R2）。
-        const waitingFocus = captureFocus(deps.getState());
+        const waitingFocus = captureFocus(deps.getState(), targetGroupId ?? deps.getState().focusedGroupId);
         await running.catch(() => undefined);
         const merged = tabOf(docId);
         if (merged && !background && canActivate(waitingFocus, deps.getState())) {
@@ -629,6 +733,7 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         mode,
         background,
         options?.reclaimPage === true,
+        targetGroupId,
       ).finally(() => {
         if (inFlight.get(key) === task) inFlight.delete(key);
       });
@@ -664,10 +769,22 @@ export function createDocumentOpener(deps: OpenDocumentDeps): DocumentOpener {
         await Promise.all(
           [...inFlight.values()].map((task) => task.catch(() => undefined)),
         );
-        const keep = deps
-          .getState()
-          .tabs.map((tab) => tab.viewId)
-          .filter((viewId): viewId is string => typeof viewId === 'string' && viewId !== '');
+        /*
+         * keep 列表必须是**全部实例**的 Host View，而不是"每条文档一个"：
+         * B3 起同一份文档可以有两格视图，只保留其中一个会让回收把另一格关掉。
+         * 文档记录的 `viewId` 也一并保留（它是某个实例的值，写在这里是冗余保险）。
+         */
+        const state = deps.getState();
+        const keep = [
+          ...new Set([
+            ...Object.values(state.viewInstances)
+              .map((instance) => instance.hostViewId)
+              .filter((viewId): viewId is string => typeof viewId === 'string' && viewId !== ''),
+            ...state.tabs
+              .map((tab) => tab.viewId)
+              .filter((viewId): viewId is string => typeof viewId === 'string' && viewId !== ''),
+          ]),
+        ];
 
         // 按项目分组：Host 的 resourceId 是按 projectId 派生的（Legacy 没有项目）
         const groups = new Map<string | null, string[]>();

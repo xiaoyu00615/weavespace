@@ -22,10 +22,12 @@ import { test } from 'node:test';
 import { listPanes, validateLayoutTree } from '../../apps/shell/src/state/layout-tree.ts';
 import { INITIAL_STATE, workspaceReducer } from '../../apps/shell/src/state/workspace-reducer.ts';
 import {
+  activeDocIdInGroup,
+  docIdsInGroup,
   viewGroupProblems,
   visibleGroupIds,
-  type ViewGroups,
 } from '../../apps/shell/src/state/workspace-view-groups.ts';
+import { viewInstanceProblems } from '../../apps/shell/src/state/workspace-view-instances.ts';
 import type { DocTab, WorkspaceState } from '../../apps/shell/src/state/types.ts';
 import {
   MemoryStorage,
@@ -85,6 +87,19 @@ const unsplit = (state: WorkspaceState): WorkspaceState =>
 
 const group = (state: WorkspaceState, groupId: string) => state.viewGroups[groupId];
 
+/**
+ * 组内的文档（按组内顺序）。
+ *
+ * B3 起组里存的是**视图实例**身份（同一份文档可以在两个组里各有一格），
+ * 因此断言"组里有哪些文档"必须经过实例表解析，不能直接读组字段。
+ */
+const docsIn = (state: WorkspaceState, groupId: string): readonly string[] =>
+  docIdsInGroup(state.viewGroups, state.viewInstances, groupId);
+
+/** 组的活动文档（同样经过实例解析）。 */
+const activeDocIn = (state: WorkspaceState, groupId: string): string | null =>
+  activeDocIdInGroup(state.viewGroups, state.viewInstances, groupId);
+
 /** 三个标签都开在 primary，并进入分屏（secondary 也指向 a）。 */
 function splitWithThreeTabs(): WorkspaceState {
   let state = liveState();
@@ -99,7 +114,12 @@ function splitWithThreeTabs(): WorkspaceState {
  */
 function assertConsistent(state: WorkspaceState, label: string): void {
   const docIds = new Set(state.tabs.map((item) => item.docId));
-  assert.deepEqual(viewGroupProblems(state.viewGroups, docIds), [], `${label}：组状态不变量`);
+  assert.deepEqual(
+    viewGroupProblems(state.viewGroups, state.viewInstances, docIds),
+    [],
+    `${label}：组与实例的引用一致`,
+  );
+  assert.deepEqual(viewInstanceProblems(state.viewInstances, docIds), [], `${label}：实例不变量`);
 
   const primary = state.viewGroups[PRIMARY];
   const secondary = state.viewGroups[SECONDARY];
@@ -107,9 +127,9 @@ function assertConsistent(state: WorkspaceState, label: string): void {
   assert.ok(secondary, `${label}：secondary 组必须一直存在（休眠也要保留）`);
 
   // 投影 = 组状态，不允许任何一处自己漂移
-  assert.equal(state.panes.primary.docId, primary.activeDocId, `${label}：primary 投影的文档`);
+  assert.equal(state.panes.primary.docId, activeDocIn(state, PRIMARY), `${label}：primary 投影的文档`);
   assert.equal(state.panes.primary.mode, primary.mode, `${label}：primary 投影的模式`);
-  assert.equal(state.panes.secondary.docId, secondary.activeDocId, `${label}：secondary 投影的文档`);
+  assert.equal(state.panes.secondary.docId, activeDocIn(state, SECONDARY), `${label}：secondary 投影的文档`);
   assert.equal(state.panes.secondary.mode, secondary.mode, `${label}：secondary 投影的模式`);
 
   const visible = visibleGroupIds(state.layoutTree);
@@ -144,8 +164,8 @@ test('B2-A01 初始状态：两个组都存在，primary 可见、secondary 休�
 
   assert.equal(state.viewGroups[PRIMARY].mode, 'editor', 'primary 默认源码');
   assert.equal(state.viewGroups[SECONDARY].mode, 'preview', 'secondary 默认预览');
-  assert.deepEqual(state.viewGroups[PRIMARY].tabDocIds, [], '初始没有标签');
-  assert.equal(state.viewGroups[PRIMARY].activeDocId, null);
+  assert.deepEqual(docsIn(state, PRIMARY), [], '初始没有标签');
+  assert.equal(activeDocIn(state, PRIMARY), null);
 
   assert.deepEqual(visibleGroupIds(state.layoutTree), [PRIMARY], '单视图只有 primary 可见');
   assert.equal(state.focusedGroupId, PRIMARY, '初始焦点在 primary');
@@ -161,8 +181,8 @@ test('B2-A02 休眠组可以保留：合并后 secondary 仍在，标签与模�
   const merged = unsplit(state);
   assert.deepEqual(visibleGroupIds(merged.layoutTree), [PRIMARY], '单视图只剩 primary 可见');
   assert.equal(merged.viewGroups[SECONDARY], before, '休眠组必须原样保留（同一引用）');
-  assert.deepEqual(merged.viewGroups[SECONDARY].tabDocIds, ['c', 'b'], '标签引用保留');
-  assert.equal(merged.viewGroups[SECONDARY].activeDocId, 'b', '活动文档保留');
+  assert.deepEqual(docsIn(merged, SECONDARY), ['c', 'b'], '组内实例保留');
+  assert.equal(activeDocIn(merged, SECONDARY), 'b', '活动文档保留');
   assert.equal(merged.viewGroups[SECONDARY].mode, 'editor', '模式保留');
   assertConsistent(merged, '合并后');
 });
@@ -189,10 +209,10 @@ test('B2-B01 OPEN_TAB 归属焦点组：分屏后打开落在右组，左组不�
   const primaryBefore = group(state, PRIMARY);
 
   const opened = open(state, 'd');
-  assert.equal(group(opened, SECONDARY).activeDocId, 'd', '新文档进入焦点组');
-  assert.deepEqual(group(opened, SECONDARY).tabDocIds, ['c', 'd'], '焦点组引用被建立');
+  assert.equal(activeDocIn(opened, SECONDARY), 'd', '新文档进入焦点组');
+  assert.deepEqual(docsIn(opened, SECONDARY), ['c', 'd'], '焦点组引用被建立');
   assert.equal(group(opened, PRIMARY), primaryBefore, '非焦点组必须保持同一引用');
-  assert.equal(group(opened, PRIMARY).activeDocId, 'c', '非焦点组的活动文档不变');
+  assert.equal(activeDocIn(opened, PRIMARY), 'c', '非焦点组的活动文档不变');
   assertConsistent(opened, '焦点在右组时打开');
 });
 
@@ -203,8 +223,8 @@ test('B2-B02 OPEN_TAB 在单视图下归属 primary（焦点组就是 primary）
   assert.equal(state.focusedGroupId, PRIMARY);
 
   const opened = open(state, 'b');
-  assert.deepEqual(group(opened, PRIMARY).tabDocIds, ['a', 'b']);
-  assert.deepEqual(group(opened, SECONDARY).tabDocIds, [], '休眠组不得被自动塞入标签');
+  assert.deepEqual(docsIn(opened, PRIMARY), ['a', 'b']);
+  assert.deepEqual(docsIn(opened, SECONDARY), [], '休眠组不得被自动塞入标签');
   assertConsistent(opened, '单视图打开');
 });
 
@@ -228,17 +248,17 @@ test('B2-B04 ACTIVATE_TAB 只改目标组，其他组活动文档不受影响', 
   const secondaryBefore = group(state, SECONDARY);
 
   const activated = workspaceReducer(state, { type: 'ACTIVATE_TAB', docId: 'a' });
-  assert.equal(group(activated, PRIMARY).activeDocId, 'a', '焦点组切到 a');
+  assert.equal(activeDocIn(activated, PRIMARY), 'a', '焦点组切到 a');
   assert.equal(group(activated, SECONDARY), secondaryBefore, '右组必须保持同一引用');
-  assert.equal(group(activated, SECONDARY).activeDocId, 'a', '右组本来就看着 a，不因此改变');
+  assert.equal(activeDocIn(activated, SECONDARY), 'a', '右组本来就看着 a，不因此改变');
   assertConsistent(activated, '激活后');
 
   // 焦点在右侧时激活 b：只改右侧
   let other = workspaceReducer(activated, { type: 'FOCUS_GROUP', groupId: SECONDARY });
   const primaryBefore = group(other, PRIMARY);
   other = workspaceReducer(other, { type: 'ACTIVATE_TAB', docId: 'b' });
-  assert.equal(group(other, SECONDARY).activeDocId, 'b');
-  assert.deepEqual(group(other, SECONDARY).tabDocIds, ['c', 'a', 'b'], '激活会建立组内引用');
+  assert.equal(activeDocIn(other, SECONDARY), 'b');
+  assert.deepEqual(docsIn(other, SECONDARY), ['c', 'a', 'b'], '激活会建立组内引用');
   assert.equal(group(other, PRIMARY), primaryBefore, '左组保持不变');
   assertConsistent(other, '在右组激活后');
 });
@@ -249,8 +269,8 @@ test('B2-B05 同一 docId 可以被两个组引用，但文档本体只有一份
   const tabsBefore = state.tabs;
   state = workspaceReducer(state, { type: 'SET_PANE_TAB', pane: 'secondary', docId: 'b' });
 
-  assert.ok(group(state, PRIMARY).tabDocIds.includes('b'));
-  assert.ok(group(state, SECONDARY).tabDocIds.includes('b'), '两个组可以同时引用同一文档');
+  assert.ok(docsIn(state, PRIMARY).includes('b'));
+  assert.ok(docsIn(state, SECONDARY).includes('b'), '两个组可以同时引用同一文档');
   assert.equal(state.tabs, tabsBefore, '不得为第二个引用复制 DocTab');
   assert.equal(state.tabs.filter((item) => item.docId === 'b').length, 1, '全局只有一份');
   assertConsistent(state, '双组共享文档');
@@ -269,14 +289,14 @@ test('B2-B06 CLOSE_TAB 清理所有组的引用，并按组内顺序选替代项
   );
   for (const groupState of Object.values(closed.viewGroups)) {
     assert.equal(
-      groupState.tabDocIds.includes('b'),
+      docsIn(closed, groupState.groupId).includes('b'),
       false,
       `${groupState.groupId} 不得残留已关闭文档的引用`,
     );
   }
   // 左组：b 是中间项，右邻 c 顶上来
-  assert.equal(group(closed, PRIMARY).activeDocId, 'c', '按组内顺序取右邻');
-  assert.equal(group(closed, SECONDARY).activeDocId, 'c', '右组同样取右邻');
+  assert.equal(activeDocIn(closed, PRIMARY), 'c', '按组内顺序取右邻');
+  assert.equal(activeDocIn(closed, SECONDARY), 'c', '右组同样取右邻');
   assertConsistent(closed, '关闭标签后');
 });
 
@@ -290,8 +310,8 @@ test('B2-B07 关闭组内最后一个引用时，右邻优先、其次左邻、�
   const closed = workspaceReducer(state, { type: 'CLOSE_TAB', docId: 'a' });
   assert.equal(closed.tabs.length, 1);
   // 组内引用被清空后，沿用旧版"接管还开着的第一个标签"的行为（不留下空白窗格）
-  assert.equal(group(closed, PRIMARY).activeDocId, 'c');
-  assert.deepEqual(group(closed, PRIMARY).tabDocIds, ['c']);
+  assert.equal(activeDocIn(closed, PRIMARY), 'c');
+  assert.deepEqual(docsIn(closed, PRIMARY), ['c']);
   assertConsistent(closed, '关闭唯一引用后');
 });
 
@@ -337,8 +357,8 @@ test('B2-C04 切组不改变任何组的活动文档', () => {
   const before = state.viewGroups;
   const switched = workspaceReducer(state, { type: 'FOCUS_GROUP', groupId: SECONDARY });
   assert.equal(switched.viewGroups, before, '切焦点不得触碰组状态');
-  assert.equal(group(switched, PRIMARY).activeDocId, 'c');
-  assert.equal(group(switched, SECONDARY).activeDocId, 'a');
+  assert.equal(activeDocIn(switched, PRIMARY), 'c');
+  assert.equal(activeDocIn(switched, SECONDARY), 'a');
   assertConsistent(switched, '切组后');
 });
 
@@ -378,8 +398,8 @@ test('B2-D03 SET_MODE 清空文档引用、保留组身份、模式复位', () =
 
   assert.deepEqual(Object.keys(state.viewGroups).sort(), [PRIMARY, SECONDARY], '组身份必须保留');
   for (const groupState of Object.values(state.viewGroups)) {
-    assert.deepEqual(groupState.tabDocIds, [], `${groupState.groupId} 不得残留旧工作区的引用`);
-    assert.equal(groupState.activeDocId, null);
+    assert.deepEqual(docsIn(state, groupState.groupId), [], `${groupState.groupId} 不得残留旧工作区的引用`);
+    assert.equal(groupState.activeViewInstanceId, null);
   }
   assert.equal(state.viewGroups[PRIMARY].mode, 'editor', '模式复位到默认');
   assert.equal(state.viewGroups[SECONDARY].mode, 'preview');
@@ -421,17 +441,17 @@ test('B2-E01 移除项目：只摘该项目的引用，其他组与草稿原样�
    * 引用集合变了，所以这里比的是"内容"而不是对象引用。
    */
   assert.equal(
-    group(removed, SECONDARY).activeDocId,
+    activeDocIn(removed, SECONDARY),
     'doc:project-b/b.md',
     '未被移除项目的组不得改变活动文档',
   );
   assert.deepEqual(
-    group(removed, SECONDARY).tabDocIds,
+    docsIn(removed, SECONDARY),
     ['doc:project-b/b.md'],
     '被移除项目的引用必须从所有组摘掉',
   );
   assert.equal(
-    group(removed, PRIMARY).tabDocIds.includes('doc:project-a/a.md'),
+    docsIn(removed, PRIMARY).includes('doc:project-a/a.md'),
     false,
     '被移除项目的引用必须摘掉',
   );
@@ -469,11 +489,11 @@ test('B2-F01 V1 单视图恢复：组被保留，随后由 SET_PANE_TAB 恢复�
 
   assert.deepEqual(Object.keys(state.viewGroups).sort(), [PRIMARY, SECONDARY], '恢复布局要保证组存在');
   assert.deepEqual(visibleGroupIds(state.layoutTree), [PRIMARY]);
-  assert.deepEqual(group(state, PRIMARY).tabDocIds, [], 'HYDRATE 不因恢复布局而塞入标签');
+  assert.deepEqual(docsIn(state, PRIMARY), [], 'HYDRATE 不因恢复布局而塞入标签');
 
   state = workspaceReducer(state, { type: 'SET_PANE_TAB', pane: 'primary', docId: 'a' });
-  assert.equal(group(state, PRIMARY).activeDocId, 'a');
-  assert.deepEqual(group(state, PRIMARY).tabDocIds, ['a']);
+  assert.equal(activeDocIn(state, PRIMARY), 'a');
+  assert.deepEqual(docsIn(state, PRIMARY), ['a']);
   assertConsistent(state, '单视图恢复后');
 });
 
@@ -491,9 +511,9 @@ test('B2-F02 V1 双视图恢复：两个组都在，各自恢复活动文档与�
     docId: 'b',
     mode: 'editor',
   });
-  assert.equal(group(state, PRIMARY).activeDocId, 'a');
+  assert.equal(activeDocIn(state, PRIMARY), 'a');
   assert.equal(group(state, PRIMARY).mode, 'editor');
-  assert.equal(group(state, SECONDARY).activeDocId, 'b');
+  assert.equal(activeDocIn(state, SECONDARY), 'b');
   assert.equal(group(state, SECONDARY).mode, 'editor', '记录里的模式必须生效');
   assertConsistent(state, '双视图恢复后');
 });
@@ -536,12 +556,12 @@ test('B2-F04 打开请求期间用户切组：迟到响应不得把文档塞进�
 
     // 迟到的响应只能后台登记：右组（发起时的组）活动文档不得被改写
     assert.equal(
-      h.state.viewGroups[SECONDARY].activeDocId,
+      activeDocIn(h.state, SECONDARY),
       'doc:project-a/a.md',
       '迟到响应不得改写发起组的活动文档',
     );
     assert.equal(
-      h.state.viewGroups[PRIMARY].tabDocIds.includes('doc:project-a/docs/notes.md'),
+      docsIn(h.state, PRIMARY).includes('doc:project-a/docs/notes.md'),
       false,
       '更不得跨组把文档塞进当前组',
     );
@@ -550,7 +570,11 @@ test('B2-F04 打开请求期间用户切组：迟到响应不得把文档塞进�
       '标签仍然必须登记（不能丢）',
     );
     const docIds = new Set(h.state.tabs.map((item) => item.docId));
-    assert.deepEqual(viewGroupProblems(h.state.viewGroups, docIds), [], '组状态不变量');
+    assert.deepEqual(
+      viewGroupProblems(h.state.viewGroups, h.state.viewInstances, docIds),
+      [],
+      '组状态不变量',
+    );
   } finally {
     await host.close();
     await roots.cleanup();
@@ -582,7 +606,7 @@ test('B2-F05 打开请求期间用户在同一组里切了文档：迟到响应�
     await pending;
 
     assert.equal(
-      h.state.viewGroups[PRIMARY].activeDocId,
+      activeDocIn(h.state, PRIMARY),
       'doc:project-a/other.md',
       '用户的新选择必须保留',
     );
@@ -668,6 +692,6 @@ test('B2-G04 连续状态迁移：每一步都自洽（不是各自从同一初�
   // 终态仍然自洽，且所有引用都指向真实存在的标签
   assertConsistent(state, '连续迁移终态');
   assert.deepEqual(state.tabs, [], '切模式后没有标签');
-  assert.deepEqual(group(state, PRIMARY).tabDocIds, []);
+  assert.deepEqual(docsIn(state, PRIMARY), []);
   assert.deepEqual(group(state, SECONDARY).mode, 'preview', '切模式后模式复位');
 });

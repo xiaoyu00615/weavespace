@@ -3,6 +3,7 @@ import type { ProjectSummary, TrashEntryDto, TreeEntry, WorkspaceMode } from '..
 import type { TreeLevels } from '../components/tree-model.ts';
 import type { LayoutTree } from './layout-tree.ts';
 import type { ViewGroups } from './workspace-view-groups.ts';
+import type { ViewInstances } from './workspace-view-instances.ts';
 
 export type ViewMode = 'editor' | 'preview';
 export type LayoutMode = 'single' | 'vertical';
@@ -68,10 +69,17 @@ export interface ResourceNodeState {
 export type SaveUiStatus = 'COMMITTED' | 'CONFLICT' | 'FAILED' | 'UNKNOWN' | 'DEMO' | null;
 
 /**
- * 已打开文档的标签（每个文档一份缓冲，供多个视图共享）。
+ * 已打开文档的**唯一权威状态**（= 一条共享 DocumentSession）。
  *
  * `buffer` 是编辑器的即时草稿；`sessionId/baseVersion/revision/documentState`
  * 是 Core 的权威状态（live 模式下由服务端返回，UI 不得自行推断）。
+ *
+ * **B3 起 `tabs` 是"文档记录"，不是"视图实例"**：同一份文档被两个窗格同时显示时，
+ * 这里仍然只有一条，而 `viewInstances` 里有两条。`viewId` 是兼容投影——该文档
+ * **最初打开**时那个 Host View；文档级操作（编辑 / 保存 / 读盘 / 重载）只需要一个
+ * 属于这个会话的有效 View，因此可以用它，也可以走 `hostViewIdForDoc` 选一个实例的。
+ *
+ * 关闭视图**绝不能**用它：一份文档可能有多个 Host View，关掉哪一个属于实例的事。
  */
 export interface DocTab {
   docId: string;
@@ -185,7 +193,21 @@ export interface WorkspaceState {
   /** 文件树展开状态：目录路径 → 是否展开。 */
   expanded: Record<string, boolean>;
   selectedPath: string | null;
+  /**
+   * 全局文档记录（共享 DocumentSession）：每个文档**一份**缓冲、一份会话、一份版本。
+   *
+   * B3 起它不再承担"视图"职责：同一份文档出现在两个窗格里时，这里仍然只有一条，
+   * 视图身份与 Host viewId 在 `viewInstances` 里。
+   */
   tabs: DocTab[];
+  /**
+   * **视图实例表**（UI-F03-B3）：`viewInstanceId → { docId, groupId, hostViewId }`。
+   *
+   * 一个实例 = 界面上的一格。同一份文档可以由不同组的不同实例引用，它们共享同一条
+   * `DocTab`（缓冲与会话），但各有自己的 Host View——关闭其中一格不会误伤另一格。
+   * 未分组实例（`groupId: null`）表示"Host 里有这个 View，但还没被放进任何窗格"。
+   */
+  viewInstances: ViewInstances;
   /**
    * 旧 UI 的窗格投影：`primary` / `secondary` 两个兼容槽（UI-F03-B2 起是**派生值**）。
    *
@@ -197,13 +219,13 @@ export interface WorkspaceState {
   /** 旧 UI 的焦点投影：由 `focusedGroupId` 反算，单视图恒为 primary。 */
   focusedPane: PaneId;
   /**
-   * **视图组运行时状态**（UI-F03-B2）。
+   * **视图组运行时状态**（UI-F03-B2，B3 改为持有视图实例身份）。
    *
-   * `LayoutTree` 只决定"哪些组在什么位置"；每个组自己管：组内有哪些标签
-   * （`tabDocIds`）、正在看哪一份（`activeDocId`）、用源码还是预览（`mode`）。
-   * 组里只存 `docId` 引用，文档本体（缓冲、会话、版本）仍然只有 `tabs` 里一份。
+   * `LayoutTree` 只决定"哪些组在什么位置"；每个组自己管：组内有哪些视图实例
+   * （`viewInstanceIds`）、正在显示哪一格（`activeViewInstanceId`）、用源码还是预览
+   * （`mode`）。文档本体（缓冲、会话、版本）仍然只有 `tabs` 里一份。
    *
-   * 键集可以比可见组更大：单视图时 secondary 是**休眠组**，标签与模式原样保留。
+   * 键集可以比可见组更大：单视图时 secondary 是**休眠组**，实例与模式原样保留。
    */
   viewGroups: ViewGroups;
   /**
@@ -419,10 +441,66 @@ export type WorkspaceAction =
   | { type: 'SELECT_PROJECT_NODE'; projectId: string; path: string | null }
   | { type: 'OPEN_TAB'; tab: DocTab }
   /**
-   * 只登记标签，**不改**当前窗格/焦点（G2-R2）。
+   * 只登记文档，**不改**当前窗格/焦点（G2-R2）。
    * 迟到的打开响应在"用户已经换了项目/窗格/文档"时只能走这条路径。
+   *
+   * B3 起它同时登记一个**未分组**视图实例（Host 已经为这次打开建了 View，
+   * 没有记录就会变成无人认领的孤儿）；未分组实例不属于任何组。
    */
   | { type: 'OPEN_TAB_BACKGROUND'; tab: DocTab }
+  /**
+   * 打开一个**视图实例**（UI-F03-B3）：登记文档 + 建实例 + 放进组（可选激活）。
+   *
+   * `viewInstanceId` 与 `hostViewId` 都由调用方注入：前者是客户端身份，后者是 Host
+   * 返回的真实 View。同一 (组, 文档) 已存在实例时只补 `hostViewId`、不重复创建。
+   */
+  | {
+      type: 'OPEN_VIEW_INSTANCE';
+      tab: DocTab;
+      groupId: string;
+      viewInstanceId: string;
+      hostViewId: string | null;
+      /** 缺省 = true（用户主动打开就该显示出来）。 */
+      activate?: boolean;
+    }
+  /**
+   * 后台登记一个视图实例（迟到响应 / 恢复）。
+   *
+   * 语义与 `OPEN_VIEW_INSTANCE` 的区别只有一条：**绝不改任何组的活动实例**。
+   * 目标组仍会被记录（用户当初就是往那一组打开的），只是它不抢显示；
+   * `groupId: null` 表示连组都不进（纯后台，Host 那个 View 由记录接管）。
+   */
+  | {
+      type: 'OPEN_VIEW_INSTANCE_BACKGROUND';
+      tab: DocTab;
+      groupId: string | null;
+      viewInstanceId: string;
+      hostViewId: string | null;
+    }
+  /**
+   * 只登记实例，**不动文档记录**（UI-F03-B3）。
+   *
+   * 用途：同一份文档要开第二格时，Host 会给一个新的 viewId，但缓冲/会话/版本都
+   * 还是那一条——用 `OPEN_VIEW_INSTANCE` 会把整条文档记录覆盖成响应里的快照，
+   * 那正是"第二个视图的旧响应覆盖第一个视图草稿"的入口。
+   */
+  | {
+      type: 'REGISTER_VIEW_INSTANCE';
+      docId: string;
+      groupId: string | null;
+      viewInstanceId: string;
+      hostViewId: string | null;
+      activate?: boolean;
+    }
+  /** 激活一个实例（它在自己的组里成为活动实例；焦点不变）。 */
+  | { type: 'ACTIVATE_VIEW_INSTANCE'; viewInstanceId: string }
+  /**
+   * 关闭**一个**视图实例：只移除这一格。
+   *
+   * 其他实例保持不变，共享的文档记录也保持不变——除非这是该文档的最后一个实例，
+   * 那时文档记录一并清理（没有视图的文档记录只会变成下次恢复的幽灵标签）。
+   */
+  | { type: 'CLOSE_VIEW_INSTANCE'; viewInstanceId: string }
   | { type: 'TAB_PATCH'; docId: string; patch: Partial<Omit<DocTab, 'docId'>> }
   | { type: 'ACTIVATE_TAB'; docId: string }
   | { type: 'CLOSE_TAB'; docId: string }

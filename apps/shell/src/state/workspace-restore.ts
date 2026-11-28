@@ -23,6 +23,10 @@
  * 这里不做：A2 的动态重绑定、STALE 会话回收、草稿正文持久化、`/api/edit|save|reload`。
  */
 import type { OpenNodeResult, ReclaimSummary } from './open-document.ts';
+import { LEGACY_LAYOUT_IDS } from './workspace-view-groups.ts';
+
+/** 兼容桥里 secondary 组的固定身份（恢复流程只认这个，不自己拼字符串）。 */
+const SECONDARY_GROUP_ID = LEGACY_LAYOUT_IDS.secondaryGroupId;
 import type {
   ClientMode,
   LayoutMode,
@@ -132,6 +136,18 @@ export interface RestoreDeps {
    * 缺省（未注入）时跳过：回收是清理动作，不影响恢复结论。
    */
   reclaimStaleViews?(tabs: readonly PersistedTab[]): Promise<ReclaimSummary>;
+  /**
+   * 把一份**已经恢复**的文档放进另一个窗格，并保证那一格有**自己的** Host View
+   * （UI-F03-B3）。
+   *
+   * 为什么恢复需要它：V1 只记录"哪个窗格看哪个标签"，完全不记录视图身份。当两个
+   * 窗格指向同一份文档时，第一格接管重开时那个 View，第二格必须再向 Host 开一次——
+   * 复用同一个 viewId 会让"关左边连右边一起消失"。
+   *
+   * 缺省（未注入）时退化为只建实例、不建 Host View：界面显示正确，但那一格暂时
+   * 没有独立的视图，等下一次真正需要时再补。
+   */
+  openViewInGroup?(docId: string, groupId: string): Promise<boolean>;
   /** 到达终态后回调（Provider 据此决定是否补一次提交）。 */
   onSettled?(report: RestoreReport): void;
 }
@@ -612,12 +628,12 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
    * 只对"用户没动过"的窗格生效（IX-02）：用户在恢复期间把某个窗格指向了别的文档，
    * 恢复既不能覆盖它，也不能把焦点抢回去。
    */
-  function applyPanes(
+  async function applyPanes(
     snapshot: PersistedWorkspaceV1,
     result: TabOutcome,
     token: number,
     baseline: Baseline,
-  ): void {
+  ): Promise<void> {
     if (!isCurrent(token)) return;
     if (deps.getMode() !== 'live') return;
     const state = deps.getState();
@@ -628,21 +644,52 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
         ? null
         : result.restored.find((item) => item.index === pane.tabIndex)?.docId ?? null;
 
+    const primaryDocId = docOf(snapshot.panes.primary);
     if (state.panes.primary.docId === baseline.panes.primary) {
       deps.dispatch({
         type: 'SET_PANE_TAB',
         pane: 'primary',
-        docId: docOf(snapshot.panes.primary),
+        docId: primaryDocId,
         mode: snapshot.panes.primary.mode,
       });
     }
-    if (snapshot.ui.layout === 'vertical' && deps.getState().panes.secondary.docId === baseline.panes.secondary) {
-      deps.dispatch({
-        type: 'SET_PANE_TAB',
-        pane: 'secondary',
-        docId: docOf(snapshot.panes.secondary),
-        mode: snapshot.panes.secondary.mode,
-      });
+
+    /*
+     * secondary 的记录在**单视图**快照里也可能是非空的（B2-R2）。
+     *
+     * 那是用户在合并前留在右窗格的东西：`mergePane` 只是把 Pane 从布局里拿掉，
+     * `panes.secondary` 仍然记着它。既然 V1 已经把它写下来了，恢复就该把它放回
+     * **休眠组**（不可见、拿不到焦点，但重新分屏时原样回来），而不是悄悄丢弃。
+     * 不新增任何持久化字段——用的就是既有 `panes.secondary`。
+     */
+    const secondaryDocId = docOf(snapshot.panes.secondary);
+    const splitLayout = snapshot.ui.layout === 'vertical';
+    if (
+      secondaryDocId !== null &&
+      deps.getState().panes.secondary.docId === baseline.panes.secondary
+    ) {
+      /*
+       * 两个窗格看同一份文档时，第二格必须有自己的 Host View：先让 Host 真开一个，
+       * 再落状态。开不出来（或未注入）就退化为 `SET_PANE_TAB`——那一格只有实例、
+       * 没有独立视图，但界面与文档状态都正确。
+       */
+      const needsSecondView = splitLayout && secondaryDocId === primaryDocId;
+      const opened =
+        needsSecondView && deps.openViewInGroup
+          ? await deps.openViewInGroup(secondaryDocId, SECONDARY_GROUP_ID)
+          : false;
+      if (isCurrent(token) && deps.getState().workspaceKey === snapshot.workspaceKey) {
+        if (opened) {
+          deps.dispatch({ type: 'SET_PANE_MODE', pane: 'secondary', mode: snapshot.panes.secondary.mode });
+        } else {
+          deps.dispatch({
+            type: 'SET_PANE_TAB',
+            pane: 'secondary',
+            docId: secondaryDocId,
+            mode: snapshot.panes.secondary.mode,
+          });
+        }
+      }
     }
     // 焦点已由 HYDRATE_UI 处理（且同样做了逐字段比对），这里不再单独抢焦点。
   }
@@ -751,7 +798,7 @@ export function createWorkspaceRestorer(deps: RestoreDeps): WorkspaceRestorer {
       return settle(next, 'seal');
     }
 
-    applyPanes(snapshot, result, token, baseline);
+    await applyPanes(snapshot, result, token, baseline);
 
     /**
      * 恢复成功也要清理"没能重开"的那些（UX-02C-02-R1.3）。

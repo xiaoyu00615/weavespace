@@ -43,6 +43,7 @@ import { DEMO_CONTENTS, DEMO_NODES } from '../data/demo-project';
 import { installBeforeUnloadGuard, needsLeaveGuard } from './beforeunload-guard';
 import { draftBackupKey, hasUnsavedDrafts, isResponseOwnerCurrent } from './doc-identity';
 import { createDocumentOpener, createEditEpochs, type DocumentOpener } from './open-document';
+import { createViewInstanceActions, type ViewInstanceActions } from './view-instance-actions';
 import {
   createWorkspaceAutosave,
   createWorkspaceStore,
@@ -96,8 +97,17 @@ import { useWorkspace } from './WorkspaceContext';
 import type { ClientMode, DocTab, ResourceNodeState } from './types';
 
 export interface DocumentActions {
-  /** 打开（或复用）会话节点。Multi 必须给 projectId。 */
-  openNode(node: ResourceNodeState, projectId?: string | null): Promise<void>;
+  /**
+   * 打开（或复用）会话节点。Multi 必须给 projectId。
+   *
+   * `options.targetGroupId`（B3）：显式指定落进哪一组；缺省是当前焦点组。
+   * 只接受可见组（休眠组拿不到）。
+   */
+  openNode(
+    node: ResourceNodeState,
+    projectId?: string | null,
+    options?: { targetGroupId?: string },
+  ): Promise<void>;
   /** 提交一次编辑：本地即时生效，live 模式下按序同步到 Core。 */
   editDoc(docId: string, text: string): void;
   /** 保存：demo 只清标记；live 先 flush 编辑再条件保存。 */
@@ -755,6 +765,24 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
   );
 
   /**
+   * 视图实例动作（UI-F03-B3）。
+   *
+   * "关闭一格 / 关闭整份文档 / 为第二格真开一个 Host View"都在纯 TS 模块里，
+   * 因此可以被 `node:test` 直接驱动（`.tsx` 不能）。这里只做装配。
+   */
+  const instanceActions = useMemo<ViewInstanceActions>(
+    () =>
+      createViewInstanceActions({
+        getState: () => stateRef.current,
+        getMode: () => modeRef.current,
+        dispatch,
+        clientFor,
+        editEpochs: edits.current,
+      }),
+    [dispatch, demoClient, liveClient],
+  );
+
+  /**
    * 工作区持久化（S11-C）。
    *
    * 存储、恢复、节流写入都在纯 TS 模块里，这里只负责装配：
@@ -907,6 +935,14 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         // 普通点击与 refreshCleanTab 的临时打开都不得申请回收。
         openInBackground: (node, projectId) =>
           opener.openNode(node, projectId, { background: true, reclaimPage: true }),
+        /*
+         * 两个窗格指向同一份文档时（V1 记录里很常见），第二格必须**自己**的 Host View：
+         * 复用第一格那个 viewId 会让"关一格死两格"。这里真的再向 Host 开一次。
+         */
+        openViewInGroup: async (docId, groupId) => {
+          const outcome = await instanceActions.openInGroup(docId, groupId);
+          return outcome.status === 'activated' || outcome.status === 'created';
+        },
         /**
          * 恢复被接管后，回收那些再也不会被重开的文件的本页面旧 View（R1.2-01）。
          * 只清理、不打开：不读盘、不建会话、不动草稿（脏视图的关闭由 Host 拒绝）。
@@ -915,7 +951,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         // 终态后再排一次写入：此时标签已经全部登记完，写下去的是完整状态（AS-04）
         onSettled: () => autosaveRef.current?.schedule(),
       }),
-    [connectWorkspace, dispatch, gate, opener, store],
+    [connectWorkspace, dispatch, gate, instanceActions, opener, store],
   );
   // opener 通过 ref 读"恢复是否在进行"，因此这里必须在渲染期把它指到当前实例
   restorerRef.current = restorer;
@@ -1009,13 +1045,16 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
     ): EditQueue => {
       const existing = queues.current.get(docId);
       if (existing) return existing;
+      /** 首选当前实例的 Host View：同一文档的第二格被关掉后，第一格仍然可用。 */
+      const viewFor = (): string | null =>
+        instanceActions.hostViewIdOf(docId) ?? tabOf(docId)?.viewId ?? viewId;
       const queue = createEditQueue<unknown>(async (text: string) => {
         const current = tabOf(docId);
         const outcome = await clientFor(current?.mode ?? stateRef.current.mode).applyEdit(
           sessionId,
           text,
           current?.baseVersion ?? null,
-          viewId,
+          viewFor(),
         );
         if (outcome.status !== 'APPLIED' || !outcome.document) {
           dispatch({
@@ -1426,13 +1465,18 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         if (active) await treeLoader.current.load(active, '', false);
       },
 
-      async openNode(node: ResourceNodeState, projectId?: string | null) {        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）
+      async openNode(
+        node: ResourceNodeState,
+        projectId?: string | null,
+        options?: { targetGroupId?: string },
+      ) {
+        // 用户主动打开：恢复流程不得再把窗格指回旧位置（S11-C）
         restorer.noteInteraction();
         // 结构化操作 = 接管恢复（AS-05）：此后当前界面才是权威，提交时合并结转标签
         gate.adopt();
         // 打开/刷新/并发/模式切换的全部时序处理都在 open-document.ts：
         // 这里只转发，避免把异步归属判定散落在组件里（G2-R1）。
-        await opener.openNode(node, projectId);
+        await opener.openNode(node, projectId, options);
       },
 
       /**
@@ -1519,7 +1563,11 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
               return client.saveDocument(
                 sessionId,
                 latest?.baseVersion ?? (tab.baseVersion as string),
-                latest?.viewId ?? tab.viewId,
+                /*
+                 * 文档级操作只需要**一个属于这个会话**的 Host View（B3）：
+                 * 优先当前实例的，其次文档记录上那个兼容值。
+                 */
+                instanceActions.hostViewIdOf(docId) ?? latest?.viewId ?? tab.viewId,
               );
             },
           });
@@ -1574,15 +1622,39 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           if (!window.confirm('该标签有未保存的演示修改，仍要关闭吗？')) return;
         }
 
-        if (tab.mode === 'live' && tab.sessionId && tab.viewId) {
+        /*
+         * live：关闭整份文档 = 关闭它在**所有**窗格里的实例（全局标签栏的语义）。
+         *
+         * B3 之前这里只关 `tab.viewId` 那一个 View：同一份文档开在左右两格时，
+         * 关掉标签只会关掉左边那一个，右边继续在 Host 里活动——Shell 以为关了，
+         * Host 认为还开着，改名/移动门禁于是永久拦住该项目。
+         *
+         * 现在逐个关闭、逐个摘除：中途被 Host 拒绝（最后一个脏视图）时，已经关掉的
+         * 那几格本来就不在 Host 里了，被拒绝的那一格原样保留，两边依然一致。
+         */
+        if (tab.mode === 'live' && tab.sessionId) {
           await queues.current.get(docId)?.flush();
-          // 只关闭**本标签自己的** viewId；其他标签（含其他项目的同名文件）不受影响
-          const outcome = await clientFor('live').closeDocument(tab.sessionId, tab.viewId);
-          if (outcome.status !== 'APPLIED') {
+          const outcome = await instanceActions.closeDoc(docId);
+          if (outcome.status === 'blocked') {
             dispatch({
               type: 'NOTICE',
-              message: `关闭被拒绝：${outcome.errorCode ?? outcome.message ?? '未知原因'}`,
+              message: `关闭被拒绝：${outcome.errorCode ?? '存在未保存修改'}（草稿已保留）`,
             });
+            return;
+          }
+          if (outcome.status === 'failed') {
+            dispatch({
+              type: 'NOTICE',
+              message: `关闭失败：${outcome.errorCode ?? '未知原因'}（标签已保留）`,
+            });
+            return;
+          }
+          if (outcome.status === 'closed') {
+            queues.current.delete(docId);
+            opener.forget(docId);
+            restorer.noteInteraction();
+            gate.adopt();
+            // closeDoc 已经派发过实例移除与标签清理，这里不再重复派发
             return;
           }
         }
@@ -1605,11 +1677,24 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
         // 回来的结果也不属于新工作区（S11-C-R2）
         loadEpoch.current.cancel();
         treeLoader.current.invalidateAll();
-        // 尽量收回服务端视图，避免 live 会话在后台悬挂
+        /*
+         * 尽量收回服务端视图，避免 live 会话在后台悬挂。
+         *
+         * B3：按**实例**回收，而不是每条文档一个 viewId——同一份文档开在左右两格时
+         * 有两个 Host View，只关一个会把另一个留在 Host 里，切模式后永久拦住该项目。
+         */
+        for (const instance of Object.values(stateRef.current.viewInstances)) {
+          const hostViewId = instance.hostViewId;
+          if (!hostViewId) continue;
+          const owner = stateRef.current.tabs.find((item) => item.docId === instance.docId);
+          if (!owner || owner.mode !== 'live' || !owner.sessionId) continue;
+          await clientFor('live').closeDocument(owner.sessionId, hostViewId).catch(() => undefined);
+        }
+        // 文档记录上那个兼容 viewId 若不属于任何实例（旧状态），也顺手收掉
         for (const tab of stateRef.current.tabs) {
-          if (tab.mode === 'live' && tab.sessionId && tab.viewId) {
-            await clientFor('live').closeDocument(tab.sessionId, tab.viewId).catch(() => undefined);
-          }
+          if (tab.mode !== 'live' || !tab.sessionId || !tab.viewId) continue;
+          if (instanceActions.hostViewIdOf(tab.docId) === tab.viewId) continue;
+          await clientFor('live').closeDocument(tab.sessionId, tab.viewId).catch(() => undefined);
         }
         queues.current.clear();
         locked.current.clear();
@@ -1690,7 +1775,10 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           return { ok: false as const, errorCode: 'ERR_DOCUMENT_NOT_FOUND' };
         }
         try {
-          const disk = await clientFor('live').readDisk(tab.sessionId, tab.viewId);
+          const disk = await clientFor('live').readDisk(
+            tab.sessionId,
+            instanceActions.hostViewIdOf(docId) ?? tab.viewId,
+          );
           if (disk.status !== 'APPLIED') {
             return { ok: false as const, errorCode: disk.errorCode ?? null, message: disk.message };
           }
@@ -1719,7 +1807,7 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
       async reloadFromDisk(docId: string) {
         const tab = tabOf(docId);
         if (!tab || tab.mode !== 'live') return false;
-        if (!tab.sessionId || !tab.viewId) {
+        if (!tab.sessionId || (!tab.viewId && instanceActions.hostViewIdOf(docId) === null)) {
           dispatch({ type: 'NOTICE', message: '缺少会话信息，无法重新加载' });
           return false;
         }
@@ -1744,7 +1832,12 @@ export function DocumentActionsProvider({ children }: { children: ReactNode }) {
           await queues.current.get(docId)?.flush();
           const draft = tabOf(docId)?.buffer ?? tab.buffer;
           const sessionId = tab.sessionId;
-          const viewId = tab.viewId;
+          // 重载是**文档级**操作：用属于这个会话的任意一个 Host View
+          const viewId = instanceActions.hostViewIdOf(docId) ?? tab.viewId;
+          if (!viewId) {
+            dispatch({ type: 'NOTICE', message: '缺少会话视图，无法重新加载（草稿仍保留）' });
+            return false;
+          }
 
           // F03：先备份，再重载；两种备份都失败时不发起重载（草稿原样保留）
           const backup = await backupDraftBeforeReload(draft, {

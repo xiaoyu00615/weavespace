@@ -1,43 +1,51 @@
 /**
- * ViewGroup 运行时状态（UI-F03-B2）：**纯结构 + 纯函数**，不依赖 React / DOM / 磁盘。
+ * ViewGroup 运行时状态（UI-F03-B2 建立，UI-F03-B3 迁移到视图实例）：**纯结构 + 纯函数**。
  *
  * 为什么需要它：B1 把 `LayoutTree` 接进了工作区状态，但 `PaneNode.groupId` 当时只是
  * 结构身份——真正"这个窗格里有哪些标签、正在看哪一份、用源码还是预览"仍然挤在
  * `panes.primary / panes.secondary` 两个固定槽里。于是"树里有几个窗格"和"运行时有
  * 几组视图"是两套坐标，groupId 没有对应的实体。
  *
- * 本模块把三层关系钉死：
+ * 本模块把四层关系钉死：
  *
  * ```
  * LayoutTree（哪些组在什么位置）
  *   → PaneNode.groupId
- *     → ViewGroupState（组内标签集合 / 当前活动文档 / 展示模式）
- *       → DocTab（文档缓冲、会话、版本；全局唯一一份）
+ *     → ViewGroupState（组内视图实例集合 / 当前活动实例 / 展示模式）
+ *       → ViewInstanceState（客户端实例身份 + Host viewId）
+ *         → DocumentSessionState（`tabs` 里那一条：缓冲、会话、版本；全局唯一一份）
  * ```
  *
- * 三条纪律：
+ * 四条纪律：
  *
- * 1. **只存引用**。组里保存 `docId`，不复制 `DocTab`。同一份文档被两个组看着时，
- *    它们共享同一个缓冲与同一个 Host View——本轮不制造第二份 DocumentSession。
- * 2. **树决定位置，组决定内容**。加标签、切文档、换模式都不碰 `LayoutTree`；
- *    分屏、合并也不碰组内的标签集合。
+ * 1. **组只存实例身份**。组里保存 `viewInstanceId`，既不是 `docId` 也不是 `viewId`：
+ *    同一份文档在两个组里是**两个实例**（B3），所以 `docId` 不足以标识"组里的这一格"。
+ * 2. **树决定位置，组决定内容**。加实例、切活动、换模式都不碰 `LayoutTree`；
+ *    分屏、合并也不碰组内的实例集合。
  * 3. **身份由调用方注入**。`groupId` 一律来自 `LayoutTree`（或兼容桥的保留身份），
- *    本模块绝不生成随机值——否则同一份状态在两次渲染之间就会"换了一组"。
+ *    `viewInstanceId` 一律来自调用方，本模块绝不生成随机值——否则同一份状态在两次
+ *    渲染之间就会"换了一组/一格"。
+ * 4. **不复制文档**。组与实例里没有任何缓冲、会话或版本字段；那条只有一个。
  *
  * 休眠组：`LayoutTree` 里暂时没有对应 Pane 的组（单视图时的 secondary）。
- * 它保留标签与模式，下次分屏原样回来；但**不能获得焦点**，也不参与旧 UI 投影之外
- * 的任何渲染。
+ * 它保留实例与模式，下次分屏原样回来；但**不能获得焦点**，也不参与旧 UI 投影之外的
+ * 任何渲染。
  */
 import { listPanes, type LayoutTree } from './layout-tree.ts';
 import type { PaneId, PaneState, ViewMode } from './types.ts';
+import {
+  hostViewIdForDoc,
+  instanceOf,
+  type ViewInstances,
+} from './workspace-view-instances.ts';
 
 /** 一个视图组的运行时状态。`groupId` 与 `LayoutTree` 的 `PaneNode.groupId` 对应。 */
 export interface ViewGroupState {
   readonly groupId: string;
-  /** 本组关联的文档标签（引用，不是副本）。组内不重复。 */
-  readonly tabDocIds: readonly string[];
-  /** 本组当前显示的文档；必须是 `tabDocIds` 成员或 `null`。 */
-  readonly activeDocId: string | null;
+  /** 本组关联的视图实例（引用，不是副本）。组内不重复。 */
+  readonly viewInstanceIds: readonly string[];
+  /** 本组当前显示的实例；必须是 `viewInstanceIds` 成员或 `null`。 */
+  readonly activeViewInstanceId: string | null;
   /** 本组当前展示模式（源码 / 预览）。 */
   readonly mode: ViewMode;
 }
@@ -85,8 +93,8 @@ export function defaultModeOf(groupId: string): ViewMode {
 
 const EMPTY_GROUP = (groupId: string): ViewGroupState => ({
   groupId,
-  tabDocIds: [],
-  activeDocId: null,
+  viewInstanceIds: [],
+  activeViewInstanceId: null,
   mode: defaultModeOf(groupId),
 });
 
@@ -95,7 +103,7 @@ const EMPTY_GROUP = (groupId: string): ViewGroupState => ({
  *
  * secondary 在初始（单视图）布局里是**休眠组**——`LayoutTree` 只有一个 Pane。
  * 它现在就存在，是为了让"打开分屏"不必凭空造一个组，也让用户在分屏期间的
- * 标签与模式在合并后仍然保留。
+ * 实例与模式在合并后仍然保留。
  */
 export function createInitialViewGroups(): ViewGroups {
   return {
@@ -123,7 +131,7 @@ export function firstVisibleGroupId(tree: LayoutTree): string | null {
   return visibleGroupIds(tree)[0] ?? null;
 }
 
-/** 补齐缺失的组（保留已有组的全部状态，不覆盖标签与模式）。 */
+/** 补齐缺失的组（保留已有组的全部状态，不覆盖实例与模式）。 */
 export function ensureGroups(groups: ViewGroups, groupIds: readonly string[]): ViewGroups {
   let next = groups;
   for (const groupId of groupIds) {
@@ -138,57 +146,80 @@ function replaceGroup(groups: ViewGroups, next: ViewGroupState): ViewGroups {
   const current = groups[next.groupId];
   if (
     current !== undefined &&
-    current.activeDocId === next.activeDocId &&
+    current.activeViewInstanceId === next.activeViewInstanceId &&
     current.mode === next.mode &&
-    current.tabDocIds === next.tabDocIds
+    current.viewInstanceIds === next.viewInstanceIds
   ) {
     return groups;
   }
   return { ...groups, [next.groupId]: next };
 }
 
-/** 把一个标签加进组并设为活动文档（组内去重；已存在则只改活动文档）。 */
-export function addTab(groups: ViewGroups, groupId: string, docId: string): ViewGroups {
-  const group = groupOf(groups, groupId);
-  if (group === null) return groups;
-  const tabDocIds = group.tabDocIds.includes(docId) ? group.tabDocIds : [...group.tabDocIds, docId];
-  return replaceGroup(groups, { ...group, tabDocIds, activeDocId: docId });
-}
-
-/** 激活组内的文档：必要时先建立引用。`mode` 可选（恢复时保留记录的模式）。 */
-export function activateTab(
+/** 把一个实例加进组并设为活动实例（组内去重；已存在则只改活动实例）。 */
+export function addInstance(
   groups: ViewGroups,
   groupId: string,
-  docId: string,
+  viewInstanceId: string,
+): ViewGroups {
+  const group = groupOf(groups, groupId);
+  if (group === null) return groups;
+  const viewInstanceIds = group.viewInstanceIds.includes(viewInstanceId)
+    ? group.viewInstanceIds
+    : [...group.viewInstanceIds, viewInstanceId];
+  return replaceGroup(groups, { ...group, viewInstanceIds, activeViewInstanceId: viewInstanceId });
+}
+
+/** 把一个实例加进组但**不改活动实例**（后台登记用：它在组里但还没被显示）。 */
+export function linkInstance(
+  groups: ViewGroups,
+  groupId: string,
+  viewInstanceId: string,
+): ViewGroups {
+  const group = groupOf(groups, groupId);
+  if (group === null) return groups;
+  if (group.viewInstanceIds.includes(viewInstanceId)) return groups;
+  return replaceGroup(groups, {
+    ...group,
+    viewInstanceIds: [...group.viewInstanceIds, viewInstanceId],
+  });
+}
+
+/** 激活组内实例：必要时先建立引用。`mode` 可选（恢复时保留记录的模式）。 */
+export function activateInstance(
+  groups: ViewGroups,
+  groupId: string,
+  viewInstanceId: string,
   mode?: ViewMode,
 ): ViewGroups {
   const group = groupOf(groups, groupId);
   if (group === null) return groups;
-  const tabDocIds = group.tabDocIds.includes(docId) ? group.tabDocIds : [...group.tabDocIds, docId];
+  const viewInstanceIds = group.viewInstanceIds.includes(viewInstanceId)
+    ? group.viewInstanceIds
+    : [...group.viewInstanceIds, viewInstanceId];
   return replaceGroup(groups, {
     ...group,
-    tabDocIds,
-    activeDocId: docId,
+    viewInstanceIds,
+    activeViewInstanceId: viewInstanceId,
     mode: mode ?? group.mode,
   });
 }
 
 /**
- * 只改活动文档，不动引用（`null` = 这个组暂时没有打开的文档）。
+ * 只改活动实例，不动引用（`null` = 这个组暂时没有打开的文档）。
  *
- * 非 `null` 时要求该文档已在组内：让"活动文档"指向一个组里根本没有的标签，
+ * 非 `null` 时要求该实例已在组内：让"活动实例"指向组里根本没有的一格，
  * 等于制造一条无法解释的状态。
  */
-export function setActiveDoc(
+export function setActiveInstance(
   groups: ViewGroups,
   groupId: string,
-  docId: string | null,
+  viewInstanceId: string | null,
 ): ViewGroups {
   const group = groupOf(groups, groupId);
   if (group === null) return groups;
-  if (docId !== null && !group.tabDocIds.includes(docId)) return groups;
-  if (group.activeDocId === docId) return groups;
-  return replaceGroup(groups, { ...group, activeDocId: docId });
+  if (viewInstanceId !== null && !group.viewInstanceIds.includes(viewInstanceId)) return groups;
+  if (group.activeViewInstanceId === viewInstanceId) return groups;
+  return replaceGroup(groups, { ...group, activeViewInstanceId: viewInstanceId });
 }
 
 /** 改展示模式：只影响这一个组。 */
@@ -199,67 +230,112 @@ export function setGroupMode(groups: ViewGroups, groupId: string, mode: ViewMode
 }
 
 /**
- * 从**所有**组里删除一个文档引用（关闭标签、移除项目都走这里）。
+ * 从**所有**组里删除一个实例引用（关闭实例、关闭标签、移除项目都走这里）。
  *
- * 活动文档被删时按**组内**顺序选替代项：先右邻、再左邻、最后为 `null`。
+ * 活动实例被删时按**组内**顺序选替代项：先右邻、再左邻、最后为 `null`。
  *
- * `adoptWhenEmptied` 是旧版行为的保留：如果一个组因为这次删除**一个引用都不剩**，
- * 旧版会把窗格指向全局还开着的第一个标签，而不是留一个空白窗格。仅在这种情况下
- * 采纳它（并建立引用），避免"另一个组刚好有标签"就让空组随便接管。
+ * `adoptWhenEmptied` 是旧版行为的保留：如果一个组因为这次删除**一个实例都不剩**，
+ * 旧版会把窗格指向"还开着的第一个标签"，而不是留一个空白窗格。仅在这种情况下
+ * 采纳它（并建立引用），避免"另一个组刚好有实例"就让空组随便接管。
  */
-export function removeDoc(
+export function removeInstance(
   groups: ViewGroups,
-  docId: string,
+  viewInstanceId: string,
   adoptWhenEmptied?: string | null,
 ): ViewGroups {
   let next = groups;
   for (const group of Object.values(groups)) {
-    const index = group.tabDocIds.indexOf(docId);
+    const index = group.viewInstanceIds.indexOf(viewInstanceId);
     if (index < 0) continue;
-    const remaining = group.tabDocIds.filter((id) => id !== docId);
-    const wasActive = group.activeDocId === docId;
-    let activeDocId = group.activeDocId;
+    const remaining = group.viewInstanceIds.filter((id) => id !== viewInstanceId);
+    const wasActive = group.activeViewInstanceId === viewInstanceId;
+    let activeViewInstanceId = group.activeViewInstanceId;
     if (wasActive) {
-      activeDocId = remaining[index] ?? remaining[index - 1] ?? null;
+      activeViewInstanceId = remaining[index] ?? remaining[index - 1] ?? null;
     }
-    if (wasActive && activeDocId === null && adoptWhenEmptied && remaining.length === 0) {
-      activeDocId = adoptWhenEmptied;
+    if (
+      wasActive &&
+      activeViewInstanceId === null &&
+      adoptWhenEmptied &&
+      remaining.length === 0
+    ) {
       next = replaceGroup(next, {
         ...group,
-        tabDocIds: [adoptWhenEmptied],
-        activeDocId,
+        viewInstanceIds: [adoptWhenEmptied],
+        activeViewInstanceId: adoptWhenEmptied,
       });
       continue;
     }
-    next = replaceGroup(next, { ...group, tabDocIds: remaining, activeDocId });
+    next = replaceGroup(next, { ...group, viewInstanceIds: remaining, activeViewInstanceId });
   }
   return next;
 }
 
 /**
- * 换工作区（`SET_MODE`）：清空所有组的文档引用，**保留组身份**，模式复位到默认。
+ * 换工作区（`SET_MODE`）：清空所有组的实例引用，**保留组身份**，模式复位到默认。
  *
  * 不删组：组的身份属于布局结构，不属于工作区；下个模式里同一个 Pane 还要用它。
  */
-export function clearAllTabs(groups: ViewGroups): ViewGroups {
+export function clearAllGroups(groups: ViewGroups): ViewGroups {
   let next = groups;
   for (const group of Object.values(groups)) {
     next = replaceGroup(next, {
       ...group,
-      tabDocIds: [],
-      activeDocId: null,
+      viewInstanceIds: [],
+      activeViewInstanceId: null,
       mode: defaultModeOf(group.groupId),
     });
   }
   return next;
 }
 
-/** 旧 UI 的 `panes` 投影：primary / secondary 两个兼容槽。 */
-export function projectPanes(groups: ViewGroups): Record<PaneId, PaneState> {
+/** 某组里全部实例对应的文档（按组内顺序，保留重复——同一文档可以是两格）。 */
+export function docIdsInGroup(
+  groups: ViewGroups,
+  instances: ViewInstances,
+  groupId: string,
+): readonly string[] {
+  const group = groupOf(groups, groupId);
+  if (group === null) return [];
+  return group.viewInstanceIds
+    .map((id) => instanceOf(instances, id)?.docId ?? null)
+    .filter((docId): docId is string => docId !== null);
+}
+
+/** 某组当前活动实例对应的文档；没有活动实例时为 `null`。 */
+export function activeDocIdInGroup(
+  groups: ViewGroups,
+  instances: ViewInstances,
+  groupId: string,
+): string | null {
+  const group = groupOf(groups, groupId);
+  if (group === null || group.activeViewInstanceId === null) return null;
+  return instanceOf(instances, group.activeViewInstanceId)?.docId ?? null;
+}
+
+/** 某组当前活动实例；没有时为 `null`。 */
+export function activeInstanceIdInGroup(groups: ViewGroups, groupId: string): string | null {
+  return groupOf(groups, groupId)?.activeViewInstanceId ?? null;
+}
+
+/**
+ * 旧 UI 的 `panes` 投影：primary / secondary 两个兼容槽。
+ *
+ * 组里存的是实例身份，投影必须经过实例表才能拿到 `docId`——这正是 B3 与 B2 的差别：
+ * 从前"组的活动文档"直接就是 `docId`，现在它只是某个实例的一个属性。
+ */
+export function projectPanes(
+  groups: ViewGroups,
+  instances: ViewInstances,
+): Record<PaneId, PaneState> {
   const paneOf = (groupId: string, fallbackMode: ViewMode): PaneState => {
     const group = groupOf(groups, groupId);
     if (group === null) return { docId: null, mode: fallbackMode };
-    return { docId: group.activeDocId, mode: group.mode };
+    const active =
+      group.activeViewInstanceId === null
+        ? null
+        : (instanceOf(instances, group.activeViewInstanceId)?.docId ?? null);
+    return { docId: active, mode: group.mode };
   };
   return {
     primary: paneOf(LEGACY_LAYOUT_IDS.primaryGroupId, 'editor'),
@@ -270,26 +346,70 @@ export function projectPanes(groups: ViewGroups): Record<PaneId, PaneState> {
 /**
  * 一致性检查（测试与调试用，不在 reducer 热路径上调用）。
  *
- * 三条不变量：组内 docId 不重复、活动文档必须属于本组、组身份与键一致。
- * `existingDocIds` 可选：给了就顺带检查"每个引用都指向真实存在的 DocTab"。
+ * 四条不变量：组身份与键一致、组内实例不重复、活动实例必须属于本组、
+ * 每个引用都指向真实存在的实例（给了 `existingDocIds` 时顺带检查文档存在）。
  */
 export function viewGroupProblems(
   groups: ViewGroups,
+  instances: ViewInstances,
   existingDocIds?: ReadonlySet<string>,
 ): string[] {
   const problems: string[] = [];
   for (const [key, group] of Object.entries(groups)) {
     if (group.groupId !== key) problems.push(`${key}：groupId 与键不一致（${group.groupId}）`);
-    const unique = new Set(group.tabDocIds);
-    if (unique.size !== group.tabDocIds.length) problems.push(`${key}：组内 docId 重复`);
-    if (group.activeDocId !== null && !unique.has(group.activeDocId)) {
-      problems.push(`${key}：活动文档不在组内（${group.activeDocId}）`);
+    const unique = new Set(group.viewInstanceIds);
+    if (unique.size !== group.viewInstanceIds.length) problems.push(`${key}：组内实例重复`);
+    if (
+      group.activeViewInstanceId !== null &&
+      !unique.has(group.activeViewInstanceId)
+    ) {
+      problems.push(`${key}：活动实例不在组内（${group.activeViewInstanceId}）`);
     }
-    if (existingDocIds) {
-      for (const docId of group.tabDocIds) {
-        if (!existingDocIds.has(docId)) problems.push(`${key}：引用了不存在的标签（${docId}）`);
+    for (const viewInstanceId of group.viewInstanceIds) {
+      const instance = instanceOf(instances, viewInstanceId);
+      if (instance === null) {
+        problems.push(`${key}：引用了不存在的实例（${viewInstanceId}）`);
+        continue;
+      }
+      if (instance.groupId !== key) {
+        problems.push(`${key}：实例 ${viewInstanceId} 实际属于 ${instance.groupId ?? 'none'}`);
+      }
+      if (existingDocIds && !existingDocIds.has(instance.docId)) {
+        problems.push(`${key}：引用了不存在的文档（${instance.docId}）`);
       }
     }
   }
   return problems;
+}
+
+/** 便捷：某组里"这一份文档"的活动实例（渲染层与动作层都只关心这个）。 */
+export function instanceInGroupForDoc(
+  groups: ViewGroups,
+  instances: ViewInstances,
+  groupId: string,
+  docId: string,
+): string | null {
+  const group = groupOf(groups, groupId);
+  if (group === null) return null;
+  for (const viewInstanceId of group.viewInstanceIds) {
+    if (instanceOf(instances, viewInstanceId)?.docId === docId) return viewInstanceId;
+  }
+  return null;
+}
+
+/**
+ * 某份文档此刻在界面上是否还"有地方显示"（任何组里都有实例）。
+ *
+ * 关闭最后一个实例时必须同时收掉文档记录；只剩未分组实例时则**不**收——那个 Host
+ * View 还在，文档也还在，只是没被摆进窗格。
+ */
+export function hasVisibleInstance(instances: ViewInstances, docId: string): boolean {
+  return Object.values(instances).some(
+    (instance) => instance.docId === docId && instance.groupId !== null,
+  );
+}
+
+/** 便捷：某文档的 Host View（文档级操作要用，优先非空且最早的那个）。 */
+export function hostViewIdOfDoc(instances: ViewInstances, docId: string): string | null {
+  return hostViewIdForDoc(instances, docId);
 }
