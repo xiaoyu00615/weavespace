@@ -1,6 +1,7 @@
 /** 工作台状态模型（S9-A / S9-B / G2）。布局与缓冲属于 UI；会话与版本以 Core 为准。 */
 import type { ProjectSummary, TrashEntryDto, TreeEntry, WorkspaceMode } from '../client/client-api.ts';
 import type { TreeLevels } from '../components/tree-model.ts';
+import type { LayoutTree } from './layout-tree.ts';
 
 export type ViewMode = 'editor' | 'preview';
 export type LayoutMode = 'single' | 'vertical';
@@ -186,8 +187,28 @@ export interface WorkspaceState {
   tabs: DocTab[];
   panes: Record<PaneId, PaneState>;
   focusedPane: PaneId;
+  /**
+   * **布局结构的权威模型**（UI-F03-B1）。
+   *
+   * 它只描述"窗格怎么摆"：`pane` / `split`、方向、比例、以及每个视图组的身份
+   * （`nodeId` / `groupId`）。**刻意不携带 `docId` / `sessionId` / 文件路径 / 编辑
+   * 缓冲区**——"这个窗格里看的是哪份文档"属于 `panes`，两者必须保持独立：
+   * 打开、关闭、切换文档不该改结构；分屏、合并、拖动比例不该改文档指向。
+   *
+   * 下面的 `layout` / `splitRatio` 是它给旧 UI 与 V1 持久化用的**兼容投影**，
+   * 不是第二个真相来源：所有结构变更都在 reducer 里一次性原子完成，投影由树反算
+   * （见 `workspace-reducer.ts` 的 `withLayoutProjection`）。
+   */
+  layoutTree: LayoutTree;
+  /**
+   * 旧 UI 的布局投影：`single` / `vertical`。
+   *
+   * **`vertical` 指的是"分隔条竖着"，也就是左右分屏**（`SplitWorkspace.tsx`
+   * 的 `gridTemplateColumns`），对应新模型的 `orientation: 'horizontal'`。
+   * 本轮只允许两种形状进入旧 UI：单 Pane，或两个 Pane 的单层左右分屏。
+   */
   layout: LayoutMode;
-  /** 左窗格占比（%），限制在 25–75，保证两侧都可读。 */
+  /** 左窗格占比（%），限制在 25–75，保证两侧都可读。由 `layoutTree` 的 ratio 反算。 */
   splitRatio: number;
   auxCollapsed: boolean;
   auxTab: AuxTab;

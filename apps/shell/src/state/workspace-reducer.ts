@@ -17,10 +17,53 @@ import type {
   ResourceNodeState,
   WorkspaceAction,
   WorkspaceState,
+  WorkspaceUiSnapshot,
 } from './types.ts';
+import {
+  V1_MAX_SPLIT_RATIO,
+  V1_MIN_SPLIT_RATIO,
+  clampUiSplitRatio,
+  createLayoutTree,
+  layoutTreeFromV1,
+  mergePane,
+  setSplitRatio,
+  splitPane,
+  type LayoutTree,
+} from './layout-tree.ts';
 
 const MIN_RATIO = 25;
 const MAX_RATIO = 75;
+
+/**
+ * 兼容桥的保留身份（UI-F03-B1）。
+ *
+ * 布局树的身份必须由调用方注入且**确定**：reducer 一旦用随机数或时间戳，
+ * 每次分屏都会得到一棵"新树"，恢复流程与测试就再也没法逐字节比对。
+ * 这五个字符串是双窗格时代的固定映射，多窗格协议落地时整体替换。
+ */
+const LEGACY_LAYOUT_IDS = {
+  primaryNodeId: 'legacy-pane:primary',
+  primaryGroupId: 'legacy-group:primary',
+  secondaryNodeId: 'legacy-pane:secondary',
+  secondaryGroupId: 'legacy-group:secondary',
+  splitNodeId: 'legacy-split:root',
+} as const;
+
+/**
+ * 初始布局：单 Pane。
+ *
+ * 由模型构造（而不是手写字面量）以保证"初始状态天然合法"这件事只有一处定义；
+ * 保留身份被模型拒绝说明本文件与 `layout-tree` 的契约已经断裂，此时**启动即失败**
+ * 好过带着一棵非法布局树跑起来。
+ */
+const INITIAL_LAYOUT_TREE: LayoutTree = (() => {
+  const created = createLayoutTree({
+    nodeId: LEGACY_LAYOUT_IDS.primaryNodeId,
+    groupId: LEGACY_LAYOUT_IDS.primaryGroupId,
+  });
+  if (!created.ok) throw new Error(`初始布局树不合法：${created.error}（${created.detail}）`);
+  return created.value;
+})();
 
 export const INITIAL_STATE: WorkspaceState = {
   navCollapsed: false,
@@ -34,6 +77,7 @@ export const INITIAL_STATE: WorkspaceState = {
     secondary: { docId: null, mode: 'preview' },
   },
   focusedPane: 'primary',
+  layoutTree: INITIAL_LAYOUT_TREE,
   layout: 'single',
   splitRatio: 50,
   auxCollapsed: true,
@@ -71,6 +115,101 @@ function toggleId(ids: readonly string[], opId: string, present: boolean): reado
 function clampRatio(value: number): number {
   if (Number.isNaN(value)) return 50;
   return Math.min(MAX_RATIO, Math.max(MIN_RATIO, Math.round(value)));
+}
+
+/**
+ * 用布局树反算旧投影（`layout` / `splitRatio`）。
+ *
+ * 方向是**单一**的：树是权威，投影是派生。所有改结构的 action 都必须经过这里，
+ * 而不是各自手写 `layout: 'vertical'`——那正是两份状态开始漂移的起点。
+ *
+ * 单 Pane 时 `splitRatio` 保持原值：旧版在单视图下仍然记着"下次分屏用多少"，
+ * 合并再分屏不能把用户拖过的偏好抹回 50。分屏时按 `ratio × 100` 取整，
+ * 并收敛到旧字段的 25~75 域（该字段的合法范围由持久化契约定义）。
+ */
+function withLayoutProjection(state: WorkspaceState): WorkspaceState {
+  const root = state.layoutTree.root;
+  const layout: LayoutMode = root.type === 'pane' ? 'single' : 'vertical';
+  const splitRatio =
+    root.type === 'pane' ? state.splitRatio : clampRatio(Math.round(root.ratio * 100));
+  if (layout === state.layout && splitRatio === state.splitRatio) return state;
+  return { ...state, layout, splitRatio };
+}
+
+/** 旧版百分比 → 新模型 0~1 比例（用户拖动区间 0.25~0.75）。 */
+function uiRatioPercent(percent: number): number {
+  return clampUiSplitRatio(percent / 100);
+}
+
+/**
+ * 把单 Pane 树扩成"左右两窗格"的兼容形状。
+ *
+ * 已经分屏时**结构不动**（不会嵌套第二层 split）：兼容投影只允许单层，
+ * 重复点"分屏"必须幂等。返回 `null` 表示构造失败，调用方要整体放弃这次操作，
+ * 不能留下"panes 说分屏、树还是单窗格"的半更新。
+ */
+function splitLegacyPane(tree: LayoutTree, ratio: number): LayoutTree | null {
+  const root = tree.root;
+  if (root.type === 'split') return tree;
+  const result = splitPane(tree, {
+    paneNodeId: root.nodeId,
+    splitNodeId: LEGACY_LAYOUT_IDS.splitNodeId,
+    newPaneNodeId: LEGACY_LAYOUT_IDS.secondaryNodeId,
+    newGroupId: LEGACY_LAYOUT_IDS.secondaryGroupId,
+    // 旧 'vertical' = 分隔条竖着 = 左右并排；新模型写作 horizontal
+    orientation: 'horizontal',
+    position: 'second',
+    ratio,
+  });
+  return result.ok ? result.value : null;
+}
+
+/**
+ * 用 V1 的界面局部（`layout` + `splitRatio`）重建布局树。
+ *
+ * 刻意走 `layoutTreeFromV1` 而不是手写映射：`'vertical'` → `horizontal` 与
+ * `splitRatio / 100` 这两处最容易写错的语义只在模型里实现一次。
+ *
+ * `panes` 只用来满足 V1 的形状检查（转换要求两个槽存在），布局树不读取其中的
+ * `tabIndex`——树不携带任何文档身份。
+ *
+ * 返回 `null` 表示这份记录不能当布局用（比例非法、layout 未知等）：调用方必须
+ * **整体**不套用布局，而不是夹紧一个非法值假装它有效。
+ */
+function legacyTreeFromUi(ui: WorkspaceUiSnapshot): LayoutTree | null {
+  /*
+   * 比例先按 V1 的真实取值域单独判一次。
+   *
+   * `layoutTreeFromV1` 的**单视图**分支根本用不到 `splitRatio`，因此不会校验它；
+   * 但这个值同时是"下次分屏用多少"的记录，一份 96 / 43.7 的快照不能因为"这次是
+   * 单视图"就被悄悄收下。判在这里，两种 layout 的输入域才一致。
+   */
+  if (
+    !Number.isInteger(ui.splitRatio) ||
+    ui.splitRatio < V1_MIN_SPLIT_RATIO ||
+    ui.splitRatio > V1_MAX_SPLIT_RATIO
+  ) {
+    return null;
+  }
+
+  const result = layoutTreeFromV1(
+    {
+      ui: { layout: ui.layout, splitRatio: ui.splitRatio },
+      panes: { primary: {}, secondary: {} },
+    },
+    {
+      primary: {
+        nodeId: LEGACY_LAYOUT_IDS.primaryNodeId,
+        groupId: LEGACY_LAYOUT_IDS.primaryGroupId,
+      },
+      secondary: {
+        nodeId: LEGACY_LAYOUT_IDS.secondaryNodeId,
+        groupId: LEGACY_LAYOUT_IDS.secondaryGroupId,
+      },
+      splitNodeId: LEGACY_LAYOUT_IDS.splitNodeId,
+    },
+  );
+  return result.ok ? result.value : null;
 }
 
 /** 关闭标签后为窗格挑选替代文档：优先右侧邻居，其次左侧，最后为空。 */
@@ -318,25 +457,60 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     }
 
     case 'SET_LAYOUT': {
-      const layout: LayoutMode = action.layout;
-      if (layout === 'single') {
-        return { ...state, layout, focusedPane: 'primary', notice: '单视图' };
+      /**
+       * 单视图：用 `mergePane` 让父 split 塌陷，兄弟（primary）顶上来。
+       *
+       * `panes.secondary` 的文档指向**保留**：旧版重新开分屏时会复用它，
+       * 用户不会因为"切一下单视图"就丢掉右侧之前看的东西。
+       */
+      if (action.layout === 'single') {
+        // 已经是单窗格：合并会被模型以 last-pane 拒绝（那不是错误），只收敛焦点与提示
+        if (state.layoutTree.root.type === 'pane') {
+          return withLayoutProjection({ ...state, focusedPane: 'primary', notice: '单视图' });
+        }
+        const merged = mergePane(state.layoutTree, { groupId: LEGACY_LAYOUT_IDS.secondaryGroupId });
+        // 合并被拒（树里没有这个视图组）：整体不动。绝不出现"旧字段说单视图、树还是分屏"
+        if (!merged.ok) return state;
+        return withLayoutProjection({
+          ...state,
+          layoutTree: merged.value,
+          focusedPane: 'primary',
+          notice: '单视图',
+        });
       }
+
+      const tree = splitLegacyPane(state.layoutTree, uiRatioPercent(state.splitRatio));
+      // 结构没构造出来就整体不动：宁可这次点击无效，也不留下半套状态
+      if (tree === null) return state;
       const anchor = state.panes.primary.docId ?? state.tabs[0]?.docId ?? null;
-      return {
+      return withLayoutProjection({
         ...state,
-        layout,
+        layoutTree: tree,
         focusedPane: 'primary',
         panes: {
           primary: { ...state.panes.primary, docId: state.panes.primary.docId ?? anchor },
           secondary: { docId: state.panes.secondary.docId ?? anchor, mode: 'preview' },
         },
         notice: '左右分屏：左侧源码 / 右侧预览',
-      };
+      });
     }
 
-    case 'SET_SPLIT_RATIO':
-      return { ...state, splitRatio: clampRatio(action.ratio) };
+    case 'SET_SPLIT_RATIO': {
+      const root = state.layoutTree.root;
+      // 单视图：只更新旧版比例偏好，**不**凭空造一个 split
+      if (root.type !== 'split') {
+        const preference = clampRatio(action.ratio);
+        return preference === state.splitRatio ? state : { ...state, splitRatio: preference };
+      }
+      // 只改根 split 的比例：`setSplitRatio` 只重建从根到目标的路径，
+      // 两个子节点保持原引用，其他结构一动不动。
+      const updated = setSplitRatio(state.layoutTree, {
+        splitNodeId: root.nodeId,
+        ratio: uiRatioPercent(action.ratio),
+      });
+      if (!updated.ok) return state;
+      return withLayoutProjection({ ...state, layoutTree: updated.value });
+    }
 
     case 'EDIT_DOC':
       return {
@@ -382,21 +556,45 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     /**
      * 只恢复界面局部（S11-C 阶段 A）。
      * 刻意不触碰 tabs / panes / 会话 / 项目表：这些必须由 Host 的真实结果重建。
+     *
+     * 布局这一块改由 `layoutTreeFromV1` 重建（UI-F03-B1）：旧记录里只有
+     * `layout` + `splitRatio`，新树必须由它们**确定性**地长出来，而不是把旧字段
+     * 直接抄进状态、让树另走一条路。
      */
     case 'HYDRATE_UI': {
       const { ui } = action;
-      return {
+      const base: WorkspaceState = {
         ...state,
         navCollapsed: ui.navCollapsed,
         navKey: ui.navKey,
         treeCollapsed: ui.treeCollapsed,
         auxCollapsed: ui.auxCollapsed,
         auxTab: ui.auxTab,
-        layout: ui.layout,
-        splitRatio: clampRatio(ui.splitRatio),
-        // 单视图只有主窗格：不接受"焦点在副窗格"这种不可见的组合
-        focusedPane: ui.layout === 'single' ? 'primary' : ui.focusedPane,
         expandedByProject: action.expandedByProject ?? state.expandedByProject,
+      };
+
+      const tree = legacyTreeFromUi(ui);
+      /*
+       * 转换失败（比例非法 / layout 未知）：**布局整块不套用**。
+       *
+       * 既不能夹紧非法比例假装有效（那等于替一份损坏的记录编造布局），也不能只改
+       * 一半字段（旧字段说分屏、树还是单窗格）。这里保留当前这一对值，其余界面
+       * 字段照常恢复——它们与布局无关，没必要跟着一起丢弃。
+       */
+      if (tree === null) return base;
+
+      const projected = withLayoutProjection({ ...base, layoutTree: tree });
+      /*
+       * 单视图的树里没有 ratio，投影只能保留"当前偏好"；恢复时要让**记录里的**比例
+       * 成为新偏好，否则用户上次拖到的 55% 会在这次恢复后变回 50，下次分屏也不是
+       * 他记着的宽度。分屏树不需要这一步：ratio 已经在树里，投影直接读它。
+       */
+      const restored =
+        tree.root.type === 'pane' ? { ...projected, splitRatio: clampRatio(ui.splitRatio) } : projected;
+      // 单视图只有主窗格：不接受"焦点在副窗格"这种不可见的组合
+      return {
+        ...restored,
+        focusedPane: restored.layout === 'single' ? 'primary' : ui.focusedPane,
       };
     }
 
